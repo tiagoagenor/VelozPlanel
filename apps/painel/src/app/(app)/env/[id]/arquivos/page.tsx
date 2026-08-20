@@ -10,12 +10,12 @@ import {
   FileCode,
   Home,
   ChevronRight,
+  ChevronDown,
   ChevronLeft,
   FolderPlus,
   FilePlus,
   Upload,
   UploadCloud,
-  FolderUp,
   RefreshCw,
   Save,
   Trash2,
@@ -27,6 +27,7 @@ import {
   Pencil,
   Lock,
   Search,
+  Check,
 } from "lucide-react";
 import type { FileEntry } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -241,14 +242,178 @@ interface Chosen {
   id: string; // chave estável para a lista/remoção
 }
 
+/** Move o foco para o `treeitem` visível anterior/seguinte (navegação por setas). */
+function focusTreeItem(current: HTMLElement, delta: number) {
+  const tree = current.closest('[role="tree"]');
+  if (!tree) return;
+  const items = Array.from(
+    tree.querySelectorAll<HTMLElement>('[role="treeitem"]'),
+  );
+  const idx = items.indexOf(current);
+  const next = items[idx + delta];
+  if (next) next.focus();
+}
+
+/* ─────────────── Nó da árvore de pastas (lazy) ─────────────── */
+
+interface TreeNodeProps {
+  id: string; // env id
+  path: string; // caminho absoluto desta pasta
+  name: string; // rótulo exibido
+  level: number; // profundidade (indentação)
+  selectedDir: string;
+  onSelect: (path: string) => void;
+  autoExpandTo: string; // pasta inicial: expande a árvore até ela
+  disabled: boolean;
+}
+
 /**
- * Modal de envio de arquivos:
- *  - Seleção da pasta de destino: começa na pasta atual; navega pelas subpastas
- *    (item ".." sobe, confinado à raiz) e mostra sempre o caminho de destino.
- *  - Dropzone grande: clique abre o seletor nativo (multiple) e aceita drag&drop
- *    com feedback visual.
- *  - Lista dos arquivos escolhidos (nome + tamanho) com remoção; aviso de limite.
- *  - Lê cada arquivo como base64 e envia um a um, com progresso e falha parcial.
+ * Um nó de pasta na árvore. Carrega as subpastas SOB DEMANDA (só quando
+ * expandido) via `listFiles(path)` filtrando `type==='dir'`. Confinado à raiz
+ * porque só descemos por caminhos retornados pela própria API.
+ */
+function TreeNode({
+  id,
+  path,
+  name,
+  level,
+  selectedDir,
+  onSelect,
+  autoExpandTo,
+  disabled,
+}: TreeNodeProps) {
+  // Expande automaticamente se esta pasta é ancestral (estrita) da pasta inicial.
+  const isStrictAncestor =
+    autoExpandTo === path ? false : autoExpandTo.startsWith(path + "/");
+  const [expanded, setExpanded] = React.useState(isStrictAncestor);
+
+  const childrenQuery = useQuery({
+    queryKey: ["files", id, path],
+    queryFn: () => api.listFiles(id, path),
+    enabled: expanded,
+    retry: false,
+  });
+  const childDirs = React.useMemo(
+    () => (childrenQuery.data?.entries ?? []).filter((e) => e.type === "dir"),
+    [childrenQuery.data?.entries],
+  );
+
+  const selected = selectedDir === path;
+  const FolderIco = expanded ? FolderOpen : Folder;
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    switch (e.key) {
+      case "ArrowRight":
+        if (!expanded) {
+          e.preventDefault();
+          setExpanded(true);
+        }
+        break;
+      case "ArrowLeft":
+        if (expanded) {
+          e.preventDefault();
+          setExpanded(false);
+        }
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        focusTreeItem(e.currentTarget, 1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focusTreeItem(e.currentTarget, -1);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        onSelect(path);
+        break;
+    }
+  }
+
+  return (
+    <li role="none">
+      <div
+        role="treeitem"
+        aria-expanded={expanded}
+        aria-selected={selected}
+        aria-level={level + 1}
+        aria-label={name}
+        tabIndex={selected ? 0 : -1}
+        onKeyDown={onKeyDown}
+        onClick={() => onSelect(path)}
+        style={{ paddingLeft: 8 + level * 16 }}
+        className={`flex cursor-pointer items-center gap-1 rounded-lg py-1.5 pr-2 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-strong ${
+          selected
+            ? "bg-brand-soft font-medium text-brand-strong"
+            : "text-text hover:bg-bg"
+        }`}
+      >
+        <span
+          role="button"
+          aria-hidden="true"
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          className="grid h-5 w-5 shrink-0 place-items-center rounded text-text3 hover:text-brand-strong"
+        >
+          {expanded ? (
+            <ChevronDown size={15} />
+          ) : (
+            <ChevronRight size={15} />
+          )}
+        </span>
+        <FolderIco size={16} aria-hidden="true" className="shrink-0 text-brand-strong" />
+        <span className="min-w-0 flex-1 truncate">{name}</span>
+        {selected ? (
+          <Check size={15} aria-hidden="true" className="shrink-0 text-brand-strong" />
+        ) : null}
+      </div>
+      {expanded ? (
+        childrenQuery.isPending ? (
+          <div
+            className="flex items-center gap-2 py-1 text-xs text-text3"
+            style={{ paddingLeft: 8 + (level + 1) * 16 }}
+          >
+            <Loader2 size={13} className="animate-spin" aria-label="Carregando" />
+            Carregando…
+          </div>
+        ) : childDirs.length > 0 ? (
+          <ul role="group">
+            {childDirs.map((d) => (
+              <TreeNode
+                key={d.name}
+                id={id}
+                path={joinPath(path, d.name)}
+                name={d.name}
+                level={level + 1}
+                selectedDir={selectedDir}
+                onSelect={onSelect}
+                autoExpandTo={autoExpandTo}
+                disabled={disabled}
+              />
+            ))}
+          </ul>
+        ) : (
+          <p
+            className="py-1 text-xs text-text3"
+            style={{ paddingLeft: 8 + (level + 1) * 16 }}
+          >
+            (sem subpastas)
+          </p>
+        )
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * Modal de envio de arquivos (layout de 2 colunas):
+ *  - ESQUERDA: árvore de pastas navegável a partir da raiz, carregando subpastas
+ *    sob demanda; clicar seleciona a pasta como destino (destaque + check).
+ *  - DIREITA: caminho de destino em destaque + dropzone (drag&drop / clique) +
+ *    lista dos arquivos escolhidos + progresso. Upload binário via base64.
  */
 function UploadModal({
   open,
@@ -280,24 +445,9 @@ function UploadModal({
     }
   }, [open, initialDir]);
 
-  // Lista o destino para oferecer navegação pelas subpastas.
-  const destQuery = useQuery({
-    queryKey: ["files", id, destDir],
-    queryFn: () => api.listFiles(id, destDir),
-    enabled: open,
-    retry: false,
-  });
-  const subdirs = React.useMemo(
-    () => (destQuery.data?.entries ?? []).filter((e) => e.type === "dir"),
-    [destQuery.data?.entries],
-  );
-
-  function parentOf(path: string): string {
-    const idx = path.lastIndexOf("/");
-    if (idx <= 0) return "/";
-    return path.slice(0, idx);
+  function selectDir(path: string) {
+    if (!busy) setDestDir(path);
   }
-  const canGoUp = destDir !== root && destDir.startsWith(root + "/");
 
   function addFiles(list: FileList | File[]) {
     const arr = Array.from(list);
@@ -359,174 +509,166 @@ function UploadModal({
     onClose();
   }
 
+  const rootName = root.slice(root.lastIndexOf("/") + 1) || root;
+
   return (
     <Dialog
       open={open}
       onClose={busy ? () => {} : onClose}
       title="Enviar arquivo"
-      description="Escolha a pasta de destino e arraste ou selecione os arquivos."
-      className="w-[min(94vw,42rem)]"
+      description="Escolha a pasta de destino na árvore e arraste ou selecione os arquivos."
+      className="w-[min(96vw,60rem)]"
     >
-      <div className="flex flex-col gap-4">
-        {/* Seleção da pasta de destino */}
-        <div className="flex flex-col gap-2">
+      <div className="grid min-h-[24rem] gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+        {/* ESQUERDA — árvore de pastas */}
+        <div className="flex min-h-0 flex-col gap-2">
           <Label>Pasta de destino</Label>
-          <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg px-3 py-2">
-            <Folder size={16} aria-hidden="true" className="shrink-0 text-brand-strong" />
-            <span className="truncate font-mono text-sm text-text" title={destDir}>
+          <div className="max-h-[52vh] min-h-[16rem] overflow-y-auto rounded-lg border border-border-subtle bg-bg p-1">
+            <ul role="tree" aria-label="Árvore de pastas do ambiente" className="flex flex-col">
+              <TreeNode
+                id={id}
+                path={root}
+                name={rootName || root}
+                level={0}
+                selectedDir={destDir}
+                onSelect={selectDir}
+                autoExpandTo={initialDir}
+                disabled={busy}
+              />
+            </ul>
+          </div>
+        </div>
+
+        {/* DIREITA — envio */}
+        <div className="flex min-h-0 flex-col gap-3">
+          {/* Pasta selecionada em destaque */}
+          <div className="flex items-center gap-2 rounded-lg border border-brand-strong/30 bg-brand-soft px-3 py-2">
+            <FolderOpen size={16} aria-hidden="true" className="shrink-0 text-brand-strong" />
+            <span className="shrink-0 text-xs font-medium text-brand-strong">
+              Enviar para:
+            </span>
+            <span
+              aria-live="polite"
+              className="truncate font-mono text-sm font-medium text-brand-strong"
+              title={destDir}
+            >
               {destDir}
             </span>
           </div>
-          <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle">
-            {canGoUp ? (
-              <button
-                type="button"
-                onClick={() => setDestDir(parentOf(destDir))}
-                disabled={busy}
-                className="flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2 text-left text-sm text-link hover:bg-brand-soft disabled:opacity-50"
-              >
-                <FolderUp size={16} aria-hidden="true" />
-                .. (subir)
-              </button>
-            ) : null}
-            {destQuery.isPending ? (
-              <div className="grid h-16 place-items-center">
-                <Loader2 size={18} className="animate-spin text-brand-strong" aria-label="Carregando" />
-              </div>
-            ) : subdirs.length === 0 ? (
-              <p className="px-3 py-3 text-xs text-text3">Nenhuma subpasta aqui.</p>
-            ) : (
-              <ul className="divide-y divide-border-subtle">
-                {subdirs.map((d) => (
-                  <li key={d.name}>
-                    <button
-                      type="button"
-                      onClick={() => setDestDir(joinPath(destDir, d.name))}
-                      disabled={busy}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-brand-soft disabled:opacity-50"
-                    >
-                      <Folder size={16} aria-hidden="true" className="text-brand-strong" />
-                      <span className="truncate">{d.name}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </div>
 
-        {/* Dropzone */}
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Arraste arquivos aqui ou clique para selecionar"
-          onClick={() => !busy && inputRef.current?.click()}
-          onKeyDown={(e) => {
-            if ((e.key === "Enter" || e.key === " ") && !busy) {
+          {/* Dropzone */}
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Arraste arquivos aqui ou clique para selecionar"
+            onClick={() => !busy && inputRef.current?.click()}
+            onKeyDown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && !busy) {
+                e.preventDefault();
+                inputRef.current?.click();
+              }
+            }}
+            onDragOver={(e) => {
               e.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            if (!busy) setDragOver(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            setDragOver(false);
-          }}
-          onDrop={onDrop}
-          className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
-            dragOver
-              ? "border-brand-strong bg-brand-soft"
-              : "border-border bg-bg hover:border-brand-strong"
-          } ${busy ? "pointer-events-none opacity-60" : ""}`}
-        >
-          <UploadCloud size={32} aria-hidden="true" className="text-brand-strong" />
-          <p className="text-sm font-medium text-text">
-            Arraste arquivos aqui ou clique para selecionar
-          </p>
-          <p className="text-xs text-text3">
-            Vários arquivos, incluindo binários (imagens, zip). Máx. 25 MB por arquivo.
-          </p>
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={onInputChange}
-          />
-        </div>
-
-        {/* Lista dos arquivos escolhidos */}
-        {chosen.length > 0 ? (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium text-text2">
-              {chosen.length} arquivo(s) selecionado(s)
-            </span>
-            <ul className="max-h-44 divide-y divide-border-subtle overflow-y-auto rounded-lg border border-border-subtle">
-              {chosen.map((c) => {
-                const big = c.file.size > MAX_UPLOAD_BYTES;
-                return (
-                  <li
-                    key={c.id}
-                    className="flex items-center gap-3 px-3 py-2 text-sm"
-                  >
-                    <FileIcon size={16} aria-hidden="true" className="shrink-0 text-text3" />
-                    <span className="min-w-0 flex-1 truncate text-text" title={c.file.name}>
-                      {c.file.name}
-                    </span>
-                    <span
-                      className={`shrink-0 text-xs ${big ? "font-medium text-danger" : "text-text3"}`}
-                    >
-                      {formatSize(c.file.size)}
-                    </span>
-                    {big ? (
-                      <AlertTriangle
-                        size={14}
-                        aria-label="Acima do limite de 25 MB"
-                        className="shrink-0 text-danger"
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => removeChosen(c.id)}
-                      disabled={busy}
-                      aria-label={`Remover ${c.file.name}`}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger disabled:opacity-50"
-                    >
-                      <X size={14} aria-hidden="true" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            {hasOversized ? (
-              <p role="alert" className="flex items-center gap-1.5 text-xs text-danger">
-                <AlertTriangle size={13} aria-hidden="true" />
-                {oversized.length} arquivo(s) acima de 25 MB. Remova-os para enviar.
-              </p>
-            ) : null}
+              if (!busy) setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+            }}
+            onDrop={onDrop}
+            className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
+              dragOver
+                ? "border-brand-strong bg-brand-soft"
+                : "border-border bg-bg hover:border-brand-strong"
+            } ${busy ? "pointer-events-none opacity-60" : ""}`}
+          >
+            <UploadCloud size={32} aria-hidden="true" className="text-brand-strong" />
+            <p className="text-sm font-medium text-text">
+              Arraste arquivos aqui ou clique para selecionar
+            </p>
+            <p className="text-xs text-text3">
+              Vários arquivos, incluindo binários (imagens, zip). Máx. 25 MB por arquivo.
+            </p>
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={onInputChange}
+            />
           </div>
-        ) : null}
 
-        {/* Rodapé: progresso + ações */}
-        <div className="flex items-center justify-between gap-2">
-          <span aria-live="polite" className="text-sm text-text2">
-            {progress ? `Enviando ${progress.current}/${progress.total}…` : ""}
-          </span>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
-              Cancelar
-            </Button>
-            <Button type="button" onClick={() => void startUpload()} disabled={!canSend}>
-              {busy ? (
-                <Loader2 size={16} aria-hidden="true" className="animate-spin" />
-              ) : (
-                <UploadCloud size={16} aria-hidden="true" />
-              )}
-              {busy ? "Enviando…" : "Enviar"}
-            </Button>
+          {/* Lista dos arquivos escolhidos */}
+          {chosen.length > 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+              <span className="text-xs font-medium text-text2">
+                {chosen.length} arquivo(s) selecionado(s)
+              </span>
+              <ul className="max-h-44 flex-1 divide-y divide-border-subtle overflow-y-auto rounded-lg border border-border-subtle">
+                {chosen.map((c) => {
+                  const big = c.file.size > MAX_UPLOAD_BYTES;
+                  return (
+                    <li
+                      key={c.id}
+                      className="flex items-center gap-3 px-3 py-2 text-sm"
+                    >
+                      <FileIcon size={16} aria-hidden="true" className="shrink-0 text-text3" />
+                      <span className="min-w-0 flex-1 truncate text-text" title={c.file.name}>
+                        {c.file.name}
+                      </span>
+                      <span
+                        className={`shrink-0 text-xs ${big ? "font-medium text-danger" : "text-text3"}`}
+                      >
+                        {formatSize(c.file.size)}
+                      </span>
+                      {big ? (
+                        <AlertTriangle
+                          size={14}
+                          aria-label="Acima do limite de 25 MB"
+                          className="shrink-0 text-danger"
+                        />
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => removeChosen(c.id)}
+                        disabled={busy}
+                        aria-label={`Remover ${c.file.name}`}
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger disabled:opacity-50"
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {hasOversized ? (
+                <p role="alert" className="flex items-center gap-1.5 text-xs text-danger">
+                  <AlertTriangle size={13} aria-hidden="true" />
+                  {oversized.length} arquivo(s) acima de 25 MB. Remova-os para enviar.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {/* Rodapé: progresso + ações */}
+          <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+            <span aria-live="polite" className="text-sm text-text2">
+              {progress ? `Enviando ${progress.current}/${progress.total}…` : ""}
+            </span>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+                Cancelar
+              </Button>
+              <Button type="button" onClick={() => void startUpload()} disabled={!canSend}>
+                {busy ? (
+                  <Loader2 size={16} aria-hidden="true" className="animate-spin" />
+                ) : (
+                  <UploadCloud size={16} aria-hidden="true" />
+                )}
+                {busy ? "Enviando…" : "Enviar"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
