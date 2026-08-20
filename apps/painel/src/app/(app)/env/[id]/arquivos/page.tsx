@@ -21,7 +21,6 @@ import {
   AlertTriangle,
   PlayCircle,
   Loader2,
-  MoreHorizontal,
   Download,
   Pencil,
   Lock,
@@ -101,7 +100,7 @@ function specialPrefix(mode: string): string {
   return digits.length >= 4 ? digits.slice(-4, -3) : "";
 }
 
-/* ─────────────── Menu de ações por linha ─────────────── */
+/* ─────────────── Ações inline por linha ─────────────── */
 
 interface RowActionsProps {
   entry: FileEntry;
@@ -112,6 +111,10 @@ interface RowActionsProps {
   downloading: boolean;
 }
 
+/**
+ * Botões de ação sempre visíveis na própria linha (sem dropdown, que era
+ * cortado pela borda do card). Ícones com aria-label + title (tooltip).
+ */
 function RowActions({
   entry,
   onDownload,
@@ -120,94 +123,53 @@ function RowActions({
   onDelete,
   downloading,
 }: RowActionsProps) {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    if (!open) return;
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  function run(fn: () => void) {
-    setOpen(false);
-    fn();
-  }
-
-  const itemClass =
-    "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-text hover:bg-brand-soft";
-
+  const btn =
+    "grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-brand-soft hover:text-brand-strong";
   return (
-    <div ref={ref} className="relative shrink-0">
+    <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
+      {entry.type === "file" ? (
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={downloading}
+          aria-label={`Baixar ${entry.name}`}
+          title="Baixar"
+          className={btn}
+        >
+          {downloading ? (
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Download size={16} aria-hidden="true" />
+          )}
+        </button>
+      ) : null}
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-label={`Ações para ${entry.name}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        className="grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-brand-soft hover:text-brand-strong"
+        onClick={onRename}
+        aria-label={`Renomear ${entry.name}`}
+        title="Renomear"
+        className={btn}
       >
-        {downloading ? (
-          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-        ) : (
-          <MoreHorizontal size={16} aria-hidden="true" />
-        )}
+        <Pencil size={16} aria-hidden="true" />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          className="vp-pop-shadow absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border-subtle bg-elevated py-1"
-        >
-          {entry.type === "file" ? (
-            <button
-              type="button"
-              role="menuitem"
-              className={itemClass}
-              onClick={() => run(onDownload)}
-            >
-              <Download size={16} aria-hidden="true" className="text-brand-strong" />
-              Baixar
-            </button>
-          ) : null}
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => run(onRename)}
-          >
-            <Pencil size={16} aria-hidden="true" className="text-brand-strong" />
-            Renomear
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={itemClass}
-            onClick={() => run(onChmod)}
-          >
-            <Lock size={16} aria-hidden="true" className="text-brand-strong" />
-            Permissões
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft"
-            onClick={() => run(onDelete)}
-          >
-            <Trash2 size={16} aria-hidden="true" />
-            Excluir
-          </button>
-        </div>
-      ) : null}
+      <button
+        type="button"
+        onClick={onChmod}
+        aria-label={`Permissões de ${entry.name}`}
+        title="Permissões"
+        className={btn}
+      >
+        <Lock size={16} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label={`Excluir ${entry.name}`}
+        title="Excluir"
+        className="grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger"
+      >
+        <Trash2 size={16} aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -231,7 +193,13 @@ export default function EnvArquivosPage() {
   const [downloadingName, setDownloadingName] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState("");
   const [page, setPage] = React.useState(1);
+  // Seleção em massa (por nome, único dentro do diretório atual).
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkChmodOpen, setBulkChmodOpen] = React.useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
+  const [bulkBusy, setBulkBusy] = React.useState(false);
   const uploadRef = React.useRef<HTMLInputElement>(null);
+  const selectAllRef = React.useRef<HTMLInputElement>(null);
 
   const listQuery = useQuery({
     queryKey: ["files", id, dir],
@@ -242,9 +210,14 @@ export default function EnvArquivosPage() {
   const root = listQuery.data?.root ?? null;
   const currentPath = listQuery.data?.path ?? dir ?? root ?? "";
 
-  // Ao trocar de pasta, volta para a página 1.
+  function clearSelection() {
+    setSelected(new Set());
+  }
+
+  // Ao trocar de pasta, volta para a página 1 e limpa a seleção.
   React.useEffect(() => {
     setPage(1);
+    clearSelection();
   }, [dir]);
 
   // Query do conteúdo do arquivo em edição.
@@ -428,6 +401,10 @@ export default function EnvArquivosPage() {
       toast.show("error", "Modo octal inválido (ex.: 644 ou 755).");
       return;
     }
+    if (bulkChmodOpen) {
+      void runBulkChmod(mode);
+      return;
+    }
     if (toChmod) chmodMutation.mutate({ entry: toChmod, mode });
   }
 
@@ -478,6 +455,21 @@ export default function EnvArquivosPage() {
     return allEntries.filter((e) => e.name.toLowerCase().includes(q));
   }, [allEntries, filter]);
 
+  // Mantém a seleção coerente com os itens realmente existentes.
+  React.useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const names = new Set(allEntries.map((e) => e.name));
+      let changed = false;
+      const next = new Set<string>();
+      for (const n of prev) {
+        if (names.has(n)) next.add(n);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allEntries]);
+
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -485,6 +477,91 @@ export default function EnvArquivosPage() {
   const pageEntries = filtered.slice(start, start + PAGE_SIZE);
   const rangeFrom = total === 0 ? 0 : start + 1;
   const rangeTo = Math.min(start + PAGE_SIZE, total);
+
+  // Seleção sobre o conjunto filtrado (todos os itens mostrados/filtrados).
+  const allSelected = filtered.length > 0 && filtered.every((e) => selected.has(e.name));
+  const someSelected = filtered.some((e) => selected.has(e.name));
+
+  React.useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected && !allSelected;
+    }
+  }, [someSelected, allSelected]);
+
+  function toggleOne(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => {
+      if (filtered.length > 0 && filtered.every((e) => prev.has(e.name))) {
+        return new Set();
+      }
+      return new Set(filtered.map((e) => e.name));
+    });
+  }
+
+  const selectedEntries = React.useMemo(
+    () => allEntries.filter((e) => selected.has(e.name)),
+    [allEntries, selected],
+  );
+
+  function reportBulk(action: string, ok: number, fail: number) {
+    if (fail === 0) toast.show("success", `${action}: ${ok} item(ns).`);
+    else if (ok === 0) toast.show("error", `${action}: falhou em ${fail} item(ns).`);
+    else toast.show("error", `${action}: ${ok} ok, ${fail} falha(s).`);
+  }
+
+  function openBulkChmod() {
+    setModeInput("644");
+    setBulkChmodOpen(true);
+  }
+
+  async function runBulkChmod(mode: string) {
+    const entries = selectedEntries;
+    setBulkBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (const entry of entries) {
+      try {
+        await api.chmodFile(id, joinPath(currentPath, entry.name), mode);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    setBulkBusy(false);
+    setBulkChmodOpen(false);
+    clearSelection();
+    refresh();
+    reportBulk(`Permissões (${mode})`, ok, fail);
+  }
+
+  async function runBulkDelete() {
+    const entries = selectedEntries;
+    setBulkBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (const entry of entries) {
+      try {
+        await api.deleteFile(id, joinPath(currentPath, entry.name));
+        if (editing && editing.name === entry.name) setEditing(null);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    setBulkBusy(false);
+    setBulkDeleteOpen(false);
+    clearSelection();
+    refresh();
+    reportBulk("Exclusão", ok, fail);
+  }
 
   const chmodThree = lastThree(modeInput);
   const permClasses: { key: PermClass; label: string }[] = [
@@ -650,6 +727,7 @@ export default function EnvArquivosPage() {
             onChange={(e) => {
               setFilter(e.target.value);
               setPage(1);
+              clearSelection();
             }}
             placeholder="Filtrar por nome…"
             aria-label="Filtrar por nome"
@@ -658,6 +736,34 @@ export default function EnvArquivosPage() {
             spellCheck={false}
             className="h-9 pl-9"
           />
+        </div>
+      ) : null}
+
+      {/* Barra de ações em massa */}
+      {selected.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-strong/30 bg-brand-soft px-3 py-2">
+          <span aria-live="polite" className="text-sm font-medium text-brand-strong">
+            {selected.size} selecionado{selected.size > 1 ? "s" : ""}
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={openBulkChmod} disabled={bulkBusy}>
+              <Lock size={16} aria-hidden="true" />
+              Alterar permissões
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => setBulkDeleteOpen(true)}
+              disabled={bulkBusy}
+            >
+              <Trash2 size={16} aria-hidden="true" />
+              Excluir selecionados
+            </Button>
+            <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkBusy}>
+              <X size={16} aria-hidden="true" />
+              Limpar seleção
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -694,14 +800,40 @@ export default function EnvArquivosPage() {
       ) : (
         <>
           <Card className="overflow-hidden p-0">
+            {/* Cabeçalho: selecionar todos */}
+            <div className="flex items-center gap-3 border-b border-border-subtle bg-bg px-4 py-2">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                aria-label="Selecionar todos"
+                className="h-4 w-4 shrink-0 accent-brand"
+              />
+              <span className="text-xs font-medium text-text2">
+                {selected.size > 0
+                  ? `${selected.size} selecionado${selected.size > 1 ? "s" : ""}`
+                  : "Selecionar todos"}
+              </span>
+            </div>
             <ul className="divide-y divide-border-subtle">
               {pageEntries.map((entry) => {
                 const Icon = iconFor(entry);
+                const checked = selected.has(entry.name);
                 return (
                   <li
                     key={entry.name}
-                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-bg"
+                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-bg ${
+                      checked ? "bg-brand-soft/40" : ""
+                    }`}
                   >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleOne(entry.name)}
+                      aria-label={`Selecionar ${entry.name}`}
+                      className="h-4 w-4 shrink-0 accent-brand"
+                    />
                     <button
                       type="button"
                       onClick={() => openEntry(entry)}
@@ -843,13 +975,20 @@ export default function EnvArquivosPage() {
         </form>
       </Dialog>
 
-      {/* Dialog: permissões (chmod) */}
+      {/* Dialog: permissões (chmod) — item único ou em massa */}
       <Dialog
-        open={toChmod !== null}
-        onClose={() => setToChmod(null)}
+        open={toChmod !== null || bulkChmodOpen}
+        onClose={() => {
+          setToChmod(null);
+          setBulkChmodOpen(false);
+        }}
         title="Permissões"
         description={
-          toChmod ? `Alterar permissões de "${toChmod.name}" (atual: ${toChmod.mode})` : ""
+          bulkChmodOpen
+            ? `Aplicar permissões a ${selected.size} item(ns) selecionado(s)`
+            : toChmod
+              ? `Alterar permissões de "${toChmod.name}" (atual: ${toChmod.mode})`
+              : ""
         }
       >
         <form onSubmit={submitChmod} className="flex flex-col gap-4">
@@ -908,18 +1047,25 @@ export default function EnvArquivosPage() {
             <p className="text-xs text-text3">Ex.: 644 (arquivo), 755 (pasta/executável).</p>
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setToChmod(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setToChmod(null);
+                setBulkChmodOpen(false);
+              }}
+            >
               Cancelar
             </Button>
-            <Button type="submit" disabled={chmodMutation.isPending}>
+            <Button type="submit" disabled={chmodMutation.isPending || bulkBusy}>
               <Lock size={16} aria-hidden="true" />
-              {chmodMutation.isPending ? "Aplicando…" : "Aplicar"}
+              {chmodMutation.isPending || bulkBusy ? "Aplicando…" : "Aplicar"}
             </Button>
           </div>
         </form>
       </Dialog>
 
-      {/* Dialog: confirmar exclusão */}
+      {/* Dialog: confirmar exclusão (item único) */}
       <Dialog
         open={toDelete !== null}
         onClose={() => setToDelete(null)}
@@ -943,6 +1089,24 @@ export default function EnvArquivosPage() {
           >
             <Trash2 size={16} aria-hidden="true" />
             {deleteMutation.isPending ? "Excluindo…" : "Excluir"}
+          </Button>
+        </div>
+      </Dialog>
+
+      {/* Dialog: confirmar exclusão em massa */}
+      <Dialog
+        open={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        title="Excluir selecionados"
+        description={`Excluir ${selected.size} item(ns) selecionado(s)? Esta ação não pode ser desfeita e pastas serão removidas com todo o conteúdo.`}
+      >
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setBulkDeleteOpen(false)} disabled={bulkBusy}>
+            Cancelar
+          </Button>
+          <Button variant="danger" onClick={() => void runBulkDelete()} disabled={bulkBusy}>
+            <Trash2 size={16} aria-hidden="true" />
+            {bulkBusy ? "Excluindo…" : `Excluir ${selected.size}`}
           </Button>
         </div>
       </Dialog>
