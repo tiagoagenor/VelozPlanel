@@ -165,6 +165,97 @@ export const sessionUser = z.object({
 });
 export type SessionUser = z.infer<typeof sessionUser>;
 
+/* ─────────────── Arquivos (gerenciador de arquivos do ambiente) ─────────────── */
+
+export const fileEntry = z.object({
+  name: z.string(),
+  type: z.enum(["file", "dir"]),
+  size: z.number(), // bytes (0 para dir)
+  mtime: z.number(), // epoch ms
+});
+export type FileEntry = z.infer<typeof fileEntry>;
+
+export const fileList = z.object({
+  path: z.string(), // caminho absoluto dentro do ambiente (ex.: /var/www)
+  root: z.string(), // raiz servida (var/www ou /app)
+  entries: z.array(fileEntry),
+});
+export type FileList = z.infer<typeof fileList>;
+
+export const fileContent = z.object({
+  path: z.string(),
+  content: z.string(),
+  truncated: z.boolean(), // true se o arquivo foi cortado por tamanho
+});
+export type FileContent = z.infer<typeof fileContent>;
+
+export const writeFileInput = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+});
+export type WriteFileInput = z.infer<typeof writeFileInput>;
+
+export const mkPathInput = z.object({
+  path: z.string().min(1),
+});
+export type MkPathInput = z.infer<typeof mkPathInput>;
+
+/* ─────────────── Bancos de dados do cliente ─────────────── */
+
+export const dbEngine = z.enum(["mysql"]); // núcleo: MariaDB (MySQL-compatível). PG depois.
+export type DbEngine = z.infer<typeof dbEngine>;
+
+export const database = z.object({
+  id: z.string().uuid(),
+  envId: z.string().uuid(),
+  engine: dbEngine,
+  name: z.string(), // nome do database
+  dbUser: z.string(),
+  host: z.string(),
+  port: z.number().int(),
+  createdAt: z.string().datetime(),
+});
+export type Database = z.infer<typeof database>;
+
+/** Criação retorna a senha UMA vez (não é armazenada em claro). */
+export const databaseWithSecret = database.extend({
+  password: z.string(),
+});
+export type DatabaseWithSecret = z.infer<typeof databaseWithSecret>;
+
+export const createDatabaseInput = z.object({
+  name: z
+    .string()
+    .min(2)
+    .max(32)
+    .regex(/^[a-z][a-z0-9_]*$/, "comece com letra; use letras minúsculas, números e _"),
+});
+export type CreateDatabaseInput = z.infer<typeof createDatabaseInput>;
+
+/* ─────────────── SSL / HTTPS ─────────────── */
+
+export const sslCertStatus = z.enum([
+  "none", // sem domínio ou sem certificado
+  "pending", // emissão solicitada (fase futura, precisa de domínio público + borda)
+  "active", // certificado ativo (self-signed no núcleo)
+  "error",
+]);
+export type SslCertStatus = z.infer<typeof sslCertStatus>;
+
+export const sslStatus = z.object({
+  envId: z.string().uuid(),
+  domain: z.string().nullable(),
+  forceHttps: z.boolean(),
+  certStatus: sslCertStatus,
+  issuer: z.string().nullable(), // ex.: "self-signed (dev)" | "Let's Encrypt"
+  notAfter: z.string().datetime().nullable(),
+  message: z.string().nullable(), // nota honesta sobre limitação/estado
+});
+export type SslStatus = z.infer<typeof sslStatus>;
+
+export const forceHttpsInput = z.object({ forceHttps: z.boolean() });
+export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
+
 /* ─────────────── Erro padronizado da API ─────────────── */
 
 export const apiError = z.object({

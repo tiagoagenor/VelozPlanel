@@ -59,9 +59,9 @@ const SECTIONS: Section[] = [
   { seg: "", label: "Visão geral", icon: LayoutDashboard },
   { seg: "dominio", label: "Domínio & DNS", icon: Globe },
   { seg: "configuracoes", label: "Configurações", icon: Settings },
-  { seg: "arquivos", label: "Arquivos", icon: FolderOpen, soon: true },
-  { seg: "banco", label: "Banco de dados", icon: Database, soon: true },
-  { seg: "ssl", label: "SSL", icon: ShieldCheck, soon: true },
+  { seg: "arquivos", label: "Arquivos", icon: FolderOpen },
+  { seg: "banco", label: "Banco de dados", icon: Database },
+  { seg: "ssl", label: "SSL", icon: ShieldCheck },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
 

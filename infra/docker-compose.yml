@@ -18,5 +18,23 @@ services:
       timeout: 3s
       retries: 10
 
+  # MariaDB compartilhado do "nó" — hospeda os bancos MySQL-compatíveis dos clientes.
+  # Porta 3307 no host para não colidir com um MySQL local em 3306.
+  mariadb:
+    image: mariadb:11
+    container_name: vp-mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: veloz_root_dev
+    ports:
+      - "3308:3306"
+    volumes:
+      - vp_mariadata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   vp_pgdata:
+  vp_mariadata:

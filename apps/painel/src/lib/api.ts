@@ -1,11 +1,17 @@
 import type {
   ChangeRuntimeInput,
+  CreateDatabaseInput,
   CreateEnvironmentInput,
+  Database,
+  DatabaseWithSecret,
   Environment,
+  FileContent,
+  FileList,
   LoginInput,
   MetricSeries,
   Node,
   SessionUser,
+  SslStatus,
 } from "@velozplanel/contracts";
 
 /**
@@ -158,6 +164,31 @@ export function changeRuntime(
   });
 }
 
+/* ─────────────── SSL / HTTPS ─────────────── */
+
+/** Lê o status honesto de SSL/HTTPS do ambiente. */
+export function getSsl(id: string): Promise<SslStatus> {
+  return request<SslStatus>(`/environments/${id}/ssl`);
+}
+
+/** Liga/desliga o redirecionamento para HTTPS. */
+export function setForceHttps(
+  id: string,
+  forceHttps: boolean,
+): Promise<SslStatus> {
+  return request<SslStatus>(`/environments/${id}/ssl/force-https`, {
+    method: "POST",
+    body: { forceHttps },
+  });
+}
+
+/** Emite um certificado (de desenvolvimento no núcleo). Exige domínio. */
+export function issueSsl(id: string): Promise<SslStatus> {
+  return request<SslStatus>(`/environments/${id}/ssl/issue`, {
+    method: "POST",
+  });
+}
+
 /* ─────────────── Métricas ─────────────── */
 
 export function getMetrics(
@@ -166,5 +197,70 @@ export function getMetrics(
 ): Promise<MetricSeries> {
   return request<MetricSeries>(`/environments/${id}/metrics`, {
     query: { window },
+  });
+}
+
+/* ─────────────── Bancos de dados ─────────────── */
+
+export function listDatabases(id: string): Promise<Database[]> {
+  return request<Database[]>(`/environments/${id}/databases`);
+}
+
+/** Cria um banco. A senha vem UMA vez na resposta (não é armazenada em claro). */
+export function createDatabase(
+  id: string,
+  input: CreateDatabaseInput,
+): Promise<DatabaseWithSecret> {
+  return request<DatabaseWithSecret>(`/environments/${id}/databases`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export function deleteDatabase(id: string, dbId: string): Promise<void> {
+  return request<void>(`/environments/${id}/databases/${dbId}`, {
+    method: "DELETE",
+  });
+}
+
+/* ─────────────── Arquivos ─────────────── */
+
+/** Lista o conteúdo de um diretório dentro da raiz do ambiente. */
+export function listFiles(id: string, path?: string): Promise<FileList> {
+  return request<FileList>(`/environments/${id}/files`, { query: { path } });
+}
+
+/** Lê o conteúdo (texto) de um arquivo. `truncated` indica corte por tamanho. */
+export function readFile(id: string, path: string): Promise<FileContent> {
+  return request<FileContent>(`/environments/${id}/files/read`, {
+    query: { path },
+  });
+}
+
+/** Grava (cria/sobrescreve) um arquivo. */
+export function writeFile(
+  id: string,
+  path: string,
+  content: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/files/write`, {
+    method: "POST",
+    body: { path, content },
+  });
+}
+
+/** Cria uma pasta (recursivo). */
+export function mkdirFile(id: string, path: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/files/mkdir`, {
+    method: "POST",
+    body: { path },
+  });
+}
+
+/** Exclui um arquivo ou pasta (recursivo). */
+export function deleteFile(id: string, path: string): Promise<void> {
+  return request<void>(`/environments/${id}/files`, {
+    method: "DELETE",
+    query: { path },
   });
 }

@@ -17,6 +17,7 @@
     "fastify": "^5.1.0",
     "fastify-type-provider-zod": "^4.0.2",
     "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.23.4",
     "pino": "^9.6.0",
     "postgres": "^3.4.5",
     "zod": "^3.24.1"

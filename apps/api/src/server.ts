@@ -38,6 +38,9 @@ import { authRoutes } from "./routes/auth";
 import { nodeRoutes } from "./routes/nodes";
 import { environmentRoutes } from "./routes/environments";
 import { metricsRoutes } from "./routes/metrics";
+import { filesRoutes } from "./routes/files";
+import { databasesRoutes } from "./routes/databases";
+import { sslRoutes } from "./routes/ssl";
 import { startMetricsCollector } from "./metrics-collector";
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -105,6 +108,9 @@ async function main(): Promise<void> {
       await v1.register(nodeRoutes);
       await v1.register(environmentRoutes);
       await v1.register(metricsRoutes);
+      await v1.register(filesRoutes);
+      await v1.register(databasesRoutes);
+      await v1.register(sslRoutes);
     },
     { prefix: "/api/v1" },
   );

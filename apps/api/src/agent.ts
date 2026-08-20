@@ -77,3 +77,62 @@ export function remove(containerId: string): Promise<void> {
 export function stats(containerId: string): Promise<AgentStats> {
   return call<AgentStats>("GET", `/stats/${encodeURIComponent(containerId)}`);
 }
+
+/* ─────────────── Arquivos ─────────────── */
+
+export interface AgentFileEntry {
+  name: string;
+  type: "file" | "dir";
+  size: number;
+  mtime: number;
+}
+
+export function listFiles(
+  containerId: string,
+  path: string,
+): Promise<{ entries: AgentFileEntry[] }> {
+  return call<{ entries: AgentFileEntry[] }>(
+    "GET",
+    `/files/${encodeURIComponent(containerId)}?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export function readFile(
+  containerId: string,
+  path: string,
+): Promise<{ content: string; truncated: boolean }> {
+  return call<{ content: string; truncated: boolean }>(
+    "GET",
+    `/files/${encodeURIComponent(containerId)}/read?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export function writeFile(
+  containerId: string,
+  path: string,
+  content: string,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/write`,
+    { path, content },
+  );
+}
+
+export function mkdir(
+  containerId: string,
+  path: string,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/mkdir`,
+    { path },
+  );
+}
+
+export function removeFile(containerId: string, path: string): Promise<void> {
+  return call<void>(
+    "DELETE",
+    `/files/${encodeURIComponent(containerId)}?path=${encodeURIComponent(path)}`,
+  );
+}

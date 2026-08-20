@@ -29,6 +29,7 @@ import cors from "@fastify/cors";
 import { z } from "zod";
 import { runtimeSpec } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
+import * as files from "./files.js";
 
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 4100);
 
@@ -74,6 +75,18 @@ function errorPayload(err: unknown): { error: string; message: string } {
   const message = err instanceof Error ? err.message : String(err);
   return { error: "docker_error", message };
 }
+
+/** Erro de operação de arquivo -> usa o status embutido; senão cai no Docker. */
+function fileErrorStatus(err: unknown): number {
+  if (err instanceof files.FileError) return err.statusCode;
+  return dockerErrorStatus(err);
+}
+
+/* Schemas das rotas de arquivos. */
+const filesCidParams = z.object({ cid: z.string().min(1) });
+const filesPathQuery = z.object({ path: z.string().min(1) });
+const writeBody = z.object({ path: z.string().min(1), content: z.string() });
+const mkPathBody = z.object({ path: z.string().min(1) });
 
 /* ─────────────── Rotas ─────────────── */
 
@@ -157,6 +170,88 @@ app.get("/stats/:id", async (req, reply) => {
   } catch (err) {
     req.log.error({ err }, "stats failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+/* ─────────────── Rotas de arquivos ─────────────── */
+
+// GET /files/:cid?path= — lista o diretório
+app.get("/files/:cid", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const q = filesPathQuery.safeParse(req.query);
+  if (!p.success || !q.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    const entries = await files.list(p.data.cid, q.data.path);
+    return reply.send({ entries });
+  } catch (err) {
+    req.log.error({ err }, "files.list failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// GET /files/:cid/read?path= — lê um arquivo
+app.get("/files/:cid/read", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const q = filesPathQuery.safeParse(req.query);
+  if (!p.success || !q.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    const result = await files.read(p.data.cid, q.data.path);
+    return reply.send(result);
+  } catch (err) {
+    req.log.error({ err }, "files.read failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/write {path,content} — grava um arquivo
+app.post("/files/:cid/write", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = writeBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.write(p.data.cid, b.data.path, b.data.content);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.write failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/mkdir {path} — cria uma pasta
+app.post("/files/:cid/mkdir", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = mkPathBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.mkdir(p.data.cid, b.data.path);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.mkdir failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// DELETE /files/:cid?path= — remove arquivo ou pasta
+app.delete("/files/:cid", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const q = filesPathQuery.safeParse(req.query);
+  if (!p.success || !q.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.remove(p.data.cid, q.data.path);
+    return reply.code(204).send();
+  } catch (err) {
+    req.log.error({ err }, "files.remove failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
   }
 });
 

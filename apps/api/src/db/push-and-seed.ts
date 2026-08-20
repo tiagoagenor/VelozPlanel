@@ -68,6 +68,29 @@ async function createSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS metric_samples_env_ts_idx
       ON metric_samples (env_id, ts)
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS databases (
+      id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      env_id     uuid NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+      engine     text NOT NULL,
+      name       text NOT NULL,
+      db_user    text NOT NULL,
+      host       text NOT NULL,
+      port       integer NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ssl_configs (
+      env_id      uuid PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE,
+      force_https boolean NOT NULL DEFAULT false,
+      cert_status text NOT NULL DEFAULT 'none',
+      issuer      text,
+      not_after   timestamptz
+    )
+  `;
 }
 
 async function seed(): Promise<void> {

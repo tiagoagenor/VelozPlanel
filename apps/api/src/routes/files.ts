@@ -1,0 +1,234 @@
+import path from "node:path";
+import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { z } from "zod";
+import {
+  fileList,
+  fileContent,
+  writeFileInput,
+  mkPathInput,
+  apiError,
+} from "@velozplanel/contracts";
+import type { FileList, FileContent, RuntimeKind } from "@velozplanel/contracts";
+import { ApiHttpError, requireUser } from "../auth";
+import * as agent from "../agent";
+import { loadEnvironmentForUser } from "./environments";
+import type { EnvironmentRow } from "../db/schema";
+
+/**
+ * Gerenciador de arquivos do ambiente. Todas as operações são confinadas à
+ * RAIZ servida do runtime (php -> /var/www, node -> /app); qualquer caminho que
+ * tente escapar (via `..` ou raiz diferente) é rejeitado com 400.
+ *
+ * As operações reais rodam dentro do container (via Agente/dockerode). Por isso
+ * exigimos o ambiente `running` com `containerId` — senão 409.
+ */
+
+const idParams = z.object({ id: z.string().uuid() });
+const pathQuery = z.object({ path: z.string().optional() });
+
+/** Raiz servida por runtime. */
+function rootFor(kind: RuntimeKind): string {
+  return kind === "php" ? "/var/www" : "/app";
+}
+
+/**
+ * Resolve o caminho pedido DENTRO da raiz do ambiente.
+ * - vazio/ausente => a própria raiz.
+ * - relativo => resolvido a partir da raiz.
+ * - absoluto => tratado como caminho no container.
+ * Normaliza (colapsa `..`) e rejeita qualquer coisa fora da raiz.
+ */
+function resolveWithinRoot(root: string, requested?: string): string {
+  const req = requested && requested.length > 0 ? requested : root;
+  const joined = req.startsWith("/") ? req : path.posix.join(root, req);
+  let resolved = path.posix.normalize(joined);
+  // remove barra final (exceto para "/")
+  if (resolved.length > 1 && resolved.endsWith("/")) {
+    resolved = resolved.slice(0, -1);
+  }
+  if (resolved !== root && !resolved.startsWith(root + "/")) {
+    throw new ApiHttpError(
+      400,
+      "path_out_of_root",
+      "caminho fora da raiz do ambiente",
+    );
+  }
+  return resolved;
+}
+
+/** Garante ambiente ligado com container; senão 409 com mensagem amigável. */
+function requireRunningContainer(env: EnvironmentRow): string {
+  if (env.state !== "running" || !env.containerId) {
+    throw new ApiHttpError(
+      409,
+      "environment_not_running",
+      "inicie o ambiente para ver os arquivos",
+    );
+  }
+  return env.containerId;
+}
+
+export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // GET /environments/:id/files?path= — lista um diretório
+  app.get(
+    "/environments/:id/files",
+    {
+      schema: {
+        params: idParams,
+        querystring: pathQuery,
+        response: {
+          200: fileList,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<FileList> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.query.path);
+      const { entries } = await agent.listFiles(containerId, target);
+      return { path: target, root, entries };
+    },
+  );
+
+  // GET /environments/:id/files/read?path= — lê um arquivo
+  app.get(
+    "/environments/:id/files/read",
+    {
+      schema: {
+        params: idParams,
+        querystring: pathQuery,
+        response: {
+          200: fileContent,
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<FileContent> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.query.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
+      }
+      const result = await agent.readFile(containerId, target);
+      return { path: target, content: result.content, truncated: result.truncated };
+    },
+  );
+
+  // POST /environments/:id/files/write — grava um arquivo
+  app.post(
+    "/environments/:id/files/write",
+    {
+      schema: {
+        params: idParams,
+        body: writeFileInput,
+        response: {
+          200: z.object({ ok: z.boolean() }),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<{ ok: boolean }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.body.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "is_directory", "não é possível gravar sobre a raiz");
+      }
+      await agent.writeFile(containerId, target, req.body.content);
+      return { ok: true };
+    },
+  );
+
+  // POST /environments/:id/files/mkdir — cria uma pasta
+  app.post(
+    "/environments/:id/files/mkdir",
+    {
+      schema: {
+        params: idParams,
+        body: mkPathInput,
+        response: {
+          200: z.object({ ok: z.boolean() }),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<{ ok: boolean }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.body.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "invalid_path", "caminho inválido");
+      }
+      await agent.mkdir(containerId, target);
+      return { ok: true };
+    },
+  );
+
+  // DELETE /environments/:id/files?path= — apaga arquivo ou pasta
+  app.delete(
+    "/environments/:id/files",
+    {
+      schema: {
+        params: idParams,
+        querystring: pathQuery,
+        response: {
+          204: z.null(),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req, reply) => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.query.path);
+      if (target === root) {
+        throw new ApiHttpError(
+          400,
+          "cannot_delete_root",
+          "não é possível excluir a raiz do ambiente",
+        );
+      }
+      await agent.removeFile(containerId, target);
+      return reply.status(204).send(null);
+    },
+  );
+}

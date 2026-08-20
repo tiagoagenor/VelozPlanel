@@ -6,6 +6,7 @@ import {
   doublePrecision,
   integer,
   bigint,
+  boolean,
   index,
 } from "drizzle-orm/pg-core";
 
@@ -71,5 +72,32 @@ export type NodeRow = typeof nodes.$inferSelect;
 export type NewNodeRow = typeof nodes.$inferInsert;
 export type EnvironmentRow = typeof environments.$inferSelect;
 export type NewEnvironmentRow = typeof environments.$inferInsert;
+
+// Bancos de dados dos clientes (metadados; a senha NÃO é guardada em claro).
+export const databases = pgTable("databases", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  envId: uuid("env_id")
+    .notNull()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  engine: text("engine").notNull(), // "mysql"
+  name: text("name").notNull(),
+  dbUser: text("db_user").notNull(),
+  host: text("host").notNull(),
+  port: integer("port").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type DatabaseRow = typeof databases.$inferSelect;
+
+// Configuração de SSL/HTTPS por ambiente.
+export const sslConfigs = pgTable("ssl_configs", {
+  envId: uuid("env_id")
+    .primaryKey()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  forceHttps: boolean("force_https").notNull().default(false),
+  certStatus: text("cert_status").notNull().default("none"),
+  issuer: text("issuer"),
+  notAfter: timestamp("not_after", { withTimezone: true }),
+});
+export type SslConfigRow = typeof sslConfigs.$inferSelect;
 export type MetricSampleRow = typeof metricSamples.$inferSelect;
 export type NewMetricSampleRow = typeof metricSamples.$inferInsert;
