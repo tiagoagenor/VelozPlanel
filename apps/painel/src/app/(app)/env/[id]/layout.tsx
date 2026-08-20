@@ -31,6 +31,7 @@ import {
   FolderOpen,
   Database,
   ShieldCheck,
+  TerminalSquare,
   Archive,
   Play,
   Pause,
@@ -62,6 +63,7 @@ const SECTIONS: Section[] = [
   { seg: "arquivos", label: "Arquivos", icon: FolderOpen },
   { seg: "banco", label: "Banco de dados", icon: Database },
   { seg: "ssl", label: "SSL", icon: ShieldCheck },
+  { seg: "ssh", label: "SSH", icon: TerminalSquare },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
 

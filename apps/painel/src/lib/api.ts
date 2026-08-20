@@ -12,6 +12,10 @@ import type {
   Node,
   SessionUser,
   SslStatus,
+  SshConfig,
+  SshKey,
+  AddSshKeyInput,
+  UpdateSshConfigInput,
 } from "@velozplanel/contracts";
 
 /**
@@ -186,6 +190,39 @@ export function setForceHttps(
 export function issueSsl(id: string): Promise<SslStatus> {
   return request<SslStatus>(`/environments/${id}/ssl/issue`, {
     method: "POST",
+  });
+}
+
+/* ─────────────── SSH / SFTP ─────────────── */
+
+/** Lê a configuração honesta de acesso SSH/SFTP do ambiente. */
+export function getSsh(id: string): Promise<SshConfig> {
+  return request<SshConfig>(`/environments/${id}/ssh`);
+}
+
+/** Grava a configuração (ligar/desligar, modo de auth, escopo de acesso, allowlist). */
+export function updateSsh(
+  id: string,
+  input: UpdateSshConfigInput,
+): Promise<SshConfig> {
+  return request<SshConfig>(`/environments/${id}/ssh`, {
+    method: "PUT",
+    body: input,
+  });
+}
+
+/** Adiciona uma chave pública autorizada (valida formato + fingerprint na API). */
+export function addSshKey(id: string, input: AddSshKeyInput): Promise<SshKey> {
+  return request<SshKey>(`/environments/${id}/ssh/keys`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+/** Remove uma chave pública autorizada do ambiente. */
+export function deleteSshKey(id: string, keyId: string): Promise<void> {
+  return request<void>(`/environments/${id}/ssh/keys/${keyId}`, {
+    method: "DELETE",
   });
 }
 

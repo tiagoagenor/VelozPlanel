@@ -7,6 +7,7 @@ import {
   integer,
   bigint,
   boolean,
+  jsonb,
   index,
 } from "drizzle-orm/pg-core";
 
@@ -99,5 +100,32 @@ export const sslConfigs = pgTable("ssl_configs", {
   notAfter: timestamp("not_after", { withTimezone: true }),
 });
 export type SslConfigRow = typeof sslConfigs.$inferSelect;
+
+// Configuração de acesso SSH/SFTP por ambiente.
+export const sshConfigs = pgTable("ssh_configs", {
+  envId: uuid("env_id")
+    .primaryKey()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  username: text("username").notNull(),
+  port: integer("port").notNull().default(2222),
+  authMode: text("auth_mode").notNull().default("key"),
+  accessScope: text("access_scope").notNull().default("any"),
+  allowlist: jsonb("allowlist").notNull().default([]),
+});
+export type SshConfigRow = typeof sshConfigs.$inferSelect;
+
+// Chaves públicas SSH autorizadas por ambiente.
+export const sshKeys = pgTable("ssh_keys", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  envId: uuid("env_id")
+    .notNull()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  publicKey: text("public_key").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type SshKeyRow = typeof sshKeys.$inferSelect;
 export type MetricSampleRow = typeof metricSamples.$inferSelect;
 export type NewMetricSampleRow = typeof metricSamples.$inferInsert;

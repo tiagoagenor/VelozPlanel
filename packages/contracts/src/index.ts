@@ -287,6 +287,62 @@ export type SslStatus = z.infer<typeof sslStatus>;
 export const forceHttpsInput = z.object({ forceHttps: z.boolean() });
 export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
 
+/* ─────────────── SSH / SFTP (acesso ao ambiente) ─────────────── */
+
+export const sshKey = z.object({
+  id: z.string().uuid(),
+  label: z.string(),
+  fingerprint: z.string(), // SHA256:...
+  publicKey: z.string(),
+  createdAt: z.string().datetime(),
+});
+export type SshKey = z.infer<typeof sshKey>;
+
+export const addSshKeyInput = z.object({
+  label: z.string().min(1).max(60),
+  publicKey: z.string().min(1), // linha completa: "ssh-ed25519 AAAA... comentário"
+});
+export type AddSshKeyInput = z.infer<typeof addSshKeyInput>;
+
+export const sshAuthMode = z.enum(["key", "password", "both"]);
+export type SshAuthMode = z.infer<typeof sshAuthMode>;
+
+/** Acesso: de qualquer IP ou só de uma lista (echo da decisão do cliente). */
+export const sshAccessScope = z.enum(["any", "allowlist"]);
+export type SshAccessScope = z.infer<typeof sshAccessScope>;
+
+export const sshConfig = z.object({
+  envId: z.string().uuid(),
+  enabled: z.boolean(),
+  username: z.string(),
+  host: z.string(),
+  port: z.number().int(),
+  authMode: sshAuthMode,
+  accessScope: sshAccessScope,
+  allowlist: z.array(z.string()), // IPs/CIDRs quando accessScope = allowlist
+  keys: z.array(sshKey),
+  gatewayActive: z.boolean(), // false no núcleo (gateway SSH ativa na fase de infra)
+  message: z.string().nullable(),
+});
+export type SshConfig = z.infer<typeof sshConfig>;
+
+export const updateSshConfigInput = z.object({
+  enabled: z.boolean(),
+  authMode: sshAuthMode,
+  accessScope: sshAccessScope,
+  allowlist: z
+    .array(
+      z
+        .string()
+        .regex(
+          /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/,
+          "informe um IP ou CIDR válido, ex.: 189.40.1.2 ou 189.40.0.0/16",
+        ),
+    )
+    .max(50),
+});
+export type UpdateSshConfigInput = z.infer<typeof updateSshConfigInput>;
+
 /* ─────────────── Erro padronizado da API ─────────────── */
 
 export const apiError = z.object({

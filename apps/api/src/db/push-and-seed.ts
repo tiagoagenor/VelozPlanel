@@ -91,6 +91,29 @@ async function createSchema(): Promise<void> {
       not_after   timestamptz
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ssh_configs (
+      env_id       uuid PRIMARY KEY REFERENCES environments(id) ON DELETE CASCADE,
+      enabled      boolean NOT NULL DEFAULT false,
+      username     text NOT NULL,
+      port         integer NOT NULL DEFAULT 2222,
+      auth_mode    text NOT NULL DEFAULT 'key',
+      access_scope text NOT NULL DEFAULT 'any',
+      allowlist    jsonb NOT NULL DEFAULT '[]'::jsonb
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS ssh_keys (
+      id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      env_id      uuid NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+      label       text NOT NULL,
+      public_key  text NOT NULL,
+      fingerprint text NOT NULL,
+      created_at  timestamptz NOT NULL DEFAULT now()
+    )
+  `;
 }
 
 async function seed(): Promise<void> {
