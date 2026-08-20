@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import {
   environment as environmentSchema,
   createEnvironmentInput,
+  setDomainInput,
+  changeRuntimeInput,
   apiError,
   PLANS,
 } from "@velozplanel/contracts";
@@ -35,6 +37,7 @@ export function toEnvironment(r: EnvironmentRow): Environment {
     state: r.state as EnvState,
     containerId: r.containerId,
     httpPort: r.httpPort,
+    domain: r.domain,
     createdAt: r.createdAt.toISOString(),
   };
 }
@@ -222,6 +225,73 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       // metric_samples caem por ON DELETE CASCADE
       await db.delete(environments).where(eq(environments.id, env.id));
       return reply.status(204).send(null);
+    },
+  );
+
+  // POST /environments/:id/domain — define/limpa o domínio do ambiente
+  app.post(
+    "/environments/:id/domain",
+    {
+      schema: {
+        params: idParams,
+        body: setDomainInput,
+        response: { 200: environmentSchema, 401: apiError, 403: apiError, 404: apiError },
+      },
+    },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const updated = await db
+        .update(environments)
+        .set({ domain: req.body.domain })
+        .where(eq(environments.id, env.id))
+        .returning();
+      return toEnvironment(updated[0] ?? env);
+    },
+  );
+
+  // POST /environments/:id/runtime — troca a versão/linguagem (recria o container)
+  app.post(
+    "/environments/:id/runtime",
+    {
+      schema: {
+        params: idParams,
+        body: changeRuntimeInput,
+        response: { 200: environmentSchema, 401: apiError, 403: apiError, 404: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const planSpec = PLANS[env.plan as PlanId];
+      const newRuntime = req.body;
+
+      // remove o container antigo (se houver) e provisiona um novo com a nova versão
+      if (env.containerId) {
+        try {
+          await agent.remove(env.containerId);
+        } catch (err) {
+          req.log.warn({ err, envId: env.id }, "falha ao remover container antigo na troca de runtime");
+        }
+      }
+      const result = await agent.provision({
+        envId: env.id,
+        name: env.name,
+        runtime: { kind: newRuntime.kind, version: newRuntime.version },
+        limits: { vcpu: planSpec.vcpu, memMb: planSpec.memMb },
+      });
+      const updated = await db
+        .update(environments)
+        .set({
+          runtimeKind: newRuntime.kind,
+          runtimeVersion: newRuntime.version,
+          containerId: result.containerId,
+          httpPort: result.httpPort,
+          state: "running",
+        })
+        .where(eq(environments.id, env.id))
+        .returning();
+      return toEnvironment(updated[0] ?? env);
     },
   );
 }

@@ -76,9 +76,25 @@ export const environment = z.object({
   state: envState,
   containerId: z.string().nullable(),
   httpPort: z.number().int().nullable(), // porta publicada no host de dev
+  domain: z.string().nullable(), // domínio próprio configurado pelo cliente
   createdAt: z.string().datetime(),
 });
 export type Environment = z.infer<typeof environment>;
+
+/** Definir/limpar o domínio do ambiente. `null` remove. */
+export const setDomainInput = z.object({
+  domain: z
+    .string()
+    .min(3)
+    .max(253)
+    .regex(/^([a-z0-9-]+\.)+[a-z]{2,}$/i, "informe um domínio válido, ex.: meusite.com.br")
+    .nullable(),
+});
+export type SetDomainInput = z.infer<typeof setDomainInput>;
+
+/** Trocar a versão/linguagem do runtime (recria o container). */
+export const changeRuntimeInput = runtimeSpec;
+export type ChangeRuntimeInput = RuntimeSpec;
 
 export const createEnvironmentInput = z.object({
   name: z

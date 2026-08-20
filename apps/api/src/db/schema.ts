@@ -46,6 +46,7 @@ export const environments = pgTable("environments", {
   state: text("state").notNull(), // EnvState
   containerId: text("container_id"),
   httpPort: integer("http_port"),
+  domain: text("domain"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

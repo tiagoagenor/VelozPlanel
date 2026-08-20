@@ -46,9 +46,12 @@ async function createSchema(): Promise<void> {
       state           text NOT NULL,
       container_id    text,
       http_port       integer,
+      domain          text,
       created_at      timestamptz NOT NULL DEFAULT now()
     )
   `;
+  // Coluna adicionada depois do núcleo — garante em bancos já existentes.
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS domain text`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS metric_samples (

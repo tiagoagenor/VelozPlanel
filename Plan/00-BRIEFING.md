@@ -447,3 +447,22 @@ Decisão do dono: *"o projeto vai ser feito mas voltado para Ubuntu"*.
   microinterações). Buscar **referências reais na internet** (Hostinger, Hostoo, RunCloud, Ploi, cPanel/Plesk).
 - Método: **loop de 3 rodadas** (referência → implementar → criticar → refinar) até ficar bonito E funcional.
 - Um **agente de referências** (pesquisa e consolida padrões) + um **agente especialista de UX** (implementa).
+
+---
+
+# ADENDO 11 — Navegação em 2 níveis (estilo Hostinger) + Domínio dentro do ambiente
+
+## V. Menu contextual do ambiente ("menu dentro de menu")
+Referência: `Plan/hostiger/*.png` (hPanel). Padrão aprovado pelo dono:
+- **Nível global** (sidebar do app): Ambientes, e futuros (Bancos/Financeiro/Suporte), + Admin.
+- Ao **entrar num ambiente**, a área vira um **contexto de gerência** com um **menu contextual próprio**
+  à esquerda (Visão geral, Domínio & DNS, Configurações/Runtime, e "Em breve": Arquivos, Banco, SSL, Backups),
+  com **breadcrumb** no topo (`Ambientes › meu-site › Visão geral`) para não ficar perdido.
+- Manter descoberta boa (o dono notou que no Hostinger "fica meio escondido" — usar breadcrumb + títulos claros).
+
+## X. Domínio fica DENTRO do ambiente
+- O dono: *"domínio tem que ficar dentro do ambiente pq ele tem que conseguir configurar"*.
+- Remover "Domínios" do topo global; a configuração de domínio/DNS vive no menu contextual do ambiente.
+- Núcleo: seção **Domínio** funcional — o cliente define um domínio (armazenado no ambiente) e vê as
+  **instruções de apontamento** (nameserver/registro A). Provisionamento real de vhost/SSL = fase seguinte.
+- Bônus do núcleo: seção **Configurações** com troca de versão do runtime por botões (recria o container).
