@@ -201,6 +201,18 @@ export const mkPathInput = z.object({
 });
 export type MkPathInput = z.infer<typeof mkPathInput>;
 
+/** Upload de arquivo (binário) para uma pasta: conteúdo em base64. */
+export const uploadFileInput = z.object({
+  dir: z.string().min(1), // pasta de destino (absoluta, confinada à raiz)
+  filename: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\\]+$/, "nome de arquivo inválido (sem barras)"),
+  contentBase64: z.string(), // conteúdo do arquivo em base64
+});
+export type UploadFileInput = z.infer<typeof uploadFileInput>;
+
 /** Renomear/mover dentro do mesmo diretório (só o nome final). */
 export const renameFileInput = z.object({
   path: z.string().min(1), // caminho atual (absoluto)

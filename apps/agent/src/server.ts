@@ -34,6 +34,8 @@ import * as files from "./files.js";
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 4100);
 
 const app = Fastify({
+  // ~40 MiB: acomoda o base64 (~33 MiB) de um arquivo de até ~25 MiB no upload.
+  bodyLimit: 40 * 1024 * 1024,
   logger: {
     transport: {
       target: "pino-pretty",
@@ -86,6 +88,10 @@ function fileErrorStatus(err: unknown): number {
 const filesCidParams = z.object({ cid: z.string().min(1) });
 const filesPathQuery = z.object({ path: z.string().min(1) });
 const writeBody = z.object({ path: z.string().min(1), content: z.string() });
+const uploadBody = z.object({
+  path: z.string().min(1),
+  contentBase64: z.string().min(1),
+});
 const mkPathBody = z.object({ path: z.string().min(1) });
 const renameBody = z.object({
   path: z.string().min(1),
@@ -227,6 +233,22 @@ app.post("/files/:cid/write", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "files.write failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/upload {path,contentBase64} — envia um arquivo (binário via base64)
+app.post("/files/:cid/upload", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = uploadBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.uploadBase64(p.data.cid, b.data.path, b.data.contentBase64);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.upload failed");
     return reply.code(fileErrorStatus(err)).send(errorPayload(err));
   }
 });

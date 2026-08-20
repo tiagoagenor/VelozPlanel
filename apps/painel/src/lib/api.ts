@@ -249,6 +249,23 @@ export function writeFile(
   });
 }
 
+/**
+ * Envia (cria/sobrescreve) um arquivo numa pasta de destino. O conteúdo vai
+ * em base64 (suporta binário: imagens, zip etc.). `dir` é a pasta de destino
+ * (confinada à raiz na API) e `filename` o nome final (sem barras).
+ */
+export function uploadFile(
+  id: string,
+  dir: string,
+  filename: string,
+  contentBase64: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/files/upload`, {
+    method: "POST",
+    body: { dir, filename, contentBase64 },
+  });
+}
+
 /** Cria uma pasta (recursivo). */
 export function mkdirFile(id: string, path: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/environments/${id}/files/mkdir`, {

@@ -58,6 +58,8 @@ const PANEL_ORIGINS = (
 
 async function main(): Promise<void> {
   const app = Fastify({
+    // ~40 MiB: acomoda o base64 (~33 MiB) de um upload de arquivo de até ~25 MiB.
+    bodyLimit: 40 * 1024 * 1024,
     logger: {
       transport: {
         target: "pino-pretty",

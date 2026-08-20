@@ -6,6 +6,7 @@ import {
   fileList,
   fileContent,
   writeFileInput,
+  uploadFileInput,
   mkPathInput,
   renameFileInput,
   chmodInput,
@@ -171,6 +172,43 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
         throw new ApiHttpError(400, "is_directory", "não é possível gravar sobre a raiz");
       }
       await agent.writeFile(containerId, target, req.body.content);
+      return { ok: true };
+    },
+  );
+
+  // POST /environments/:id/files/upload — envia um arquivo (binário via base64)
+  app.post(
+    "/environments/:id/files/upload",
+    {
+      schema: {
+        params: idParams,
+        body: uploadFileInput,
+        response: {
+          200: z.object({ ok: z.boolean() }),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          413: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<{ ok: boolean }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      // Confina a pasta de destino à raiz…
+      const destDir = resolveWithinRoot(root, req.body.dir);
+      // …e o `filename` (já validado pelo contract: sem barras) forma o caminho
+      // final, que confinamos de novo por segurança em profundidade.
+      const target = resolveWithinRoot(root, `${destDir}/${req.body.filename}`);
+      if (target === root) {
+        throw new ApiHttpError(400, "invalid_path", "caminho de destino inválido");
+      }
+      await agent.uploadFile(containerId, target, req.body.contentBase64);
       return { ok: true };
     },
   );

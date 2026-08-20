@@ -14,6 +14,8 @@ import {
   FolderPlus,
   FilePlus,
   Upload,
+  UploadCloud,
+  FolderUp,
   RefreshCw,
   Save,
   Trash2,
@@ -42,6 +44,24 @@ const CODE_EXT = new Set([
 ]);
 
 const PAGE_SIZE = 50;
+
+/** Teto de tamanho por arquivo no envio (~25 MiB, alinhado à API/Agente). */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/** Lê um arquivo do navegador como base64 (sem o prefixo `data:...;base64,`). */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("não foi possível ler o arquivo"));
+    reader.readAsDataURL(file);
+  });
+}
 
 function extOf(name: string): string {
   const i = name.lastIndexOf(".");
@@ -205,6 +225,315 @@ function RowActions({
   );
 }
 
+/* ─────────────── Modal de envio (dropzone + pasta de destino) ─────────────── */
+
+interface UploadModalProps {
+  open: boolean;
+  onClose: () => void;
+  id: string;
+  root: string;
+  initialDir: string;
+  onUploaded: (destDir: string) => void;
+}
+
+interface Chosen {
+  file: File;
+  id: string; // chave estável para a lista/remoção
+}
+
+/**
+ * Modal de envio de arquivos:
+ *  - Seleção da pasta de destino: começa na pasta atual; navega pelas subpastas
+ *    (item ".." sobe, confinado à raiz) e mostra sempre o caminho de destino.
+ *  - Dropzone grande: clique abre o seletor nativo (multiple) e aceita drag&drop
+ *    com feedback visual.
+ *  - Lista dos arquivos escolhidos (nome + tamanho) com remoção; aviso de limite.
+ *  - Lê cada arquivo como base64 e envia um a um, com progresso e falha parcial.
+ */
+function UploadModal({
+  open,
+  onClose,
+  id,
+  root,
+  initialDir,
+  onUploaded,
+}: UploadModalProps) {
+  const toast = useToast();
+  const [destDir, setDestDir] = React.useState(initialDir);
+  const [chosen, setChosen] = React.useState<Chosen[]>([]);
+  const [dragOver, setDragOver] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [progress, setProgress] = React.useState<{ current: number; total: number } | null>(
+    null,
+  );
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const seq = React.useRef(0);
+
+  // Ao (re)abrir, reseta o destino para a pasta atual e limpa a seleção.
+  React.useEffect(() => {
+    if (open) {
+      setDestDir(initialDir);
+      setChosen([]);
+      setDragOver(false);
+      setBusy(false);
+      setProgress(null);
+    }
+  }, [open, initialDir]);
+
+  // Lista o destino para oferecer navegação pelas subpastas.
+  const destQuery = useQuery({
+    queryKey: ["files", id, destDir],
+    queryFn: () => api.listFiles(id, destDir),
+    enabled: open,
+    retry: false,
+  });
+  const subdirs = React.useMemo(
+    () => (destQuery.data?.entries ?? []).filter((e) => e.type === "dir"),
+    [destQuery.data?.entries],
+  );
+
+  function parentOf(path: string): string {
+    const idx = path.lastIndexOf("/");
+    if (idx <= 0) return "/";
+    return path.slice(0, idx);
+  }
+  const canGoUp = destDir !== root && destDir.startsWith(root + "/");
+
+  function addFiles(list: FileList | File[]) {
+    const arr = Array.from(list);
+    if (arr.length === 0) return;
+    setChosen((prev) => [
+      ...prev,
+      ...arr.map((file) => ({ file, id: `f${seq.current++}` })),
+    ]);
+  }
+
+  function onInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) addFiles(e.target.files);
+    e.target.value = "";
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    if (busy) return;
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
+  }
+
+  function removeChosen(cid: string) {
+    setChosen((prev) => prev.filter((c) => c.id !== cid));
+  }
+
+  const oversized = chosen.filter((c) => c.file.size > MAX_UPLOAD_BYTES);
+  const hasOversized = oversized.length > 0;
+  const canSend = chosen.length > 0 && !hasOversized && !busy;
+
+  async function startUpload() {
+    if (!canSend) return;
+    setBusy(true);
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < chosen.length; i++) {
+      setProgress({ current: i + 1, total: chosen.length });
+      const entry = chosen[i];
+      if (!entry) continue;
+      const { file } = entry;
+      try {
+        const b64 = await fileToBase64(file);
+        await api.uploadFile(id, destDir, file.name, b64);
+        ok++;
+      } catch {
+        fail++;
+      }
+    }
+    setBusy(false);
+    setProgress(null);
+    if (fail === 0) {
+      toast.show("success", `${ok} arquivo(s) enviado(s).`);
+    } else if (ok === 0) {
+      toast.show("error", `Falha ao enviar ${fail} arquivo(s).`);
+    } else {
+      toast.show("error", `${ok} enviado(s), ${fail} falha(s).`);
+    }
+    onUploaded(destDir);
+    onClose();
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      title="Enviar arquivo"
+      description="Escolha a pasta de destino e arraste ou selecione os arquivos."
+      className="w-[min(94vw,42rem)]"
+    >
+      <div className="flex flex-col gap-4">
+        {/* Seleção da pasta de destino */}
+        <div className="flex flex-col gap-2">
+          <Label>Pasta de destino</Label>
+          <div className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg px-3 py-2">
+            <Folder size={16} aria-hidden="true" className="shrink-0 text-brand-strong" />
+            <span className="truncate font-mono text-sm text-text" title={destDir}>
+              {destDir}
+            </span>
+          </div>
+          <div className="max-h-40 overflow-y-auto rounded-lg border border-border-subtle">
+            {canGoUp ? (
+              <button
+                type="button"
+                onClick={() => setDestDir(parentOf(destDir))}
+                disabled={busy}
+                className="flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2 text-left text-sm text-link hover:bg-brand-soft disabled:opacity-50"
+              >
+                <FolderUp size={16} aria-hidden="true" />
+                .. (subir)
+              </button>
+            ) : null}
+            {destQuery.isPending ? (
+              <div className="grid h-16 place-items-center">
+                <Loader2 size={18} className="animate-spin text-brand-strong" aria-label="Carregando" />
+              </div>
+            ) : subdirs.length === 0 ? (
+              <p className="px-3 py-3 text-xs text-text3">Nenhuma subpasta aqui.</p>
+            ) : (
+              <ul className="divide-y divide-border-subtle">
+                {subdirs.map((d) => (
+                  <li key={d.name}>
+                    <button
+                      type="button"
+                      onClick={() => setDestDir(joinPath(destDir, d.name))}
+                      disabled={busy}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text hover:bg-brand-soft disabled:opacity-50"
+                    >
+                      <Folder size={16} aria-hidden="true" className="text-brand-strong" />
+                      <span className="truncate">{d.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {/* Dropzone */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Arraste arquivos aqui ou clique para selecionar"
+          onClick={() => !busy && inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && !busy) {
+              e.preventDefault();
+              inputRef.current?.click();
+            }
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            if (!busy) setDragOver(true);
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+          }}
+          onDrop={onDrop}
+          className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors ${
+            dragOver
+              ? "border-brand-strong bg-brand-soft"
+              : "border-border bg-bg hover:border-brand-strong"
+          } ${busy ? "pointer-events-none opacity-60" : ""}`}
+        >
+          <UploadCloud size={32} aria-hidden="true" className="text-brand-strong" />
+          <p className="text-sm font-medium text-text">
+            Arraste arquivos aqui ou clique para selecionar
+          </p>
+          <p className="text-xs text-text3">
+            Vários arquivos, incluindo binários (imagens, zip). Máx. 25 MB por arquivo.
+          </p>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={onInputChange}
+          />
+        </div>
+
+        {/* Lista dos arquivos escolhidos */}
+        {chosen.length > 0 ? (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium text-text2">
+              {chosen.length} arquivo(s) selecionado(s)
+            </span>
+            <ul className="max-h-44 divide-y divide-border-subtle overflow-y-auto rounded-lg border border-border-subtle">
+              {chosen.map((c) => {
+                const big = c.file.size > MAX_UPLOAD_BYTES;
+                return (
+                  <li
+                    key={c.id}
+                    className="flex items-center gap-3 px-3 py-2 text-sm"
+                  >
+                    <FileIcon size={16} aria-hidden="true" className="shrink-0 text-text3" />
+                    <span className="min-w-0 flex-1 truncate text-text" title={c.file.name}>
+                      {c.file.name}
+                    </span>
+                    <span
+                      className={`shrink-0 text-xs ${big ? "font-medium text-danger" : "text-text3"}`}
+                    >
+                      {formatSize(c.file.size)}
+                    </span>
+                    {big ? (
+                      <AlertTriangle
+                        size={14}
+                        aria-label="Acima do limite de 25 MB"
+                        className="shrink-0 text-danger"
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => removeChosen(c.id)}
+                      disabled={busy}
+                      aria-label={`Remover ${c.file.name}`}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger disabled:opacity-50"
+                    >
+                      <X size={14} aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {hasOversized ? (
+              <p role="alert" className="flex items-center gap-1.5 text-xs text-danger">
+                <AlertTriangle size={13} aria-hidden="true" />
+                {oversized.length} arquivo(s) acima de 25 MB. Remova-os para enviar.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Rodapé: progresso + ações */}
+        <div className="flex items-center justify-between gap-2">
+          <span aria-live="polite" className="text-sm text-text2">
+            {progress ? `Enviando ${progress.current}/${progress.total}…` : ""}
+          </span>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={() => void startUpload()} disabled={!canSend}>
+              {busy ? (
+                <Loader2 size={16} aria-hidden="true" className="animate-spin" />
+              ) : (
+                <UploadCloud size={16} aria-hidden="true" />
+              )}
+              {busy ? "Enviando…" : "Enviar"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
 export default function EnvArquivosPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -229,7 +558,7 @@ export default function EnvArquivosPage() {
   const [bulkChmodOpen, setBulkChmodOpen] = React.useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false);
   const [bulkBusy, setBulkBusy] = React.useState(false);
-  const uploadRef = React.useRef<HTMLInputElement>(null);
+  const [uploadOpen, setUploadOpen] = React.useState(false);
   const selectAllRef = React.useRef<HTMLInputElement>(null);
 
   const listQuery = useQuery({
@@ -337,19 +666,6 @@ export default function EnvArquivosPage() {
       toast.show("error", err instanceof Error ? err.message : "Falha ao alterar permissões."),
   });
 
-  const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const text = await file.text();
-      return api.writeFile(id, joinPath(currentPath, file.name), text);
-    },
-    onSuccess: () => {
-      toast.show("success", "Arquivo enviado.");
-      refresh();
-    },
-    onError: (err) =>
-      toast.show("error", err instanceof Error ? err.message : "Falha ao enviar arquivo."),
-  });
-
   async function handleDownload(entry: FileEntry) {
     setDownloadingName(entry.name);
     try {
@@ -448,12 +764,6 @@ export default function EnvArquivosPage() {
     const digits = three.split("");
     digits[idx] = String(tripletToDigit(trip));
     setModeInput(specialPrefix(modeInput) + digits.join(""));
-  }
-
-  function onUploadChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) uploadMutation.mutate(file);
-    e.target.value = "";
   }
 
   // Segmentos do breadcrumb (relativos à raiz).
@@ -635,18 +945,12 @@ export default function EnvArquivosPage() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => uploadRef.current?.click()}
-            disabled={!root || uploadMutation.isPending}
+            onClick={() => setUploadOpen(true)}
+            disabled={!root}
           >
             <Upload size={16} aria-hidden="true" />
             Enviar arquivo
           </Button>
-          <input
-            ref={uploadRef}
-            type="file"
-            className="hidden"
-            onChange={onUploadChange}
-          />
           <Button
             size="sm"
             variant="ghost"
@@ -964,6 +1268,18 @@ export default function EnvArquivosPage() {
           </div>
         </>
       )}
+
+      {/* Modal: enviar arquivo (dropzone + pasta de destino) */}
+      {root ? (
+        <UploadModal
+          open={uploadOpen}
+          onClose={() => setUploadOpen(false)}
+          id={id}
+          root={root}
+          initialDir={currentPath}
+          onUploaded={() => refresh()}
+        />
+      ) : null}
 
       {/* Dialog: nova pasta / novo arquivo */}
       <Dialog

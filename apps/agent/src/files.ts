@@ -21,6 +21,7 @@ const docker = new Docker(); // /var/run/docker.sock (Docker Desktop no Mac)
 const MAX_READ_BYTES = 512 * 1024; // 512 KiB — teto de leitura no editor
 const MAX_WRITE_BYTES = 1024 * 1024; // ~1 MiB — teto de gravação
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto de download
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto de envio (bytes decodificados)
 
 export interface FileEntry {
   name: string;
@@ -197,6 +198,43 @@ export async function write(
   const { stderr, exitCode } = await exec(containerId, ["sh", "-c", script]);
   if (exitCode !== 0) {
     throw new FileError(400, stderr || "não foi possível gravar o arquivo");
+  }
+}
+
+/**
+ * Grava um arquivo (cria/sobrescreve) a partir de conteúdo JÁ em base64
+ * (envio de arquivo — suporta binário: imagens, zip etc.). Ao contrário do
+ * `write`, NÃO re-encodamos: os bytes já vêm em base64 do cliente. Decodifica
+ * dentro do container com `base64 -d`, confinado à raiz (mesmo transporte do
+ * `write`, sem passar o conteúdo pela memória em UTF-8).
+ */
+export async function uploadBase64(
+  containerId: string,
+  path: string,
+  base64: string,
+): Promise<void> {
+  assertSafePath(path);
+  // Normaliza (remove espaços/quebras) e valida o alfabeto base64.
+  const b64 = base64.replace(/\s+/g, "");
+  if (b64.length === 0) {
+    throw new FileError(400, "conteúdo vazio");
+  }
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) {
+    throw new FileError(400, "conteúdo base64 inválido");
+  }
+  // Estima os bytes decodificados a partir do tamanho do base64 (4 chars -> 3 bytes).
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  const decodedBytes = Math.floor((b64.length * 3) / 4) - padding;
+  if (decodedBytes > MAX_UPLOAD_BYTES) {
+    throw new FileError(
+      413,
+      `arquivo muito grande para envio (máx ${MAX_UPLOAD_BYTES} bytes)`,
+    );
+  }
+  const script = `printf %s ${sq(b64)} | base64 -d > ${sq(path)}`;
+  const { stderr, exitCode } = await exec(containerId, ["sh", "-c", script]);
+  if (exitCode !== 0) {
+    throw new FileError(400, stderr || "não foi possível enviar o arquivo");
   }
 }
 

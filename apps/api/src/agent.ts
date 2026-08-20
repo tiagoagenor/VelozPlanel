@@ -126,6 +126,18 @@ export function writeFile(
   );
 }
 
+export function uploadFile(
+  containerId: string,
+  path: string,
+  contentBase64: string,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/upload`,
+    { path, contentBase64 },
+  );
+}
+
 export function mkdir(
   containerId: string,
   path: string,
