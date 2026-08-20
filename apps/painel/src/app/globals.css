@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+/*
+ * Tokens de cor acessíveis (WCAG 2.2 — contraste ≥ 7:1 para texto).
+ * Valores retirados de Plan/especialistas/10-acessibilidade-qualidade.md §3.
+ * Os tokens trocam sozinhos entre claro/escuro; não usamos variantes dark:.
+ */
+
+@theme inline {
+  --color-bg: var(--vp-bg);
+  --color-surface: var(--vp-surface);
+  --color-elevated: var(--vp-elevated);
+  --color-border: var(--vp-border);
+  --color-border-subtle: var(--vp-border-subtle);
+  --color-text: var(--vp-text);
+  --color-text2: var(--vp-text-2);
+  --color-text3: var(--vp-text-3);
+  --color-link: var(--vp-link);
+  --color-brand: var(--vp-brand);
+  --color-success: var(--vp-success);
+  --color-warning: var(--vp-warning);
+  --color-danger: var(--vp-danger);
+  --color-info: var(--vp-info);
+  --color-neutral: var(--vp-neutral);
+  --color-accent: var(--vp-accent);
+  --color-focus: var(--vp-focus);
+  --color-on-solid: var(--vp-on-solid);
+}
+
+/* ── Tema claro (default) ── */
+:root {
+  --vp-bg: #ffffff;
+  --vp-surface: #f4f6f9;
+  --vp-elevated: #ffffff;
+  --vp-border: #7e8a9a;
+  --vp-border-subtle: #dde3ea;
+  --vp-text: #10151c;
+  --vp-text-2: #3d4757;
+  --vp-text-3: #46505f;
+  --vp-link: #0a46b8;
+  --vp-brand: #0a46b8;
+  --vp-success: #0b5f2e;
+  --vp-warning: #6e4200;
+  --vp-danger: #9e1420;
+  --vp-info: #095078;
+  --vp-neutral: #4a5462;
+  --vp-accent: #5a2296;
+  --vp-focus: #0a46b8;
+  --vp-focus-halo: #ffffff;
+  /* texto sobre preenchimento sólido de botão */
+  --vp-on-solid: #ffffff;
+}
+
+/* ── Tema escuro por preferência do SO (respeita o toggle explícito) ── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --vp-bg: #0d1117;
+    --vp-surface: #161b22;
+    --vp-elevated: #1f2733;
+    --vp-border: #657385;
+    --vp-border-subtle: #2a323d;
+    --vp-text: #f2f5f9;
+    --vp-text-2: #c7d0dc;
+    --vp-text-3: #a9b4c4;
+    --vp-link: #8fbbff;
+    --vp-brand: #8fbbff;
+    --vp-success: #6edb97;
+    --vp-warning: #ffc53d;
+    --vp-danger: #ff9a94;
+    --vp-info: #7cc7f0;
+    --vp-neutral: #c7d0dc;
+    --vp-accent: #c4a2f5;
+    --vp-focus: #8fbbff;
+    --vp-focus-halo: #0d1117;
+    /* no escuro o preenchimento é claro → texto escuro */
+    --vp-on-solid: #0d1117;
+  }
+}
+
+/* ── Toggle explícito para escuro vence o media query ── */
+:root[data-theme="dark"] {
+  --vp-bg: #0d1117;
+  --vp-surface: #161b22;
+  --vp-elevated: #1f2733;
+  --vp-border: #657385;
+  --vp-border-subtle: #2a323d;
+  --vp-text: #f2f5f9;
+  --vp-text-2: #c7d0dc;
+  --vp-text-3: #a9b4c4;
+  --vp-link: #8fbbff;
+  --vp-brand: #8fbbff;
+  --vp-success: #6edb97;
+  --vp-warning: #ffc53d;
+  --vp-danger: #ff9a94;
+  --vp-info: #7cc7f0;
+  --vp-neutral: #c7d0dc;
+  --vp-accent: #c4a2f5;
+  --vp-focus: #8fbbff;
+  --vp-focus-halo: #0d1117;
+  --vp-on-solid: #0d1117;
+}
+
+html,
+body {
+  background-color: var(--vp-bg);
+  color: var(--vp-text);
+}
+
+body {
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Foco visível (2.4.13 Focus Appearance, AAA): anel 3px + halo 1px ── */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--vp-focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--vp-focus-halo);
+  border-radius: inherit;
+}
+
+@media (forced-colors: active) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 3px solid Highlight;
+    box-shadow: none;
+  }
+}
+
+/* ── Reduz movimento quando solicitado (2.3.3) ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* uPlot herda as cores do tema */
+.uplot,
+.uplot * {
+  font-family: inherit;
+}

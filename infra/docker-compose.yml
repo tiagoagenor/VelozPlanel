@@ -1,0 +1,22 @@
+# Postgres do control plane (desenvolvimento local).
+# Porta 5433 no host para não colidir com um Postgres local em 5432.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: vp-postgres
+    environment:
+      POSTGRES_USER: veloz
+      POSTGRES_PASSWORD: veloz_dev
+      POSTGRES_DB: velozpanel
+    ports:
+      - "5433:5432"
+    volumes:
+      - vp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veloz -d velozpanel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  vp_pgdata:

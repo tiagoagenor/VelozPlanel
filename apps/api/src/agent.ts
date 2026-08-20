@@ -1,0 +1,79 @@
+import type { RuntimeSpec } from "@velozplanel/contracts";
+import { ApiHttpError } from "./auth";
+
+/**
+ * Cliente HTTP do Agente (dockerode) em http://localhost:4100.
+ * Todas as chamadas usam o `fetch` global (Node >= 22).
+ */
+const AGENT_URL = process.env.AGENT_URL ?? "http://localhost:4100";
+
+export interface ProvisionInput {
+  envId: string;
+  name: string;
+  runtime: RuntimeSpec;
+  limits: { vcpu: number; memMb: number };
+}
+
+export interface ProvisionResult {
+  containerId: string;
+  httpPort: number;
+}
+
+export interface AgentStats {
+  cpuPct: number;
+  memBytes: number;
+  memLimitBytes: number;
+}
+
+async function call<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${AGENT_URL}${path}`, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (cause) {
+    throw new ApiHttpError(
+      502,
+      "agent_unreachable",
+      `não foi possível falar com o Agente em ${AGENT_URL}`,
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiHttpError(
+      502,
+      "agent_error",
+      `Agente respondeu ${res.status} em ${method} ${path}: ${text}`,
+    );
+  }
+  // 204 / corpo vazio
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+export function provision(input: ProvisionInput): Promise<ProvisionResult> {
+  return call<ProvisionResult>("POST", "/provision", input);
+}
+
+export function start(containerId: string): Promise<{ httpPort: number }> {
+  return call<{ httpPort: number }>("POST", "/start", { containerId });
+}
+
+export function stop(containerId: string): Promise<void> {
+  return call<void>("POST", "/stop", { containerId });
+}
+
+export function remove(containerId: string): Promise<void> {
+  return call<void>("DELETE", `/container/${encodeURIComponent(containerId)}`);
+}
+
+export function stats(containerId: string): Promise<AgentStats> {
+  return call<AgentStats>("GET", `/stats/${encodeURIComponent(containerId)}`);
+}

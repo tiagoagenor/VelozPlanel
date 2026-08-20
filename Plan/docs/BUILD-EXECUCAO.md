@@ -20,31 +20,46 @@
 ---
 
 ## FASE F — Fundação
-- [~] F1. Repositório git local + `.gitignore` (exclui screenshots com dado de terceiro) + README
-- [ ] F2. Primeiro commit e push para `github.com/tiagoagenor/VelozPlanel` (main)
+- [x] F1. Repositório git local + `.gitignore` (exclui screenshots com dado de terceiro) + README
+- [x] F2. Primeiro commit e push para `github.com/tiagoagenor/VelozPlanel` (main) — commit 5a5a492, verificado no remoto
 - [ ] F3. Esqueleto do monorepo (pnpm workspaces): `apps/`, `packages/`, `infra/`, tooling (lint/tsconfig)
 - [ ] F4. CI mínimo (typecheck + lint) — validar que roda
 
 ## FASE V — Ambiente KVM de desenvolvimento (no server-local)
-- [~] V1. Validar aptidão KVM do host (feito: bare metal, VT-x, /dev/kvm, cgroup v2) ✅
-- [ ] V2. Definir modo libvirt sem sudo (`qemu:///session`) OU pedir ao dono para habilitar libvirt de sistema
-- [ ] V3. Baixar imagem cloud Ubuntu 24.04 (noble) no servidor
-- [ ] V4. Criar seed cloud-init sem `cloud-localds` (via `genisoimage`/virt-install `--cloud-init`)
+- [x] V1. Validar aptidão KVM do host — bare metal, VT-x, /dev/kvm, cgroup v2 ✅
+- [x] V2. Modo libvirt: usuário está no grupo `libvirt` → `qemu:///system` **sem sudo** ✅ (seed via `xorriso`)
+- [~] V3. Baixar imagem cloud Ubuntu 24.04 (noble) — download em andamento (~/vp-dev/images/noble.img.part)
+- [ ] V4. Criar seed cloud-init (via `xorriso` ou virt-install `--cloud-init`)
 - [ ] V5. Subir VM `vp-node-1` (Ubuntu 24.04) e validar boot + SSH interno
 - [ ] V6. Portar o `veloz-node-doctor.sh` para Ubuntu e rodar dentro da VM → exit 0/2
 - [ ] V7. (depois) VM `vp-cp` (control plane) e `vp-node-2` para topologia de 2 nós
 - [ ] V8. Rede: bridge/NAT entre as VMs; testar conectividade CP↔nó
+
+Host reconciliado: **4 vCPU / 15 GB RAM / 98 GB (48 livres)**. VMs de dev serão enxutas (2 vCPU, 2–4 GB, disco thin).
 
 ## FASE 0 — Portões (do plano) adaptados ao dev local
 - [ ] P1. node-doctor verde na VM de nó
 - [ ] P2. Docker + userns-remap + quota de projeto (XFS) funcionando na VM
 - [ ] P3. Medição inicial: RSS de um container ocioso, boot time (indicativo, não densidade final)
 
-## FASE E — Entregas (do CHECKLIST-DESENVOLVIMENTO.md, E1..E14)
-> Só começam depois de F+V+0 verdes. Detalhe em `CHECKLIST-DESENVOLVIMENTO.md`.
-- [ ] E1. Esqueleto control plane (API Fastify + Postgres + auth) + healthcheck
-- [ ] E2. Agente do nó (Node) que conecta ao CP (WebSocket mTLS) e reporta heartbeat
-- [ ] ... E3–E14 conforme o checklist principal
+## ALVO ATUAL — "NÚCLEO RODANDO" (escolha do dono, 2026-08-20)
+O dono quer testar quando estiver **tudo pronto e testado por mim** — sem marcos intermediários.
+Alvo do primeiro entregável testável (roda LOCAL, no Mac, com Docker):
+- [ ] N1. Monorepo pnpm (contracts, api, agent, painel) + `pnpm install` limpo
+- [ ] N2. Postgres via docker-compose + schema (Drizzle) das entidades do núcleo
+- [ ] N3. API Fastify: auth (login), nodes, environments (criar/listar/pausar/iniciar), métricas
+- [ ] N4. Agente: cria/roda/para container Docker real (dockerode) = "ambiente"; coleta stats
+- [ ] N5. Painel Next.js: login, dashboard, lista de ambientes, criar ambiente (PHP/Node + versão),
+      detalhe do ambiente com gráficos de consumo, visão super admin de nós
+- [ ] N6. Fluxo ponta a ponta validado por MIM: criar → ver rodando (página do container no browser)
+      → pausar (custo/estado muda) → iniciar → gráficos preenchendo
+- [ ] N7. Prints de tudo funcionando + instruções de como o dono sobe local (`pnpm dev` / compose)
+- [ ] N8. Push do núcleo para o GitHub
+
+Só depois disto: E1..E14 completos (multi-nó, billing real, módulos, SSL, backup) no server + VMs.
+
+## FASE E — Entregas completas (do CHECKLIST-DESENVOLVIMENTO.md, E1..E14) — DEPOIS do núcleo
+- [ ] E1..E14 conforme o checklist principal, migrando o núcleo para as VMs Ubuntu + 2 nós.
 
 ---
 

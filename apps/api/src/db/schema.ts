@@ -1,0 +1,74 @@
+import {
+  pgTable,
+  uuid,
+  text,
+  timestamp,
+  doublePrecision,
+  integer,
+  bigint,
+  index,
+} from "drizzle-orm/pg-core";
+
+/**
+ * Esquema Drizzle (postgres-js) — fonte da estrutura do DB do núcleo.
+ * Colunas de enum são armazenadas como text (validadas na borda pelos schemas do contracts).
+ */
+
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  role: text("role").notNull(), // "admin" | "client"
+  passwordHash: text("password_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const nodes = pgTable("nodes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  region: text("region").notNull(),
+  status: text("status").notNull(), // "online" | "degraded" | "offline"
+  vcpuTotal: doublePrecision("vcpu_total").notNull(),
+  memMbTotal: integer("mem_mb_total").notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+});
+
+export const environments = pgTable("environments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  ownerId: uuid("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  nodeId: uuid("node_id").references(() => nodes.id, { onDelete: "set null" }),
+  plan: text("plan").notNull(), // PlanId
+  runtimeKind: text("runtime_kind").notNull(), // RuntimeKind
+  runtimeVersion: text("runtime_version").notNull(),
+  state: text("state").notNull(), // EnvState
+  containerId: text("container_id"),
+  httpPort: integer("http_port"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const metricSamples = pgTable(
+  "metric_samples",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    envId: uuid("env_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
+    cpuPct: doublePrecision("cpu_pct").notNull(),
+    memBytes: bigint("mem_bytes", { mode: "number" }).notNull(),
+    memLimitBytes: bigint("mem_limit_bytes", { mode: "number" }).notNull(),
+  },
+  (t) => [index("metric_samples_env_ts_idx").on(t.envId, t.ts)],
+);
+
+export type UserRow = typeof users.$inferSelect;
+export type NewUserRow = typeof users.$inferInsert;
+export type NodeRow = typeof nodes.$inferSelect;
+export type NewNodeRow = typeof nodes.$inferInsert;
+export type EnvironmentRow = typeof environments.$inferSelect;
+export type NewEnvironmentRow = typeof environments.$inferInsert;
+export type MetricSampleRow = typeof metricSamples.$inferSelect;
+export type NewMetricSampleRow = typeof metricSamples.$inferInsert;

@@ -1,0 +1,22 @@
+{
+  "name": "velozplanel",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:db": "docker compose -f infra/docker-compose.yml up -d",
+    "dev:db:down": "docker compose -f infra/docker-compose.yml down",
+    "db:push": "pnpm --filter @velozplanel/api db:push",
+    "dev:api": "pnpm --filter @velozplanel/api dev",
+    "dev:agent": "pnpm --filter @velozplanel/agent dev",
+    "dev:painel": "pnpm --filter @velozplanel/painel dev",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
