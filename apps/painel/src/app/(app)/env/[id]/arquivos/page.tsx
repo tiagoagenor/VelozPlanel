@@ -523,7 +523,7 @@ function UploadModal({
         {/* ESQUERDA — árvore de pastas */}
         <div className="flex min-h-0 flex-col gap-2">
           <Label>Pasta de destino</Label>
-          <div className="max-h-[52vh] min-h-[16rem] overflow-y-auto rounded-lg border border-border-subtle bg-bg p-1">
+          <div className="h-[20rem] max-h-[50vh] overflow-y-auto overscroll-contain rounded-lg border border-border-subtle bg-bg p-1">
             <ul role="tree" aria-label="Árvore de pastas do ambiente" className="flex flex-col">
               <TreeNode
                 id={id}

@@ -30,31 +30,49 @@ import type { EnvironmentRow } from "../db/schema";
 const idParams = z.object({ id: z.string().uuid() });
 const pathQuery = z.object({ path: z.string().optional() });
 
-/** Raiz servida por runtime. */
-function rootFor(kind: RuntimeKind): string {
+/**
+ * Modelo de confinamento por runtime:
+ *  - `confineRoot`: limite que o cliente NÃO pode ultrapassar (defesa em
+ *    profundidade). Em PHP fica em `/var` porque o "core" (ex.: Laravel) mora
+ *    FORA da pasta web (`/var/www`), então é preciso subir para `/var` e criar
+ *    pastas irmãs de `www`. Em Node o limite continua sendo `/app`.
+ *  - `defaultPath`: onde a tela abre por padrão quando não vem `path`
+ *    (a pasta web servida): PHP → `/var/www`, Node → `/app`.
+ */
+function confineRootFor(kind: RuntimeKind): string {
+  return kind === "php" ? "/var" : "/app";
+}
+
+function defaultPathFor(kind: RuntimeKind): string {
   return kind === "php" ? "/var/www" : "/app";
 }
 
 /**
- * Resolve o caminho pedido DENTRO da raiz do ambiente.
- * - vazio/ausente => a própria raiz.
- * - relativo => resolvido a partir da raiz.
+ * Resolve o caminho pedido DENTRO do limite de confinamento (`confineRoot`).
+ * - vazio/ausente => `fallback` (default: o próprio `confineRoot`).
+ * - relativo => resolvido a partir do `confineRoot`.
  * - absoluto => tratado como caminho no container.
- * Normaliza (colapsa `..`) e rejeita qualquer coisa fora da raiz.
+ * Normaliza (colapsa `..`) e rejeita qualquer coisa fora do `confineRoot`
+ * (nada de `..` acima de `/var`).
  */
-function resolveWithinRoot(root: string, requested?: string): string {
-  const req = requested && requested.length > 0 ? requested : root;
-  const joined = req.startsWith("/") ? req : path.posix.join(root, req);
+function resolveWithinRoot(
+  confineRoot: string,
+  requested?: string,
+  fallback?: string,
+): string {
+  const base = fallback ?? confineRoot;
+  const req = requested && requested.length > 0 ? requested : base;
+  const joined = req.startsWith("/") ? req : path.posix.join(confineRoot, req);
   let resolved = path.posix.normalize(joined);
   // remove barra final (exceto para "/")
   if (resolved.length > 1 && resolved.endsWith("/")) {
     resolved = resolved.slice(0, -1);
   }
-  if (resolved !== root && !resolved.startsWith(root + "/")) {
+  if (resolved !== confineRoot && !resolved.startsWith(confineRoot + "/")) {
     throw new ApiHttpError(
       400,
       "path_out_of_root",
-      "caminho fora da raiz do ambiente",
+      "caminho fora do limite do ambiente",
     );
   }
   return resolved;
@@ -105,10 +123,17 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
-      const target = resolveWithinRoot(root, req.query.path);
+      const kind = env.runtimeKind as RuntimeKind;
+      const confineRoot = confineRootFor(kind);
+      // Sem `path`, abre na pasta web servida (defaultPath, ex.: /var/www).
+      const target = resolveWithinRoot(
+        confineRoot,
+        req.query.path,
+        defaultPathFor(kind),
+      );
       const { entries } = await agent.listFiles(containerId, target);
-      return { path: target, root, entries };
+      // `root` é o limite de confinamento — o breadcrumb/árvore sobem até ele.
+      return { path: target, root: confineRoot, entries };
     },
   );
 
@@ -134,7 +159,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
@@ -166,7 +191,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "não é possível gravar sobre a raiz");
@@ -199,7 +224,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       // Confina a pasta de destino à raiz…
       const destDir = resolveWithinRoot(root, req.body.dir);
       // …e o `filename` (já validado pelo contract: sem barras) forma o caminho
@@ -235,7 +260,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "invalid_path", "caminho inválido");
@@ -267,7 +292,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "cannot_rename_root", "não é possível renomear a raiz");
@@ -299,7 +324,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "cannot_chmod_root", "não é possível alterar a raiz");
@@ -331,7 +356,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
@@ -371,7 +396,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
-      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
         throw new ApiHttpError(

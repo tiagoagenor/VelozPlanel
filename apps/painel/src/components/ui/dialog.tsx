@@ -56,7 +56,7 @@ export function Dialog({
       onCancel={onClose}
       onClick={onClick}
       className={cn(
-        "vp-pop-shadow m-auto w-[min(92vw,32rem)] rounded-xl border border-border-subtle bg-elevated p-6 text-text",
+        "vp-pop-shadow m-auto max-h-[92vh] w-[min(92vw,32rem)] overflow-y-auto rounded-xl border border-border-subtle bg-elevated p-6 text-text",
         "backdrop:bg-[#1b1730]/45 backdrop:backdrop-blur-sm",
         className,
       )}
