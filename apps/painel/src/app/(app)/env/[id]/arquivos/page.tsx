@@ -100,6 +100,33 @@ function specialPrefix(mode: string): string {
   return digits.length >= 4 ? digits.slice(-4, -3) : "";
 }
 
+/* ─────────────── Tooltip próprio (hover + foco por teclado) ─────────────── */
+
+/**
+ * Tooltip leve (sem lib): aparece em `group-hover` e `group-focus-within`
+ * (ou seja, também no foco por teclado). `role="tooltip"`. Posicionado acima e
+ * alinhado à direita por padrão para não ser cortado pela borda do card.
+ */
+function Tooltip({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span className="group relative inline-flex">
+      {children}
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full right-0 z-30 mb-1.5 whitespace-nowrap rounded-md bg-brand-strong px-2 py-1 text-xs font-medium text-on-solid opacity-0 shadow-md transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
 /* ─────────────── Ações inline por linha ─────────────── */
 
 interface RowActionsProps {
@@ -113,7 +140,7 @@ interface RowActionsProps {
 
 /**
  * Botões de ação sempre visíveis na própria linha (sem dropdown, que era
- * cortado pela borda do card). Ícones com aria-label + title (tooltip).
+ * cortado pela borda do card). Ícones com aria-label + tooltip próprio.
  */
 function RowActions({
   entry,
@@ -128,48 +155,52 @@ function RowActions({
   return (
     <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
       {entry.type === "file" ? (
+        <Tooltip label="Baixar">
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={downloading}
+            aria-label={`Baixar ${entry.name}`}
+            className={btn}
+          >
+            {downloading ? (
+              <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Download size={16} aria-hidden="true" />
+            )}
+          </button>
+        </Tooltip>
+      ) : null}
+      <Tooltip label="Renomear">
         <button
           type="button"
-          onClick={onDownload}
-          disabled={downloading}
-          aria-label={`Baixar ${entry.name}`}
-          title="Baixar"
+          onClick={onRename}
+          aria-label={`Renomear ${entry.name}`}
           className={btn}
         >
-          {downloading ? (
-            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-          ) : (
-            <Download size={16} aria-hidden="true" />
-          )}
+          <Pencil size={16} aria-hidden="true" />
         </button>
-      ) : null}
-      <button
-        type="button"
-        onClick={onRename}
-        aria-label={`Renomear ${entry.name}`}
-        title="Renomear"
-        className={btn}
-      >
-        <Pencil size={16} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        onClick={onChmod}
-        aria-label={`Permissões de ${entry.name}`}
-        title="Permissões"
-        className={btn}
-      >
-        <Lock size={16} aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        onClick={onDelete}
-        aria-label={`Excluir ${entry.name}`}
-        title="Excluir"
-        className="grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger"
-      >
-        <Trash2 size={16} aria-hidden="true" />
-      </button>
+      </Tooltip>
+      <Tooltip label="Permissões">
+        <button
+          type="button"
+          onClick={onChmod}
+          aria-label={`Permissões de ${entry.name}`}
+          className={btn}
+        >
+          <Lock size={16} aria-hidden="true" />
+        </button>
+      </Tooltip>
+      <Tooltip label="Excluir">
+        <button
+          type="button"
+          onClick={onDelete}
+          aria-label={`Excluir ${entry.name}`}
+          className="grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-danger-soft hover:text-danger"
+        >
+          <Trash2 size={16} aria-hidden="true" />
+        </button>
+      </Tooltip>
     </div>
   );
 }
@@ -739,14 +770,33 @@ export default function EnvArquivosPage() {
         </div>
       ) : null}
 
-      {/* Barra de ações em massa */}
-      {selected.size > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-strong/30 bg-brand-soft px-3 py-2">
-          <span aria-live="polite" className="text-sm font-medium text-brand-strong">
-            {selected.size} selecionado{selected.size > 1 ? "s" : ""}
+      {/* Barra de ações em massa — sempre renderizada (altura estável) */}
+      {root && !notRunning && !listQuery.isError ? (
+        <div
+          className={`flex min-h-[3rem] flex-wrap items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${
+            selected.size > 0
+              ? "border-brand-strong/30 bg-brand-soft"
+              : "border-border-subtle bg-bg"
+          }`}
+        >
+          <span
+            aria-live="polite"
+            className={`text-sm font-medium ${
+              selected.size > 0 ? "text-brand-strong" : "text-text3"
+            }`}
+          >
+            {selected.size > 0
+              ? `${selected.size} selecionado${selected.size > 1 ? "s" : ""}`
+              : "Selecione arquivos para ações em massa"}
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={openBulkChmod} disabled={bulkBusy}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={openBulkChmod}
+              disabled={selected.size === 0 || bulkBusy}
+              aria-disabled={selected.size === 0 || bulkBusy}
+            >
               <Lock size={16} aria-hidden="true" />
               Alterar permissões
             </Button>
@@ -754,12 +804,19 @@ export default function EnvArquivosPage() {
               size="sm"
               variant="danger"
               onClick={() => setBulkDeleteOpen(true)}
-              disabled={bulkBusy}
+              disabled={selected.size === 0 || bulkBusy}
+              aria-disabled={selected.size === 0 || bulkBusy}
             >
               <Trash2 size={16} aria-hidden="true" />
               Excluir selecionados
             </Button>
-            <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkBusy}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={clearSelection}
+              disabled={selected.size === 0 || bulkBusy}
+              aria-disabled={selected.size === 0 || bulkBusy}
+            >
               <X size={16} aria-hidden="true" />
               Limpar seleção
             </Button>
