@@ -62,6 +62,7 @@
 
 /* ── Tema claro (DEFAULT) ── */
 :root {
+  color-scheme: light; /* força controles nativos (scrollbar, inputs) no claro */
   --vp-bg: #f5f6fa;
   --vp-surface: #ffffff;
   --vp-elevated: #ffffff;
@@ -113,9 +114,9 @@
   --vp-shadow-pop: 0 10px 30px rgba(27, 23, 48, 0.16);
 }
 
-/* Tokens de dark mode por preferência do SO (respeita o toggle explícito) */
+/* Dark mode NÃO segue o SO (o dono quer branco+roxo sempre). Só via [data-theme="dark"]. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root[data-theme="dark"] {
     --vp-bg: #0d0b16;
     --vp-surface: #161326;
     --vp-elevated: #1f1b33;
