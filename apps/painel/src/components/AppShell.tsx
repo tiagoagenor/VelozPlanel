@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { NavIcon, LinkPending } from "@/components/nav-pending";
 
 /* ─────────────────────────────────────────────────────────────────────────
  *  AppShell — casca de 3 zonas (sidebar 256px · topbar 56px · conteúdo).
@@ -261,54 +262,53 @@ function NavRow({
   active: boolean;
   collapsed: boolean;
 }) {
-  const Icon = item.icon;
-  const content = (
-    <>
-      {/* Barra de acento roxa no item ativo */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full",
-          active ? "bg-brand" : "bg-transparent",
-        )}
-      />
-      <Icon
-        size={20}
-        aria-hidden="true"
-        className={cn("shrink-0", active ? "text-brand-strong" : "text-text3")}
-      />
-      {!collapsed ? (
-        <>
-          <span className="truncate">{item.label}</span>
-          {item.soon ? (
-            <span className="ml-auto shrink-0 rounded-full bg-border-subtle px-2 py-0.5 text-[10px] font-semibold text-text3">
-              Em breve
-            </span>
-          ) : null}
-        </>
-      ) : null}
-    </>
-  );
-
-  const base = cn(
-    "relative flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
-    collapsed && "justify-center px-0",
-    active
-      ? "bg-brand-soft text-brand-strong"
-      : "text-text2 hover:bg-bg hover:text-text",
-  );
-
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
       title={collapsed ? item.label : undefined}
-      className={base}
+      className="block rounded-lg"
     >
-      {content}
+      <LinkPending>
+        {(pending) => {
+          const on = active || pending;
+          return (
+            <span
+              className={cn(
+                "relative flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors",
+                collapsed && "justify-center px-0",
+                on
+                  ? "bg-brand-soft text-brand-strong"
+                  : "text-text2 hover:bg-bg hover:text-text",
+              )}
+            >
+              {/* Barra de acento roxa no item ativo/pendente */}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full",
+                  on ? "bg-brand" : "bg-transparent",
+                )}
+              />
+              <NavIcon icon={item.icon} size={20} active={on} />
+              {!collapsed ? (
+                <>
+                  <span className="truncate">{item.label}</span>
+                  {item.soon ? (
+                    <span className="ml-auto shrink-0 rounded-full bg-border-subtle px-2 py-0.5 text-[10px] font-semibold text-text3">
+                      Em breve
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </span>
+          );
+        }}
+      </LinkPending>
     </Link>
   );
 }
+
 
 /* ─────────────── Topbar ─────────────── */
 

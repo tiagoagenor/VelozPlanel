@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { NavIcon, LinkPending } from "@/components/nav-pending";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -211,37 +212,43 @@ export default function EnvContextLayout({
             {SECTIONS.map((s) => {
               const href = s.seg ? `${base}/${s.seg}` : base;
               const active = s.seg === currentSeg;
-              const Icon = s.icon;
               return (
                 <Link
                   key={s.seg || "overview"}
                   href={href}
                   aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "relative flex h-10 shrink-0 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors",
-                    active
-                      ? "bg-brand-soft text-brand-strong"
-                      : "text-text2 hover:bg-bg hover:text-text",
-                  )}
+                  className="block shrink-0 rounded-lg"
                 >
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute left-0 top-1/2 hidden h-5 w-[3px] -translate-y-1/2 rounded-full lg:block",
-                      active ? "bg-brand" : "bg-transparent",
-                    )}
-                  />
-                  <Icon
-                    size={18}
-                    aria-hidden="true"
-                    className={cn("shrink-0", active ? "text-brand-strong" : "text-text3")}
-                  />
-                  <span>{s.label}</span>
-                  {s.soon ? (
-                    <span className="ml-auto hidden shrink-0 rounded-full bg-border-subtle px-2 py-0.5 text-[10px] font-semibold text-text3 lg:inline">
-                      Em breve
-                    </span>
-                  ) : null}
+                  <LinkPending>
+                    {(pending) => {
+                      const on = active || pending;
+                      return (
+                        <span
+                          className={cn(
+                            "relative flex h-10 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors",
+                            on
+                              ? "bg-brand-soft text-brand-strong"
+                              : "text-text2 hover:bg-bg hover:text-text",
+                          )}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              "absolute left-0 top-1/2 hidden h-5 w-[3px] -translate-y-1/2 rounded-full lg:block",
+                              on ? "bg-brand" : "bg-transparent",
+                            )}
+                          />
+                          <NavIcon icon={s.icon} size={18} active={on} />
+                          <span>{s.label}</span>
+                          {s.soon ? (
+                            <span className="ml-auto hidden shrink-0 rounded-full bg-border-subtle px-2 py-0.5 text-[10px] font-semibold text-text3 lg:inline">
+                              Em breve
+                            </span>
+                          ) : null}
+                        </span>
+                      );
+                    }}
+                  </LinkPending>
                 </Link>
               );
             })}
