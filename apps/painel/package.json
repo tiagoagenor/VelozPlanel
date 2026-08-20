@@ -11,6 +11,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",
     "@velozplanel/contracts": "workspace:*",
+    "lucide-react": "^1.33.0",
     "next": "^15.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

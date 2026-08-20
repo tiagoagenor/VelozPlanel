@@ -7,6 +7,7 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { ApiError } from "@/lib/api";
+import { ToastProvider } from "@/components/ui/toast";
 
 /** Sessão expirada / não autenticado → volta ao login sem perder a rota atual. */
 function redirectToLogin() {
@@ -52,6 +53,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    <QueryClientProvider client={client}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
   );
 }

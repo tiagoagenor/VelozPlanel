@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import {
   PLANS,
   RUNTIME_VERSIONS,
@@ -13,11 +14,16 @@ import * as api from "@/lib/api";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { SegmentedControl } from "@/components/ui/segmented";
 import { planMonthly, planHourly } from "@/lib/format";
 
 const PLAN_IDS = Object.keys(PLANS) as PlanId[];
-const RUNTIME_KINDS = Object.keys(RUNTIME_VERSIONS) as RuntimeKind[];
+
+/** Micro-rótulos por versão (detalhe de produto real, não decorativo). */
+const VERSION_HINT: Record<RuntimeKind, Record<string, string>> = {
+  php: { "8.3": "recomendada", "7.4": "fim de vida" },
+  node: { "22": "LTS", "20": "LTS" },
+};
 
 export function CreateEnvironmentDialog({
   open,
@@ -88,7 +94,8 @@ export function CreateEnvironmentDialog({
       title="Criar ambiente"
       description="Escolha um nome, um plano e o runtime. O container sobe em seguida."
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+        {/* Nome */}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="env-name">Nome</Label>
           <Input
@@ -105,54 +112,69 @@ export function CreateEnvironmentDialog({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="env-runtime">Runtime</Label>
-            <Select
-              id="env-runtime"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as RuntimeKind)}
-              options={RUNTIME_KINDS.map((k) => ({
-                value: k,
-                label: k === "php" ? "PHP" : "Node.js",
-              }))}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="env-version">Versão</Label>
-            <Select
-              id="env-version"
-              value={version}
-              onChange={(e) => setVersion(e.target.value)}
-              options={versions.map((v) => ({ value: v, label: v }))}
-            />
-          </div>
+        {/* Runtime */}
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-text2">Runtime</span>
+          <SegmentedControl<RuntimeKind>
+            label="Runtime"
+            value={kind}
+            onChange={setKind}
+            fluid
+            options={[
+              { value: "php", label: "PHP" },
+              { value: "node", label: "Node.js" },
+            ]}
+          />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="env-plan">Plano</Label>
-          <Select
-            id="env-plan"
+        {/* Versão */}
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-text2">Versão</span>
+          <SegmentedControl
+            label={`Versão do ${kind === "php" ? "PHP" : "Node.js"}`}
+            value={version}
+            onChange={setVersion}
+            fluid
+            options={versions.map((v) => ({
+              value: v,
+              label: v,
+              hint: VERSION_HINT[kind][v],
+            }))}
+          />
+        </div>
+
+        {/* Plano */}
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium text-text2">Plano</span>
+          <SegmentedControl<PlanId>
+            label="Plano"
             value={plan}
-            onChange={(e) => setPlan(e.target.value as PlanId)}
+            onChange={setPlan}
+            fluid
             options={PLAN_IDS.map((p) => ({
               value: p,
-              label: `${PLANS[p].label} — ${PLANS[p].vcpu} vCPU · ${PLANS[p].memMb} MB`,
+              label: PLANS[p].label,
+              hint: `${PLANS[p].memMb} MB`,
             }))}
           />
           <p className="text-xs text-text3">
-            {selectedPlan.label}: {planMonthly(selectedPlan)}/mês ·{" "}
-            {planHourly(selectedPlan)}/hora ativo · {selectedPlan.diskGb} GB de disco
+            {selectedPlan.label}: {selectedPlan.vcpu} vCPU · {selectedPlan.memMb}{" "}
+            MB · {selectedPlan.diskGb} GB de disco — {planMonthly(selectedPlan)}
+            /mês · {planHourly(selectedPlan)}/hora ativo.
           </p>
         </div>
 
         {error ? (
-          <p role="alert" className="text-sm font-medium text-danger">
-            ⚠ {error}
+          <p
+            role="alert"
+            className="flex items-center gap-2 text-sm font-medium text-danger"
+          >
+            <AlertTriangle size={16} aria-hidden="true" />
+            {error}
           </p>
         ) : null}
 
-        <div className="mt-2 flex justify-end gap-2">
+        <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={resetAndClose}>
             Cancelar
           </Button>

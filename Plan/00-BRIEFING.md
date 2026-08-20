@@ -424,3 +424,26 @@ Decisão do dono: *"o projeto vai ser feito mas voltado para Ubuntu"*.
 - Correções: (1) exigir sessão válida antes de renderizar rota protegida (redirect para /login);
   (2) API base do painel configurável por env (`NEXT_PUBLIC_API_URL`) para funcionar na rede;
   (3) CORS da API aceitar as origens de rede (`localhost:3000` + IP da LAN), configurável por env.
+
+---
+
+# ADENDO 10 — Reforma de UX do painel (estilo Hostinger/Hostoo)
+
+## U. Diretrizes de UX (decisão do dono)
+- Painel **mais simples e fácil de usar**, no estilo **Hostinger** e **Hostoo** (pesquisar o painel do
+  Hostinger na internet como referência).
+- **Menu lateral esquerdo** (sidebar) — o produto terá muitas funcionalidades; aproveitar mais a tela.
+- **Sem `<select>`/dropdown** — usar **botões** (grupos de botões segmentados, padrão radiogroup acessível),
+  como a tela de PHP do Hostoo (versões em botões).
+- Manter **branco + roxo** (ADENDO 9) e o padrão **AAA** (AA como piso, AAA onde viável — doc 10).
+- Escopo do núcleo atual: login, layout com sidebar, lista de ambientes, criar ambiente (com botões),
+  detalhe do ambiente (gráficos), área admin (nós). Estrutura da sidebar deve escalar para futuras
+  funcionalidades (Domínios, Bancos, Financeiro, etc.) — itens futuros claramente marcados.
+
+## U.2 — Refinamentos adicionais (decisão do dono)
+- **Ícones profissionais em SVG** (ex.: Lucide como componentes SVG individuais — sem importar lib inteira,
+  conforme doc 05). PARAR de usar emoji (✓ ⏸ ⚠ 🗑) como ícone.
+- **Nada com "cara de IA"**: seguir padrões reais de produtos de hospedagem (layout, densidade, hierarquia,
+  microinterações). Buscar **referências reais na internet** (Hostinger, Hostoo, RunCloud, Ploi, cPanel/Plesk).
+- Método: **loop de 3 rodadas** (referência → implementar → criticar → refinar) até ficar bonito E funcional.
+- Um **agente de referências** (pesquisa e consolida padrões) + um **agente especialista de UX** (implementa).

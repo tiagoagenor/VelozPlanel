@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { X } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export interface DialogProps {
@@ -75,9 +76,9 @@ export function Dialog({
           type="button"
           onClick={onClose}
           aria-label="Fechar"
-          className="rounded-lg px-2 py-1 text-text2 hover:bg-bg"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-text2 hover:bg-bg"
         >
-          ✕
+          <X size={18} aria-hidden="true" />
         </button>
       </div>
       {children}

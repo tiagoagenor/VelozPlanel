@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle } from "lucide-react";
 import { loginInput } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
@@ -121,8 +122,9 @@ function LoginForm() {
           </div>
 
           {formError ? (
-            <p role="alert" className="text-sm font-medium text-danger">
-              ⚠ {formError}
+            <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+              <AlertTriangle size={16} aria-hidden="true" />
+              {formError}
             </p>
           ) : null}
 
