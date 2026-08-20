@@ -171,6 +171,21 @@ app.delete("/container/:id", async (req, reply) => {
   }
 });
 
+app.post("/resources/:id", async (req, reply) => {
+  const p = containerIdParams.safeParse(req.params);
+  const b = z.object({ memMb: z.number().positive(), vcpu: z.number().positive() }).safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await dockerDriver.updateResources(p.data.id, b.data.memMb, b.data.vcpu);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "updateResources failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
 app.get("/stats/:id", async (req, reply) => {
   const parsed = containerIdParams.safeParse(req.params);
   if (!parsed.success) {

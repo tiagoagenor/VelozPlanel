@@ -76,3 +76,17 @@ Só depois disto: E1..E14 completos (multi-nó, billing real, módulos, SSL, bac
 
 ## Bloqueios aguardando o dono
 - (nenhum no momento)
+
+## SUPER ADMIN — buildout completo (decisão do dono 2026-08-20)
+Dono quer TODOS os módulos do super admin, um de cada vez, área distinta no mesmo app, testar só no fim.
+Ondas:
+- [~] SA0. Shell do admin distinto (layout/nav própria, visual diferente do cliente) + route group (admin) + AuthGuard admin
+- [ ] SA1. Auditoria (tabela audit_logs + helper de registro) — base para tudo
+- [ ] SA2. Dashboard da operação (KPIs reais da frota)
+- [ ] SA3. Usuários/Clientes (listar, criar, suspender, ver ambientes, impersonar) — "ver usuários"
+- [ ] SA4. Servidores/Nós (completo: recursos, capacidade, saúde) — expande o atual
+- [ ] SA5. Rede / WireGuard (peers, status, adicionar nó) — config honesta (mesh é infra-fase)
+- [ ] SA6. Ambientes da frota + alterar vCPU/RAM a quente (req. nº 9) com motivo + auditoria
+- [ ] SA7. Planos e preços (CRUD) + Financeiro (receita, margem por nó, saldo baixo)
+- [ ] SA8. Filas/Jobs (eventos/operações) + Módulos (catálogo) + Observabilidade (frota) + Segurança/Abuso
+Cada módulo: backend + tela, typecheck+build verdes, commit. Report ao dono só no fim.

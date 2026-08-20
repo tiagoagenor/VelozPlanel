@@ -168,6 +168,19 @@ async function waitForPort(container: Docker.Container): Promise<string | undefi
   return undefined;
 }
 
+/** Altera RAM/vCPU de um container a quente (docker update). */
+export async function updateResources(
+  containerId: string,
+  memMb: number,
+  vcpu: number,
+): Promise<void> {
+  const container = docker.getContainer(containerId);
+  await container.update({
+    Memory: Math.round(memMb * 1024 * 1024),
+    NanoCpus: Math.round(vcpu * 1e9),
+  } as unknown as Parameters<typeof container.update>[0]);
+}
+
 /** Inicia um container parado e devolve a NOVA porta efêmera publicada. */
 export async function start(containerId: string): Promise<number> {
   const container = docker.getContainer(containerId);

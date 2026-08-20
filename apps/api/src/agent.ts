@@ -78,6 +78,17 @@ export function stats(containerId: string): Promise<AgentStats> {
   return call<AgentStats>("GET", `/stats/${encodeURIComponent(containerId)}`);
 }
 
+export function updateResources(
+  containerId: string,
+  memMb: number,
+  vcpu: number,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>("POST", `/resources/${encodeURIComponent(containerId)}`, {
+    memMb,
+    vcpu,
+  });
+}
+
 /* ─────────────── Arquivos ─────────────── */
 
 export interface AgentFileEntry {

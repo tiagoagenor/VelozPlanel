@@ -16,6 +16,17 @@ import type {
   SshKey,
   AddSshKeyInput,
   UpdateSshConfigInput,
+  AdminOverview,
+  AdminUser,
+  CreateUserInput,
+  UpdateUserInput,
+  AdminEnvironment,
+  ResourceChangeInput,
+  AuditEntry,
+  WgPeer,
+  AddWgPeerInput,
+  PlanAdmin,
+  ModuleInfo,
 } from "@velozplanel/contracts";
 
 /**
@@ -383,4 +394,91 @@ export async function downloadFile(id: string, path: string): Promise<Blob> {
     throw new ApiError(res.status, d.message ?? res.statusText, d.error);
   }
   return res.blob();
+}
+
+/* ═══════════════ SUPER ADMIN ═══════════════ */
+
+/* ── Dashboard da operação ── */
+
+/** Panorama da operação: nós, ambientes, usuários, bancos e receita estimada. */
+export function adminOverview(): Promise<AdminOverview> {
+  return request<AdminOverview>("/admin/overview");
+}
+
+/* ── Usuários / clientes ── */
+
+export function listUsers(): Promise<AdminUser[]> {
+  return request<AdminUser[]>("/admin/users");
+}
+
+export function createUser(input: CreateUserInput): Promise<AdminUser> {
+  return request<AdminUser>("/admin/users", { method: "POST", body: input });
+}
+
+export function updateUser(
+  id: string,
+  input: UpdateUserInput,
+): Promise<AdminUser> {
+  return request<AdminUser>(`/admin/users/${id}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+export function deleteUser(id: string): Promise<void> {
+  return request<void>(`/admin/users/${id}`, { method: "DELETE" });
+}
+
+/** Ambientes pertencentes a um usuário (visão de detalhe). */
+export function userEnvironments(id: string): Promise<AdminEnvironment[]> {
+  return request<AdminEnvironment[]>(`/admin/users/${id}/environments`);
+}
+
+/* ── Ambientes da frota ── */
+
+export function listAllEnvironments(): Promise<AdminEnvironment[]> {
+  return request<AdminEnvironment[]>("/admin/environments");
+}
+
+/** Altera vCPU/RAM de um ambiente (a quente se estiver rodando). Motivo obrigatório. */
+export function changeResources(
+  id: string,
+  input: ResourceChangeInput,
+): Promise<AdminEnvironment> {
+  return request<AdminEnvironment>(`/admin/environments/${id}/resources`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+/* ── Auditoria ── */
+
+export function listAudit(limit = 200): Promise<AuditEntry[]> {
+  return request<AuditEntry[]>("/admin/audit", {
+    query: { limit: String(limit) },
+  });
+}
+
+/* ── Rede / WireGuard ── */
+
+export function listWgPeers(): Promise<WgPeer[]> {
+  return request<WgPeer[]>("/admin/wg/peers");
+}
+
+export function addWgPeer(input: AddWgPeerInput): Promise<WgPeer> {
+  return request<WgPeer>("/admin/wg/peers", { method: "POST", body: input });
+}
+
+export function deleteWgPeer(id: string): Promise<void> {
+  return request<void>(`/admin/wg/peers/${id}`, { method: "DELETE" });
+}
+
+/* ── Planos e módulos ── */
+
+export function listPlans(): Promise<PlanAdmin[]> {
+  return request<PlanAdmin[]>("/admin/plans");
+}
+
+export function listModules(): Promise<ModuleInfo[]> {
+  return request<ModuleInfo[]>("/admin/modules");
 }

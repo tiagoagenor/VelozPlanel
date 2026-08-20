@@ -9,8 +9,7 @@ import {
   Database,
   CreditCard,
   LifeBuoy,
-  Gauge,
-  Server,
+  ShieldCheck,
   Menu,
   X,
   LogOut,
@@ -50,14 +49,6 @@ const NAV: NavSection[] = [
       { label: "Bancos", href: "/bancos", icon: Database, soon: true },
       { label: "Financeiro", href: "/financeiro", icon: CreditCard, soon: true },
       { label: "Suporte", href: "/suporte", icon: LifeBuoy, soon: true },
-    ],
-  },
-  {
-    title: "Admin",
-    adminOnly: true,
-    items: [
-      { label: "Visão geral", href: "/admin", icon: Gauge, exact: true },
-      { label: "Nós", href: "/admin/nodes", icon: Server },
     ],
   },
 ];
@@ -316,6 +307,7 @@ function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
   const router = useRouter();
   const qc = useQueryClient();
   const { data: user } = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const isAdmin = user?.role === "admin";
 
   const logout = useMutation({
     mutationFn: api.logout,
@@ -337,6 +329,15 @@ function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
       </button>
 
       <div className="ml-auto flex items-center gap-3">
+        {isAdmin ? (
+          <Link
+            href="/admin"
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-accent-soft bg-accent-soft px-3.5 text-sm font-semibold text-accent transition-colors hover:brightness-95"
+          >
+            <ShieldCheck size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Administração</span>
+          </Link>
+        ) : null}
         {user ? (
           <span className="hidden text-sm text-text2 sm:inline">
             {user.name}

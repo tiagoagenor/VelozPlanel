@@ -53,6 +53,7 @@
   --color-info: var(--vp-info);
   --color-neutral: var(--vp-neutral);
   --color-accent: var(--vp-accent);
+  --color-accent-soft: var(--vp-accent-soft-bg);
   --color-focus: var(--vp-focus);
   --color-on-solid: var(--vp-on-solid);
 

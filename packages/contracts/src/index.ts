@@ -357,6 +357,140 @@ export const updateSshConfigInput = z.object({
 });
 export type UpdateSshConfigInput = z.infer<typeof updateSshConfigInput>;
 
+/* ═══════════════ SUPER ADMIN ═══════════════ */
+
+/* ── Usuários / clientes ── */
+export const accountStatus = z.enum(["active", "suspended"]);
+export type AccountStatus = z.infer<typeof accountStatus>;
+
+export const adminUser = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  name: z.string(),
+  role: userRole,
+  status: accountStatus,
+  envCount: z.number().int(),
+  createdAt: z.string().datetime(),
+});
+export type AdminUser = z.infer<typeof adminUser>;
+
+export const createUserInput = z.object({
+  name: z.string().min(2).max(80),
+  email: z.string().email(),
+  password: z.string().min(6).max(100),
+  role: userRole,
+});
+export type CreateUserInput = z.infer<typeof createUserInput>;
+
+export const updateUserInput = z.object({
+  name: z.string().min(2).max(80).optional(),
+  role: userRole.optional(),
+  status: accountStatus.optional(),
+  password: z.string().min(6).max(100).optional(),
+});
+export type UpdateUserInput = z.infer<typeof updateUserInput>;
+
+/* ── Ambientes da frota (visão admin) ── */
+export const adminEnvironment = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  ownerId: z.string().uuid(),
+  ownerEmail: z.string(),
+  nodeId: z.string().uuid().nullable(),
+  nodeName: z.string().nullable(),
+  plan: planId,
+  runtime: runtimeSpec,
+  state: envState,
+  createdAt: z.string().datetime(),
+});
+export type AdminEnvironment = z.infer<typeof adminEnvironment>;
+
+/** Alterar vCPU/RAM a quente (requisito nº 9) — motivo obrigatório, vai para auditoria. */
+export const resourceChangeInput = z.object({
+  vcpu: z.number().min(0.25).max(8),
+  memMb: z.number().int().min(256).max(16384),
+  reason: z.string().min(3).max(200),
+});
+export type ResourceChangeInput = z.infer<typeof resourceChangeInput>;
+
+/* ── Auditoria ── */
+export const auditEntry = z.object({
+  id: z.string().uuid(),
+  ts: z.string().datetime(),
+  actorEmail: z.string(),
+  actorRole: z.string(),
+  action: z.string(),
+  target: z.string().nullable(),
+  detail: z.string().nullable(),
+  ip: z.string().nullable(),
+});
+export type AuditEntry = z.infer<typeof auditEntry>;
+
+/* ── Rede / WireGuard (config honesta; mesh real é infra-fase) ── */
+export const wgPeerStatus = z.enum(["configured", "handshake_ok", "offline"]);
+export type WgPeerStatus = z.infer<typeof wgPeerStatus>;
+
+export const wgPeer = z.object({
+  id: z.string().uuid(),
+  nodeId: z.string().uuid().nullable(),
+  name: z.string(),
+  privateIp: z.string(), // 10.77.x.x
+  endpoint: z.string().nullable(),
+  publicKey: z.string().nullable(),
+  status: wgPeerStatus,
+  createdAt: z.string().datetime(),
+});
+export type WgPeer = z.infer<typeof wgPeer>;
+
+export const addWgPeerInput = z.object({
+  name: z.string().min(2).max(60),
+  nodeId: z.string().uuid().nullable().optional(),
+  privateIp: z
+    .string()
+    .regex(/^(\d{1,3}\.){3}\d{1,3}$/, "informe um IP privado, ex.: 10.77.0.2"),
+  endpoint: z.string().max(120).nullable().optional(),
+  publicKey: z.string().max(120).nullable().optional(),
+});
+export type AddWgPeerInput = z.infer<typeof addWgPeerInput>;
+
+/* ── Planos (admin) ── */
+export const planAdmin = z.object({
+  id: planId,
+  label: z.string(),
+  vcpu: z.number(),
+  memMb: z.number(),
+  diskGb: z.number(),
+  priceMonthCents: z.number().int(),
+  hourlyActiveCents: z.number(),
+  hourlyPausedCents: z.number(),
+});
+export type PlanAdmin = z.infer<typeof planAdmin>;
+
+/* ── Dashboard da operação ── */
+export const adminOverview = z.object({
+  nodes: z.object({ total: z.number().int(), online: z.number().int() }),
+  environments: z.object({
+    total: z.number().int(),
+    running: z.number().int(),
+    paused: z.number().int(),
+    error: z.number().int(),
+  }),
+  users: z.object({ total: z.number().int(), clients: z.number().int() }),
+  databases: z.number().int(),
+  monthlyRevenueCents: z.number().int(), // estimado a partir dos ambientes ativos
+});
+export type AdminOverview = z.infer<typeof adminOverview>;
+
+/* ── Catálogo de módulos ── */
+export const moduleInfo = z.object({
+  key: z.string(),
+  label: z.string(),
+  description: z.string(),
+  scope: z.enum(["environment", "node", "platform"]),
+  status: z.enum(["builtin", "active", "planned"]),
+});
+export type ModuleInfo = z.infer<typeof moduleInfo>;
+
 /* ─────────────── Erro padronizado da API ─────────────── */
 
 export const apiError = z.object({

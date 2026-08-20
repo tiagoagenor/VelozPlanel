@@ -52,8 +52,10 @@ async function createSchema(): Promise<void> {
       created_at      timestamptz NOT NULL DEFAULT now()
     )
   `;
-  // Coluna adicionada depois do núcleo — garante em bancos já existentes.
+  // Colunas adicionadas depois do núcleo — garante em bancos já existentes.
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS domain text`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vcpu_override double precision`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS mem_mb_override integer`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS metric_samples (
@@ -113,6 +115,35 @@ async function createSchema(): Promise<void> {
       label       text NOT NULL,
       public_key  text NOT NULL,
       fingerprint text NOT NULL,
+      created_at  timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      ts          timestamptz NOT NULL DEFAULT now(),
+      actor_email text NOT NULL,
+      actor_role  text NOT NULL,
+      action      text NOT NULL,
+      target      text,
+      detail      text,
+      ip          text
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS audit_logs_ts_idx ON audit_logs (ts DESC)`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS wg_peers (
+      id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      node_id     uuid REFERENCES nodes(id) ON DELETE SET NULL,
+      name        text NOT NULL,
+      private_ip  text NOT NULL,
+      endpoint    text,
+      public_key  text,
+      status      text NOT NULL DEFAULT 'configured',
       created_at  timestamptz NOT NULL DEFAULT now()
     )
   `;

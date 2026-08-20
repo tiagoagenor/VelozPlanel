@@ -21,6 +21,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   role: text("role").notNull(), // "admin" | "client"
+  status: text("status").notNull().default("active"), // "active" | "suspended"
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -50,6 +51,8 @@ export const environments = pgTable("environments", {
   containerId: text("container_id"),
   httpPort: integer("http_port"),
   domain: text("domain"),
+  vcpuOverride: doublePrecision("vcpu_override"), // admin alterou vCPU (senão usa o do plano)
+  memMbOverride: integer("mem_mb_override"), // admin alterou RAM
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -128,5 +131,31 @@ export const sshKeys = pgTable("ssh_keys", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type SshKeyRow = typeof sshKeys.$inferSelect;
+
+// Auditoria — registro imutável de ações (admin/cliente/sistema).
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
+  actorEmail: text("actor_email").notNull(),
+  actorRole: text("actor_role").notNull(),
+  action: text("action").notNull(),
+  target: text("target"),
+  detail: text("detail"),
+  ip: text("ip"),
+});
+export type AuditLogRow = typeof auditLogs.$inferSelect;
+
+// Peers da rede WireGuard (config; mesh real é infra-fase).
+export const wgPeers = pgTable("wg_peers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  nodeId: uuid("node_id").references(() => nodes.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  privateIp: text("private_ip").notNull(),
+  endpoint: text("endpoint"),
+  publicKey: text("public_key"),
+  status: text("status").notNull().default("configured"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type WgPeerRow = typeof wgPeers.$inferSelect;
 export type MetricSampleRow = typeof metricSamples.$inferSelect;
 export type NewMetricSampleRow = typeof metricSamples.$inferInsert;

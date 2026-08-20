@@ -1,13 +1,11 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  ShieldAlert,
   Pencil,
   type LucideIcon,
 } from "lucide-react";
@@ -49,14 +47,9 @@ function StatusBadge({ status }: { status: NodeStatus }) {
 }
 
 export default function AdminNodesPage() {
-  const meQuery = useQuery({ queryKey: ["me"], queryFn: api.me });
-
-  const isAdmin = meQuery.data?.role === "admin";
-
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
     queryFn: api.listNodes,
-    enabled: isAdmin,
   });
 
   const [editing, setEditing] = React.useState<Node | null>(null);
@@ -64,29 +57,15 @@ export default function AdminNodesPage() {
   return (
     <>
       <header className="mb-6">
-        <h1 className="text-[28px] font-bold leading-tight text-text">Nós</h1>
+        <h1 className="text-[28px] font-bold leading-tight text-text">
+          Servidores
+        </h1>
         <p className="mt-1 text-sm text-text2">
-          Servidores que executam os ambientes (visão de administrador).
+          Nós que executam os ambientes: status, capacidade e host público.
         </p>
       </header>
 
-      {meQuery.isPending ? (
-        <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
-      ) : !isAdmin ? (
-        <Card className="flex items-start gap-3">
-          <ShieldAlert size={20} aria-hidden="true" className="mt-0.5 shrink-0 text-danger" />
-          <div>
-            <p role="alert" className="font-medium text-text">
-              Acesso restrito. Esta página é exclusiva de administradores.
-            </p>
-            <p className="mt-2 text-sm">
-              <Link href="/" className="text-link hover:underline">
-                Voltar aos ambientes
-              </Link>
-            </p>
-          </div>
-        </Card>
-      ) : nodesQuery.isPending ? (
+      {nodesQuery.isPending ? (
         <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
       ) : nodesQuery.isError ? (
         <Card className="flex items-start gap-3">
