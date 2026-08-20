@@ -1,4 +1,5 @@
 import type {
+  ChangeRuntimeInput,
   CreateEnvironmentInput,
   Environment,
   LoginInput,
@@ -133,6 +134,28 @@ export function startEnvironment(id: string): Promise<Environment> {
 
 export function deleteEnvironment(id: string): Promise<void> {
   return request<void>(`/environments/${id}`, { method: "DELETE" });
+}
+
+/** Define (ou remove, com null) o domínio próprio do ambiente. */
+export function setDomain(
+  id: string,
+  domain: string | null,
+): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/domain`, {
+    method: "POST",
+    body: { domain },
+  });
+}
+
+/** Troca a versão/linguagem do runtime — recria o container. */
+export function changeRuntime(
+  id: string,
+  input: ChangeRuntimeInput,
+): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/runtime`, {
+    method: "POST",
+    body: input,
+  });
 }
 
 /* ─────────────── Métricas ─────────────── */
