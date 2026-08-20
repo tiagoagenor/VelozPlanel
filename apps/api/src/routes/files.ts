@@ -7,6 +7,8 @@ import {
   fileContent,
   writeFileInput,
   mkPathInput,
+  renameFileInput,
+  chmodInput,
   apiError,
 } from "@velozplanel/contracts";
 import type { FileList, FileContent, RuntimeKind } from "@velozplanel/contracts";
@@ -67,6 +69,15 @@ function requireRunningContainer(env: EnvironmentRow): string {
     );
   }
   return env.containerId;
+}
+
+/** Sanitiza um nome de arquivo para uso em Content-Disposition. */
+function sanitizeFilename(name: string): string {
+  const base = name.split("/").pop() ?? name;
+  // troca controle, aspas, barras e espaços por "_"; fallback "download".
+  // eslint-disable-next-line no-control-regex
+  const clean = base.replace(/[\u0000-\u001f"\\/\s]+/g, "_").trim();
+  return clean.length > 0 ? clean : "download";
 }
 
 export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
@@ -193,6 +204,110 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       }
       await agent.mkdir(containerId, target);
       return { ok: true };
+    },
+  );
+
+  // POST /environments/:id/files/rename — renomeia arquivo ou pasta
+  app.post(
+    "/environments/:id/files/rename",
+    {
+      schema: {
+        params: idParams,
+        body: renameFileInput,
+        response: {
+          200: z.object({ ok: z.boolean() }),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<{ ok: boolean }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.body.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "cannot_rename_root", "não é possível renomear a raiz");
+      }
+      await agent.renameFile(containerId, target, req.body.newName);
+      return { ok: true };
+    },
+  );
+
+  // POST /environments/:id/files/chmod — altera permissões
+  app.post(
+    "/environments/:id/files/chmod",
+    {
+      schema: {
+        params: idParams,
+        body: chmodInput,
+        response: {
+          200: z.object({ ok: z.boolean() }),
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<{ ok: boolean }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.body.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "cannot_chmod_root", "não é possível alterar a raiz");
+      }
+      await agent.chmodFile(containerId, target, req.body.mode);
+      return { ok: true };
+    },
+  );
+
+  // GET /environments/:id/files/download?path= — baixa os bytes crus do arquivo
+  app.get(
+    "/environments/:id/files/download",
+    {
+      schema: {
+        params: idParams,
+        querystring: pathQuery,
+        response: {
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          413: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req, reply) => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const root = rootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.query.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
+      }
+      const result = await agent.downloadFile(containerId, target);
+      const bytes = Buffer.from(result.base64, "base64");
+      const filename = sanitizeFilename(result.name);
+      reply
+        .header("Content-Type", "application/octet-stream")
+        .header("Content-Disposition", `attachment; filename="${filename}"`)
+        .header("Content-Length", String(bytes.length));
+      // Envia os bytes crus; sem schema de resposta 200 para o serializer zod
+      // não transformar o Buffer em JSON. `never` satisfaz o tipo inferido.
+      return reply.send(bytes as unknown as never);
     },
   );
 

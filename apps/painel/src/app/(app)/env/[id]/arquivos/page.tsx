@@ -10,6 +10,7 @@ import {
   FileCode,
   Home,
   ChevronRight,
+  ChevronLeft,
   FolderPlus,
   FilePlus,
   Upload,
@@ -20,6 +21,11 @@ import {
   AlertTriangle,
   PlayCircle,
   Loader2,
+  MoreHorizontal,
+  Download,
+  Pencil,
+  Lock,
+  Search,
 } from "lucide-react";
 import type { FileEntry } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -35,6 +41,8 @@ const CODE_EXT = new Set([
   "html", "htm", "xml", "yml", "yaml", "md", "py", "rb", "go", "rs",
   "sh", "bash", "sql", "env", "ini", "conf", "toml", "vue", "svelte",
 ]);
+
+const PAGE_SIZE = 50;
 
 function extOf(name: string): string {
   const i = name.lastIndexOf(".");
@@ -67,6 +75,143 @@ function formatMtime(ms: number): string {
   });
 }
 
+/* ─────────────── Permissões (octal <-> checkboxes) ─────────────── */
+
+type Triplet = { r: boolean; w: boolean; x: boolean };
+type PermClass = "owner" | "group" | "other";
+
+function digitToTriplet(d: string): Triplet {
+  const n = Number.parseInt(d, 10) || 0;
+  return { r: (n & 4) !== 0, w: (n & 2) !== 0, x: (n & 1) !== 0 };
+}
+
+function tripletToDigit(t: Triplet): number {
+  return (t.r ? 4 : 0) + (t.w ? 2 : 0) + (t.x ? 1 : 0);
+}
+
+/** Os 3 últimos dígitos (dono/grupo/outros) do modo, garantindo 3 chars. */
+function lastThree(mode: string): string {
+  const digits = mode.replace(/[^0-7]/g, "");
+  return digits.slice(-3).padStart(3, "0");
+}
+
+/** Prefixo especial (setuid/setgid/sticky) se o modo tiver 4 dígitos. */
+function specialPrefix(mode: string): string {
+  const digits = mode.replace(/[^0-7]/g, "");
+  return digits.length >= 4 ? digits.slice(-4, -3) : "";
+}
+
+/* ─────────────── Menu de ações por linha ─────────────── */
+
+interface RowActionsProps {
+  entry: FileEntry;
+  onDownload: () => void;
+  onRename: () => void;
+  onChmod: () => void;
+  onDelete: () => void;
+  downloading: boolean;
+}
+
+function RowActions({
+  entry,
+  onDownload,
+  onRename,
+  onChmod,
+  onDelete,
+  downloading,
+}: RowActionsProps) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function run(fn: () => void) {
+    setOpen(false);
+    fn();
+  }
+
+  const itemClass =
+    "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-text hover:bg-brand-soft";
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label={`Ações para ${entry.name}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="grid h-8 w-8 place-items-center rounded-lg text-text3 hover:bg-brand-soft hover:text-brand-strong"
+      >
+        {downloading ? (
+          <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+        ) : (
+          <MoreHorizontal size={16} aria-hidden="true" />
+        )}
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="vp-pop-shadow absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border-subtle bg-elevated py-1"
+        >
+          {entry.type === "file" ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={itemClass}
+              onClick={() => run(onDownload)}
+            >
+              <Download size={16} aria-hidden="true" className="text-brand-strong" />
+              Baixar
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => run(onRename)}
+          >
+            <Pencil size={16} aria-hidden="true" className="text-brand-strong" />
+            Renomear
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={itemClass}
+            onClick={() => run(onChmod)}
+          >
+            <Lock size={16} aria-hidden="true" className="text-brand-strong" />
+            Permissões
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft"
+            onClick={() => run(onDelete)}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+            Excluir
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function EnvArquivosPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -79,6 +224,13 @@ export default function EnvArquivosPage() {
   const [dialog, setDialog] = React.useState<null | "mkdir" | "newfile">(null);
   const [dialogName, setDialogName] = React.useState("");
   const [toDelete, setToDelete] = React.useState<FileEntry | null>(null);
+  const [toRename, setToRename] = React.useState<FileEntry | null>(null);
+  const [renameValue, setRenameValue] = React.useState("");
+  const [toChmod, setToChmod] = React.useState<FileEntry | null>(null);
+  const [modeInput, setModeInput] = React.useState("");
+  const [downloadingName, setDownloadingName] = React.useState<string | null>(null);
+  const [filter, setFilter] = React.useState("");
+  const [page, setPage] = React.useState(1);
   const uploadRef = React.useRef<HTMLInputElement>(null);
 
   const listQuery = useQuery({
@@ -89,6 +241,11 @@ export default function EnvArquivosPage() {
 
   const root = listQuery.data?.root ?? null;
   const currentPath = listQuery.data?.path ?? dir ?? root ?? "";
+
+  // Ao trocar de pasta, volta para a página 1.
+  React.useEffect(() => {
+    setPage(1);
+  }, [dir]);
 
   // Query do conteúdo do arquivo em edição.
   const fileQuery = useQuery({
@@ -151,6 +308,31 @@ export default function EnvArquivosPage() {
       toast.show("error", err instanceof Error ? err.message : "Falha ao excluir."),
   });
 
+  const renameMutation = useMutation({
+    mutationFn: (payload: { entry: FileEntry; newName: string }) =>
+      api.renameFile(id, joinPath(currentPath, payload.entry.name), payload.newName),
+    onSuccess: (_data, payload) => {
+      toast.show("success", `Renomeado para "${payload.newName}".`);
+      if (editing && editing.name === payload.entry.name) setEditing(null);
+      setToRename(null);
+      refresh();
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao renomear."),
+  });
+
+  const chmodMutation = useMutation({
+    mutationFn: (payload: { entry: FileEntry; mode: string }) =>
+      api.chmodFile(id, joinPath(currentPath, payload.entry.name), payload.mode),
+    onSuccess: (_data, payload) => {
+      toast.show("success", `Permissões alteradas para ${payload.mode}.`);
+      setToChmod(null);
+      refresh();
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao alterar permissões."),
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
       const text = await file.text();
@@ -164,9 +346,38 @@ export default function EnvArquivosPage() {
       toast.show("error", err instanceof Error ? err.message : "Falha ao enviar arquivo."),
   });
 
+  async function handleDownload(entry: FileEntry) {
+    setDownloadingName(entry.name);
+    try {
+      const blob = await api.downloadFile(id, joinPath(currentPath, entry.name));
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = entry.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.show("error", err instanceof Error ? err.message : "Falha ao baixar.");
+    } finally {
+      setDownloadingName(null);
+    }
+  }
+
   function closeDialog() {
     setDialog(null);
     setDialogName("");
+  }
+
+  function openRename(entry: FileEntry) {
+    setToRename(entry);
+    setRenameValue(entry.name);
+  }
+
+  function openChmod(entry: FileEntry) {
+    setToChmod(entry);
+    setModeInput(lastThree(entry.mode));
   }
 
   function openEntry(entry: FileEntry) {
@@ -196,6 +407,41 @@ export default function EnvArquivosPage() {
     else if (dialog === "newfile") newFileMutation.mutate(name);
   }
 
+  function submitRename(e: React.FormEvent) {
+    e.preventDefault();
+    const name = renameValue.trim();
+    if (!name || name.includes("/")) {
+      toast.show("error", "Nome inválido (sem barras).");
+      return;
+    }
+    if (toRename && name !== toRename.name) {
+      renameMutation.mutate({ entry: toRename, newName: name });
+    } else {
+      setToRename(null);
+    }
+  }
+
+  function submitChmod(e: React.FormEvent) {
+    e.preventDefault();
+    const mode = modeInput.trim();
+    if (!/^[0-7]{3,4}$/.test(mode)) {
+      toast.show("error", "Modo octal inválido (ex.: 644 ou 755).");
+      return;
+    }
+    if (toChmod) chmodMutation.mutate({ entry: toChmod, mode });
+  }
+
+  // Alterna um bit de permissão (r/w/x) de uma classe (dono/grupo/outros).
+  function togglePerm(cls: PermClass, bit: keyof Triplet) {
+    const three = lastThree(modeInput);
+    const idx = cls === "owner" ? 0 : cls === "group" ? 1 : 2;
+    const trip = digitToTriplet(three[idx] ?? "0");
+    trip[bit] = !trip[bit];
+    const digits = three.split("");
+    digits[idx] = String(tripletToDigit(trip));
+    setModeInput(specialPrefix(modeInput) + digits.join(""));
+  }
+
   function onUploadChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) uploadMutation.mutate(file);
@@ -215,6 +461,37 @@ export default function EnvArquivosPage() {
 
   const notRunning =
     listQuery.error instanceof ApiError && listQuery.error.status === 409;
+
+  // Ordenação (pastas primeiro, alfabético) + filtro + paginação client-side.
+  const allEntries = React.useMemo(() => {
+    const list = [...(listQuery.data?.entries ?? [])];
+    list.sort((a, b) => {
+      if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    });
+    return list;
+  }, [listQuery.data?.entries]);
+
+  const filtered = React.useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return allEntries;
+    return allEntries.filter((e) => e.name.toLowerCase().includes(q));
+  }, [allEntries, filter]);
+
+  const total = filtered.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const start = (safePage - 1) * PAGE_SIZE;
+  const pageEntries = filtered.slice(start, start + PAGE_SIZE);
+  const rangeFrom = total === 0 ? 0 : start + 1;
+  const rangeTo = Math.min(start + PAGE_SIZE, total);
+
+  const chmodThree = lastThree(modeInput);
+  const permClasses: { key: PermClass; label: string }[] = [
+    { key: "owner", label: "Dono" },
+    { key: "group", label: "Grupo" },
+    { key: "other", label: "Outros" },
+  ];
 
   return (
     <div className="flex flex-col gap-6">
@@ -360,6 +637,30 @@ export default function EnvArquivosPage() {
         </Card>
       ) : null}
 
+      {/* Filtro por nome */}
+      {root && !notRunning && !listQuery.isError ? (
+        <div className="relative max-w-xs">
+          <Search
+            size={16}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text3"
+          />
+          <Input
+            value={filter}
+            onChange={(e) => {
+              setFilter(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Filtrar por nome…"
+            aria-label="Filtrar por nome"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            className="h-9 pl-9"
+          />
+        </div>
+      ) : null}
+
       {/* Listagem */}
       {listQuery.isPending ? (
         <div className="grid h-40 place-items-center">
@@ -381,52 +682,98 @@ export default function EnvArquivosPage() {
               : "Não foi possível carregar os arquivos."}
           </p>
         </Card>
-      ) : listQuery.data && listQuery.data.entries.length === 0 ? (
+      ) : total === 0 ? (
         <Card className="flex flex-col items-center gap-3 py-12 text-center">
           <FolderOpen size={40} aria-hidden="true" className="text-text3" />
-          <p className="text-sm text-text2">Esta pasta está vazia.</p>
+          <p className="text-sm text-text2">
+            {filter.trim()
+              ? "Nenhum arquivo corresponde ao filtro."
+              : "Esta pasta está vazia."}
+          </p>
         </Card>
       ) : (
-        <Card className="overflow-hidden p-0">
-          <ul className="divide-y divide-border-subtle">
-            {listQuery.data?.entries.map((entry) => {
-              const Icon = iconFor(entry);
-              return (
-                <li
-                  key={entry.name}
-                  className="flex items-center gap-3 px-4 py-2.5 hover:bg-bg"
-                >
-                  <button
-                    type="button"
-                    onClick={() => openEntry(entry)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        <>
+          <Card className="overflow-hidden p-0">
+            <ul className="divide-y divide-border-subtle">
+              {pageEntries.map((entry) => {
+                const Icon = iconFor(entry);
+                return (
+                  <li
+                    key={entry.name}
+                    className="flex items-center gap-3 px-4 py-2.5 hover:bg-bg"
                   >
-                    <Icon
-                      size={18}
-                      aria-hidden="true"
-                      className={entry.type === "dir" ? "text-brand-strong" : "text-text3"}
+                    <button
+                      type="button"
+                      onClick={() => openEntry(entry)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <Icon
+                        size={18}
+                        aria-hidden="true"
+                        className={entry.type === "dir" ? "text-brand-strong" : "text-text3"}
+                      />
+                      <span className="truncate font-medium text-text">{entry.name}</span>
+                    </button>
+                    <span
+                      className="hidden shrink-0 rounded border border-border-subtle bg-bg px-1.5 py-0.5 font-mono text-[11px] text-text3 sm:inline"
+                      title={`Permissões ${entry.mode}`}
+                    >
+                      {entry.mode}
+                    </span>
+                    <span className="hidden w-24 shrink-0 text-right text-xs text-text3 sm:block">
+                      {entry.type === "file" ? formatSize(entry.size) : "—"}
+                    </span>
+                    <span className="hidden w-40 shrink-0 text-right text-xs text-text3 md:block">
+                      {formatMtime(entry.mtime)}
+                    </span>
+                    <RowActions
+                      entry={entry}
+                      downloading={downloadingName === entry.name}
+                      onDownload={() => handleDownload(entry)}
+                      onRename={() => openRename(entry)}
+                      onChmod={() => openChmod(entry)}
+                      onDelete={() => setToDelete(entry)}
                     />
-                    <span className="truncate font-medium text-text">{entry.name}</span>
-                  </button>
-                  <span className="hidden w-24 shrink-0 text-right text-xs text-text3 sm:block">
-                    {entry.type === "file" ? formatSize(entry.size) : "—"}
-                  </span>
-                  <span className="hidden w-40 shrink-0 text-right text-xs text-text3 md:block">
-                    {formatMtime(entry.mtime)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setToDelete(entry)}
-                    aria-label={`Excluir ${entry.name}`}
-                    className="shrink-0 rounded p-1.5 text-text3 hover:bg-danger-soft hover:text-danger"
-                  >
-                    <Trash2 size={16} aria-hidden="true" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+
+          {/* Paginação */}
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-text2">
+            <span>
+              Mostrando {rangeFrom}–{rangeTo} de {total}
+            </span>
+            {pageCount > 1 ? (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  aria-label="Página anterior"
+                >
+                  <ChevronLeft size={16} aria-hidden="true" />
+                  Anterior
+                </Button>
+                <span className="tabular-nums text-text3">
+                  {safePage} / {pageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+                  disabled={safePage >= pageCount}
+                  aria-label="Próxima página"
+                >
+                  Próxima
+                  <ChevronRight size={16} aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </>
       )}
 
       {/* Dialog: nova pasta / novo arquivo */}
@@ -459,6 +806,114 @@ export default function EnvArquivosPage() {
               disabled={mkdirMutation.isPending || newFileMutation.isPending}
             >
               Criar
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+
+      {/* Dialog: renomear */}
+      <Dialog
+        open={toRename !== null}
+        onClose={() => setToRename(null)}
+        title="Renomear"
+        description={toRename ? `Renomear "${toRename.name}"` : ""}
+      >
+        <form onSubmit={submitRename} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="rename-name">Novo nome</Label>
+            <Input
+              id="rename-name"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setToRename(null)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={renameMutation.isPending}>
+              <Pencil size={16} aria-hidden="true" />
+              {renameMutation.isPending ? "Renomeando…" : "Renomear"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+
+      {/* Dialog: permissões (chmod) */}
+      <Dialog
+        open={toChmod !== null}
+        onClose={() => setToChmod(null)}
+        title="Permissões"
+        description={
+          toChmod ? `Alterar permissões de "${toChmod.name}" (atual: ${toChmod.mode})` : ""
+        }
+      >
+        <form onSubmit={submitChmod} className="flex flex-col gap-4">
+          {/* Grade de checkboxes r/w/x por classe */}
+          <div className="overflow-hidden rounded-lg border border-border-subtle">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-bg text-text2">
+                  <th className="px-3 py-2 text-left font-medium">Classe</th>
+                  <th className="px-2 py-2 font-medium">Leitura</th>
+                  <th className="px-2 py-2 font-medium">Escrita</th>
+                  <th className="px-2 py-2 font-medium">Execução</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border-subtle">
+                {permClasses.map((cls, i) => {
+                  const trip = digitToTriplet(chmodThree[i] ?? "0");
+                  return (
+                    <tr key={cls.key}>
+                      <td className="px-3 py-2 font-medium text-text">{cls.label}</td>
+                      {(["r", "w", "x"] as (keyof Triplet)[]).map((bit) => (
+                        <td key={bit} className="px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={trip[bit]}
+                            onChange={() => togglePerm(cls.key, bit)}
+                            aria-label={`${cls.label} ${
+                              bit === "r" ? "leitura" : bit === "w" ? "escrita" : "execução"
+                            }`}
+                            className="h-4 w-4 accent-brand"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {/* Campo octal direto */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="mode-octal">Modo octal</Label>
+            <Input
+              id="mode-octal"
+              value={modeInput}
+              onChange={(e) =>
+                setModeInput(e.target.value.replace(/[^0-7]/g, "").slice(0, 4))
+              }
+              placeholder="644"
+              inputMode="numeric"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="w-24 font-mono"
+            />
+            <p className="text-xs text-text3">Ex.: 644 (arquivo), 755 (pasta/executável).</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setToChmod(null)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={chmodMutation.isPending}>
+              <Lock size={16} aria-hidden="true" />
+              {chmodMutation.isPending ? "Aplicando…" : "Aplicar"}
             </Button>
           </div>
         </form>

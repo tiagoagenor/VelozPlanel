@@ -87,6 +87,14 @@ const filesCidParams = z.object({ cid: z.string().min(1) });
 const filesPathQuery = z.object({ path: z.string().min(1) });
 const writeBody = z.object({ path: z.string().min(1), content: z.string() });
 const mkPathBody = z.object({ path: z.string().min(1) });
+const renameBody = z.object({
+  path: z.string().min(1),
+  newName: z.string().min(1),
+});
+const chmodBody = z.object({
+  path: z.string().min(1),
+  mode: z.string().regex(/^[0-7]{3,4}$/),
+});
 
 /* ─────────────── Rotas ─────────────── */
 
@@ -235,6 +243,54 @@ app.post("/files/:cid/mkdir", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "files.mkdir failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/rename {path,newName} — renomeia arquivo ou pasta
+app.post("/files/:cid/rename", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = renameBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.rename(p.data.cid, b.data.path, b.data.newName);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.rename failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/chmod {path,mode} — altera permissões
+app.post("/files/:cid/chmod", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = chmodBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.chmod(p.data.cid, b.data.path, b.data.mode);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.chmod failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// GET /files/:cid/download?path= — baixa um arquivo (base64)
+app.get("/files/:cid/download", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const q = filesPathQuery.safeParse(req.query);
+  if (!p.success || !q.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    const result = await files.download(p.data.cid, q.data.path);
+    return reply.send(result);
+  } catch (err) {
+    req.log.error({ err }, "files.download failed");
     return reply.code(fileErrorStatus(err)).send(errorPayload(err));
   }
 });

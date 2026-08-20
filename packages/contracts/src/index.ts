@@ -172,6 +172,7 @@ export const fileEntry = z.object({
   type: z.enum(["file", "dir"]),
   size: z.number(), // bytes (0 para dir)
   mtime: z.number(), // epoch ms
+  mode: z.string(), // permissões octais, ex.: "644"
 });
 export type FileEntry = z.infer<typeof fileEntry>;
 
@@ -199,6 +200,24 @@ export const mkPathInput = z.object({
   path: z.string().min(1),
 });
 export type MkPathInput = z.infer<typeof mkPathInput>;
+
+/** Renomear/mover dentro do mesmo diretório (só o nome final). */
+export const renameFileInput = z.object({
+  path: z.string().min(1), // caminho atual (absoluto)
+  newName: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\\]+$/, "nome inválido (sem barras)"),
+});
+export type RenameFileInput = z.infer<typeof renameFileInput>;
+
+/** Alterar permissões (chmod), modo octal de 3 ou 4 dígitos. */
+export const chmodInput = z.object({
+  path: z.string().min(1),
+  mode: z.string().regex(/^[0-7]{3,4}$/, "modo octal inválido, ex.: 644 ou 755"),
+});
+export type ChmodInput = z.infer<typeof chmodInput>;
 
 /* ─────────────── Bancos de dados do cliente ─────────────── */
 

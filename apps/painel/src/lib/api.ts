@@ -264,3 +264,55 @@ export function deleteFile(id: string, path: string): Promise<void> {
     query: { path },
   });
 }
+
+/** Renomeia (dentro do mesmo diretório) um arquivo ou pasta. */
+export function renameFile(
+  id: string,
+  path: string,
+  newName: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/files/rename`, {
+    method: "POST",
+    body: { path, newName },
+  });
+}
+
+/** Altera as permissões (chmod) de um arquivo ou pasta. Modo octal, ex.: "644". */
+export function chmodFile(
+  id: string,
+  path: string,
+  mode: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/files/chmod`, {
+    method: "POST",
+    body: { path, mode },
+  });
+}
+
+/**
+ * Baixa um arquivo como Blob (bytes crus). Faz `fetch` direto com o cookie de
+ * sessão para funcionar cross-origin; não usa `request` porque a resposta é
+ * binária, não JSON.
+ */
+export async function downloadFile(id: string, path: string): Promise<Blob> {
+  const url = `${API_BASE}/environments/${id}/files/download?path=${encodeURIComponent(
+    path,
+  )}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { credentials: "include", cache: "no-store" });
+  } catch {
+    throw new ApiError(0, "Não foi possível falar com a API.", "network_error");
+  }
+  if (!res.ok) {
+    const raw = await res.text().catch(() => "");
+    let d: { error?: string; message?: string } = {};
+    try {
+      d = raw ? (JSON.parse(raw) as typeof d) : {};
+    } catch {
+      /* corpo não-JSON */
+    }
+    throw new ApiError(res.status, d.message ?? res.statusText, d.error);
+  }
+  return res.blob();
+}

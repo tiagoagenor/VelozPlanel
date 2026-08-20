@@ -85,6 +85,13 @@ export interface AgentFileEntry {
   type: "file" | "dir";
   size: number;
   mtime: number;
+  mode: string;
+}
+
+export interface AgentDownloadResult {
+  base64: string;
+  name: string;
+  size: number;
 }
 
 export function listFiles(
@@ -134,5 +141,39 @@ export function removeFile(containerId: string, path: string): Promise<void> {
   return call<void>(
     "DELETE",
     `/files/${encodeURIComponent(containerId)}?path=${encodeURIComponent(path)}`,
+  );
+}
+
+export function renameFile(
+  containerId: string,
+  path: string,
+  newName: string,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/rename`,
+    { path, newName },
+  );
+}
+
+export function chmodFile(
+  containerId: string,
+  path: string,
+  mode: string,
+): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/chmod`,
+    { path, mode },
+  );
+}
+
+export function downloadFile(
+  containerId: string,
+  path: string,
+): Promise<AgentDownloadResult> {
+  return call<AgentDownloadResult>(
+    "GET",
+    `/files/${encodeURIComponent(containerId)}/download?path=${encodeURIComponent(path)}`,
   );
 }

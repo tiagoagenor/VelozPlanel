@@ -20,12 +20,20 @@ const docker = new Docker(); // /var/run/docker.sock (Docker Desktop no Mac)
 
 const MAX_READ_BYTES = 512 * 1024; // 512 KiB — teto de leitura no editor
 const MAX_WRITE_BYTES = 1024 * 1024; // ~1 MiB — teto de gravação
+const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto de download
 
 export interface FileEntry {
   name: string;
   type: "file" | "dir";
   size: number;
   mtime: number; // epoch ms
+  mode: string; // permissões octais, ex.: "644"
+}
+
+export interface DownloadResult {
+  base64: string;
+  name: string;
+  size: number;
 }
 
 export interface ReadResult {
@@ -116,7 +124,7 @@ export async function list(containerId: string, path: string): Promise<FileEntry
   const script =
     `cd ${sq(path)} && for e in * .[!.]*; do ` +
     `[ -e "$e" ] || continue; ` +
-    `stat -c "%n|%F|%s|%Y" "$e"; done`;
+    `stat -c "%n|%F|%s|%Y|%a" "$e"; done`;
   const { stdout, stderr, exitCode } = await exec(containerId, ["sh", "-c", script]);
   if (exitCode !== 0) {
     throw new FileError(404, stderr || "diretório não encontrado");
@@ -125,9 +133,10 @@ export async function list(containerId: string, path: string): Promise<FileEntry
   const entries: FileEntry[] = [];
   for (const line of stdout.toString("utf8").split("\n")) {
     if (!line) continue;
-    // Nome pode conter `|`; os 3 últimos campos são fixos.
+    // Nome pode conter `|`; os 4 últimos campos são fixos.
     const parts = line.split("|");
-    if (parts.length < 4) continue;
+    if (parts.length < 5) continue;
+    const modeStr = parts.pop() as string;
     const mtimeSec = parts.pop() as string;
     const sizeStr = parts.pop() as string;
     const fType = parts.pop() as string;
@@ -138,6 +147,7 @@ export async function list(containerId: string, path: string): Promise<FileEntry
       type: fType === "directory" ? "dir" : "file",
       size: Number(sizeStr) || 0,
       mtime: (Number(mtimeSec) || 0) * 1000,
+      mode: modeStr.trim(),
     });
   }
   // Pastas primeiro, depois alfabético (case-insensitive).
@@ -209,4 +219,106 @@ export async function remove(containerId: string, path: string): Promise<void> {
   if (exitCode !== 0) {
     throw new FileError(400, stderr || "não foi possível excluir");
   }
+}
+
+/**
+ * Renomeia (move dentro do mesmo diretório) um arquivo/pasta.
+ * Deriva o diretório de `path` e monta `<dir>/<newName>`. `newName` não pode
+ * conter `/` (nem `..`) para confinar a operação ao mesmo diretório.
+ */
+export async function rename(
+  containerId: string,
+  path: string,
+  newName: string,
+): Promise<void> {
+  assertSafePath(path);
+  if (path === "/") {
+    throw new FileError(400, "não é permitido renomear a raiz");
+  }
+  if (
+    typeof newName !== "string" ||
+    newName.length === 0 ||
+    newName.includes("/") ||
+    newName === "." ||
+    newName === ".."
+  ) {
+    throw new FileError(400, "nome inválido (sem barras)");
+  }
+  // Diretório pai de `path` (POSIX). Ex.: /var/www/a.txt -> /var/www
+  const idx = path.lastIndexOf("/");
+  const dir = idx <= 0 ? "/" : path.slice(0, idx);
+  const dest = dir === "/" ? `/${newName}` : `${dir}/${newName}`;
+  const { stderr, exitCode } = await exec(containerId, [
+    "mv",
+    "-n",
+    "--",
+    path,
+    dest,
+  ]);
+  if (exitCode !== 0) {
+    throw new FileError(400, stderr || "não foi possível renomear");
+  }
+}
+
+/** Altera permissões (chmod) de um arquivo/pasta. `mode` octal 3–4 dígitos. */
+export async function chmod(
+  containerId: string,
+  path: string,
+  mode: string,
+): Promise<void> {
+  assertSafePath(path);
+  if (path === "/") {
+    throw new FileError(400, "não é permitido alterar a raiz");
+  }
+  if (!/^[0-7]{3,4}$/.test(mode)) {
+    throw new FileError(400, "modo octal inválido (ex.: 644 ou 755)");
+  }
+  const { stderr, exitCode } = await exec(containerId, ["chmod", mode, "--", path]);
+  if (exitCode !== 0) {
+    throw new FileError(400, stderr || "não foi possível alterar permissões");
+  }
+}
+
+/**
+ * Baixa um arquivo, retornando o conteúdo em base64. Rejeita diretórios e
+ * arquivos maiores que `maxBytes`. Verifica o tamanho antes de ler (via stat)
+ * para não trazer arquivos gigantes para a memória do agente.
+ */
+export async function download(
+  containerId: string,
+  path: string,
+  maxBytes = MAX_DOWNLOAD_BYTES,
+): Promise<DownloadResult> {
+  assertSafePath(path);
+  // Confere tipo + tamanho primeiro (portável Debian/BusyBox).
+  const statRes = await exec(containerId, ["stat", "-c", "%F|%s", path]);
+  if (statRes.exitCode !== 0) {
+    throw new FileError(404, statRes.stderr || "arquivo não encontrado");
+  }
+  const [fType, sizeStr] = statRes.stdout.toString("utf8").trim().split("|");
+  if (fType === "directory") {
+    throw new FileError(400, "não é possível baixar um diretório");
+  }
+  const size = Number(sizeStr) || 0;
+  if (size > maxBytes) {
+    throw new FileError(
+      413,
+      `arquivo muito grande para download (máx ${maxBytes} bytes)`,
+    );
+  }
+  // `base64 <path>` funciona no coreutils e no BusyBox.
+  const { stdout, stderr, exitCode } = await exec(containerId, [
+    "base64",
+    path,
+  ]);
+  if (exitCode !== 0) {
+    throw new FileError(400, stderr || "não foi possível baixar o arquivo");
+  }
+  const idx = path.lastIndexOf("/");
+  const name = idx >= 0 ? path.slice(idx + 1) : path;
+  return {
+    base64: stdout.toString("utf8").replace(/\s+/g, ""),
+    name,
+    size,
+  };
 }
