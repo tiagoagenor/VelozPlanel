@@ -12,7 +12,7 @@ import {
 } from "@velozplanel/contracts";
 import type { SshConfig, SshKey, SshAuthMode, SshAccessScope } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { sshConfigs, sshKeys } from "../db/schema";
+import { sshConfigs, sshKeys, nodes } from "../db/schema";
 import type { SshConfigRow, SshKeyRow, EnvironmentRow } from "../db/schema";
 import { ApiHttpError, requireUser } from "../auth";
 import { loadEnvironmentForUser } from "./environments";
@@ -150,7 +150,18 @@ async function loadOrCreateSshConfig(env: EnvironmentRow): Promise<SshConfigRow>
  * o gateway SSH/SFTP que TERMINA a conexão ainda não roda; ele ativa na fase
  * de infra/borda (como o SSL). Nunca afirmamos que já há SSH aceitando conexão.
  */
-function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[]): SshConfig {
+/** Host que o cliente usa para conectar: o host público do nó do ambiente,
+ *  configurado pelo super admin; cai para VP_SSH_HOST/localhost se não definido. */
+async function resolveSshHost(env: EnvironmentRow): Promise<string> {
+  if (env.nodeId) {
+    const rows = await db.select().from(nodes).where(eq(nodes.id, env.nodeId)).limit(1);
+    const ph = rows[0]?.publicHost;
+    if (ph && ph.trim()) return ph.trim();
+  }
+  return SSH_HOST;
+}
+
+function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[], host: string): SshConfig {
   const authMode = cfg.authMode as SshAuthMode;
   const accessScope = cfg.accessScope as SshAccessScope;
   const keyRequired = authMode === "key" || authMode === "both";
@@ -169,7 +180,7 @@ function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[]): SshConfig {
     envId: cfg.envId,
     enabled: cfg.enabled,
     username: cfg.username,
-    host: SSH_HOST,
+    host,
     port: cfg.port,
     authMode,
     accessScope,
@@ -201,7 +212,8 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       const cfg = await loadOrCreateSshConfig(env);
       const keys = await loadKeys(env.id);
-      return toSshConfig(cfg, keys);
+      const host = await resolveSshHost(env);
+      return toSshConfig(cfg, keys, host);
     },
   );
 
@@ -232,7 +244,8 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
       const cfg = updated[0];
       if (!cfg) throw new ApiHttpError(500, "internal_error", "falha ao salvar configuração de SSH");
       const keys = await loadKeys(env.id);
-      return toSshConfig(cfg, keys);
+      const host = await resolveSshHost(env);
+      return toSshConfig(cfg, keys, host);
     },
   );
 

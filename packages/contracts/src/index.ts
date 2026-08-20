@@ -126,9 +126,23 @@ export const node = z.object({
   vcpuTotal: z.number(),
   memMbTotal: z.number(),
   envCount: z.number().int(),
+  publicHost: z.string().nullable(), // IP/host público do nó (SSH, DNS). Configurado pelo super admin.
   lastSeenAt: z.string().datetime().nullable(),
 });
 export type Node = z.infer<typeof node>;
+
+/** Super admin edita o host público do nó (usado em SSH e registro A do DNS). */
+export const updateNodeInput = z.object({
+  publicHost: z
+    .string()
+    .max(253)
+    .regex(
+      /^([a-z0-9-]+\.)*[a-z0-9-]+$|^(\d{1,3}\.){3}\d{1,3}$/i,
+      "informe um IP ou hostname válido, ex.: 200.9.22.2 ou node1.velozplanel.com",
+    )
+    .nullable(),
+});
+export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
 
 /* ─────────────── Métricas ─────────────── */
 

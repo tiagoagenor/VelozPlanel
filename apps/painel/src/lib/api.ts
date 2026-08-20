@@ -118,6 +118,20 @@ export function listNodes(): Promise<Node[]> {
   return request<Node[]>("/nodes");
 }
 
+/**
+ * Define (ou remove, com null) o host público do nó — IP/hostname que os
+ * clientes usam para SSH/SFTP e no registro A do DNS. Ação de super admin.
+ */
+export function updateNode(
+  id: string,
+  publicHost: string | null,
+): Promise<Node> {
+  return request<Node>(`/nodes/${id}`, {
+    method: "PATCH",
+    body: { publicHost },
+  });
+}
+
 /* ─────────────── Ambientes ─────────────── */
 
 export function listEnvironments(): Promise<Environment[]> {

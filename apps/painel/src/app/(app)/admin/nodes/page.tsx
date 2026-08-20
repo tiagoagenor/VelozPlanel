@@ -1,19 +1,32 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
   ShieldAlert,
+  Pencil,
   type LucideIcon,
 } from "lucide-react";
-import type { Node, NodeStatus } from "@velozplanel/contracts";
+import {
+  updateNodeInput,
+  type Node,
+  type NodeStatus,
+} from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input, Label } from "@/components/ui/input";
+import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format";
+
+const PUBLIC_HOST_HELP =
+  "Endereço público que os clientes usam para SSH/SFTP e no registro A do DNS.";
 
 const STATUS_META: Record<
   NodeStatus,
@@ -45,6 +58,8 @@ export default function AdminNodesPage() {
     queryFn: api.listNodes,
     enabled: isAdmin,
   });
+
+  const [editing, setEditing] = React.useState<Node | null>(null);
 
   return (
     <>
@@ -88,19 +103,23 @@ export default function AdminNodesPage() {
         <>
           {/* Desktop: tabela densa */}
           <Card className="hidden overflow-x-auto p-0 md:block">
-            <table className="w-full min-w-[44rem] border-collapse text-sm">
+            <table className="w-full min-w-[52rem] border-collapse text-sm">
               <caption className="sr-only">
-                Lista de nós com nome, região, status, capacidade e último contato.
+                Lista de nós com nome, região, status, host público, capacidade e último contato.
               </caption>
               <thead>
                 <tr className="border-b border-border-subtle bg-bg text-left text-text3">
                   <th scope="col" className="px-4 py-3 font-semibold">Nome</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Região</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Status</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Host público</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">vCPU</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">RAM (MB)</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">Ambientes</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Último contato</th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">
+                    <span className="sr-only">Ações</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -114,10 +133,28 @@ export default function AdminNodesPage() {
                     <td className="px-4 py-3">
                       <StatusBadge status={node.status} />
                     </td>
+                    <td className="px-4 py-3">
+                      {node.publicHost ? (
+                        <span className="font-mono text-text2">{node.publicHost}</span>
+                      ) : (
+                        <span className="text-text3" aria-label="Sem host público">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{node.vcpuTotal}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{node.memMbTotal}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{node.envCount}</td>
                     <td className="px-4 py-3 text-text2">{formatDateTime(node.lastSeenAt)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditing(node)}
+                        aria-label={`Editar host público de ${node.name}`}
+                      >
+                        <Pencil size={15} aria-hidden="true" />
+                        Editar
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -128,17 +165,22 @@ export default function AdminNodesPage() {
           <ul className="flex flex-col gap-3 md:hidden">
             {nodesQuery.data.map((node) => (
               <li key={node.id}>
-                <NodeCard node={node} />
+                <NodeCard node={node} onEdit={() => setEditing(node)} />
               </li>
             ))}
           </ul>
         </>
       )}
+
+      <EditPublicHostDialog
+        node={editing}
+        onClose={() => setEditing(null)}
+      />
     </>
   );
 }
 
-function NodeCard({ node }: { node: Node }) {
+function NodeCard({ node, onEdit }: { node: Node; onEdit: () => void }) {
   return (
     <div className="vp-card-shadow rounded-xl border border-border-subtle bg-surface p-4">
       <div className="flex items-center justify-between gap-2">
@@ -153,9 +195,29 @@ function NodeCard({ node }: { node: Node }) {
         <NodeStat label="RAM (MB)" value={node.memMbTotal} />
         <NodeStat label="Ambientes" value={node.envCount} />
       </dl>
+      <div className="mt-3 border-t border-border-subtle pt-3">
+        <p className="text-xs text-text3">Host público</p>
+        {node.publicHost ? (
+          <p className="mt-0.5 break-all font-mono text-sm text-text">{node.publicHost}</p>
+        ) : (
+          <p className="mt-0.5 text-sm text-text3">—</p>
+        )}
+      </div>
       <p className="mt-3 text-xs text-text3">
         Último contato: {formatDateTime(node.lastSeenAt)}
       </p>
+      <div className="mt-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onEdit}
+          className="w-full"
+          aria-label={`Editar host público de ${node.name}`}
+        >
+          <Pencil size={15} aria-hidden="true" />
+          Editar host público
+        </Button>
+      </div>
     </div>
   );
 }
@@ -166,5 +228,107 @@ function NodeStat({ label, value }: { label: string; value: number }) {
       <dt className="text-xs text-text3">{label}</dt>
       <dd className="font-medium tabular-nums text-text">{value}</dd>
     </div>
+  );
+}
+
+function EditPublicHostDialog({
+  node,
+  onClose,
+}: {
+  node: Node | null;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [value, setValue] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  // Pré-preenche com o valor atual sempre que abrir para um nó.
+  React.useEffect(() => {
+    if (node) {
+      setValue(node.publicHost ?? "");
+      setError(null);
+    }
+  }, [node]);
+
+  const mutation = useMutation({
+    mutationFn: (publicHost: string | null) =>
+      api.updateNode(node!.id, publicHost),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["nodes"] });
+      toast.show("success", "Host público atualizado.");
+      onClose();
+    },
+    onError: (err) => {
+      toast.show(
+        "error",
+        err instanceof Error ? err.message : "Falha ao atualizar host público.",
+      );
+    },
+  });
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const trimmed = value.trim();
+    const publicHost = trimmed === "" ? null : trimmed;
+    const parsed = updateNodeInput.safeParse({ publicHost });
+    if (!parsed.success) {
+      setError(
+        parsed.error.issues[0]?.message ??
+          "Informe um IP ou hostname válido.",
+      );
+      return;
+    }
+    mutation.mutate(parsed.data.publicHost);
+  }
+
+  if (!node) return null;
+
+  return (
+    <Dialog
+      open={node !== null}
+      onClose={onClose}
+      title={`Host público — ${node.name}`}
+      description={PUBLIC_HOST_HELP}
+    >
+      <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="node-public-host">Host público</Label>
+          <Input
+            id="node-public-host"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="200.9.22.2 ou node1.velozplanel.com"
+            aria-describedby="node-public-host-help"
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+          />
+          <p id="node-public-host-help" className="text-xs text-text3">
+            IP ou hostname. Deixe em branco para remover.
+          </p>
+        </div>
+
+        {error ? (
+          <p
+            role="alert"
+            className="flex items-center gap-2 text-sm font-medium text-danger"
+          >
+            <AlertTriangle size={16} aria-hidden="true" />
+            {error}
+          </p>
+        ) : null}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={mutation.isPending}>
+            {mutation.isPending ? "Salvando…" : "Salvar"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }

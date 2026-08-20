@@ -1,12 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { count } from "drizzle-orm";
-import { node as nodeSchema, apiError } from "@velozplanel/contracts";
+import { count, eq } from "drizzle-orm";
+import { node as nodeSchema, updateNodeInput, apiError } from "@velozplanel/contracts";
 import type { Node, NodeStatus } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { nodes, environments } from "../db/schema";
-import { requireAdmin } from "../auth";
+import { requireAdmin, ApiHttpError } from "../auth";
 
 export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -38,8 +38,46 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
         vcpuTotal: n.vcpuTotal,
         memMbTotal: n.memMbTotal,
         envCount: countByNode.get(n.id) ?? 0,
+        publicHost: n.publicHost,
         lastSeenAt: n.lastSeenAt ? n.lastSeenAt.toISOString() : null,
       }));
+    },
+  );
+
+  // Super admin edita o host público do nó (usado em SSH e no registro A do DNS).
+  app.patch(
+    "/nodes/:id",
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        body: updateNodeInput,
+        response: { 200: nodeSchema, 401: apiError, 403: apiError, 404: apiError },
+      },
+    },
+    async (req): Promise<Node> => {
+      await requireAdmin(req);
+      const updated = await db
+        .update(nodes)
+        .set({ publicHost: req.body.publicHost })
+        .where(eq(nodes.id, req.params.id))
+        .returning();
+      const n = updated[0];
+      if (!n) throw new ApiHttpError(404, "not_found", "nó não encontrado");
+      const [c] = await db
+        .select({ c: count() })
+        .from(environments)
+        .where(eq(environments.nodeId, n.id));
+      return {
+        id: n.id,
+        name: n.name,
+        region: n.region,
+        status: n.status as NodeStatus,
+        vcpuTotal: n.vcpuTotal,
+        memMbTotal: n.memMbTotal,
+        envCount: c?.c ?? 0,
+        publicHost: n.publicHost,
+        lastSeenAt: n.lastSeenAt ? n.lastSeenAt.toISOString() : null,
+      };
     },
   );
 }

@@ -30,9 +30,11 @@ async function createSchema(): Promise<void> {
       status       text NOT NULL,
       vcpu_total   double precision NOT NULL,
       mem_mb_total integer NOT NULL,
+      public_host  text,
       last_seen_at timestamptz
     )
   `;
+  await sql`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS public_host text`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS environments (

@@ -32,6 +32,7 @@ export const nodes = pgTable("nodes", {
   status: text("status").notNull(), // "online" | "degraded" | "offline"
   vcpuTotal: doublePrecision("vcpu_total").notNull(),
   memMbTotal: integer("mem_mb_total").notNull(),
+  publicHost: text("public_host"), // IP/host público (SSH, DNS) — configurado pelo super admin
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
