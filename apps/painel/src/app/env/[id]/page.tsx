@@ -12,6 +12,7 @@ import { PLANS } from "@velozplanel/contracts";
 import type { MetricSample } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
+import { AuthGuard } from "@/components/AuthGuard";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { TimeSeries } from "@/components/TimeSeries";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,7 @@ export default function EnvDetailPage() {
   const busy = pause.isPending || start.isPending || remove.isPending;
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-bg">
       <AppHeader />
       <main id="conteudo" className="mx-auto max-w-5xl px-4 py-8">
@@ -121,7 +123,7 @@ export default function EnvDetailPage() {
                     href={`http://localhost:${env.httpPort}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm text-link hover:bg-surface"
+                    className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm text-link hover:bg-bg"
                   >
                     Abrir site ↗
                   </a>
@@ -264,6 +266,7 @@ export default function EnvDetailPage() {
         </div>
       </Dialog>
     </div>
+    </AuthGuard>
   );
 }
 

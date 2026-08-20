@@ -4,13 +4,13 @@ import { cn } from "@/lib/cn";
 type Tone = "brand" | "success" | "warning" | "danger" | "info" | "neutral" | "accent";
 
 const TONES: Record<Tone, string> = {
-  brand: "border-brand text-brand",
-  success: "border-success text-success",
-  warning: "border-warning text-warning",
-  danger: "border-danger text-danger",
-  info: "border-info text-info",
-  neutral: "border-neutral text-neutral",
-  accent: "border-accent text-accent",
+  brand: "vp-pill vp-pill-brand",
+  success: "vp-pill vp-pill-success",
+  warning: "vp-pill vp-pill-warning",
+  danger: "vp-pill vp-pill-danger",
+  info: "vp-pill vp-pill-info",
+  neutral: "vp-pill vp-pill-neutral",
+  accent: "vp-pill vp-pill-accent",
 };
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -18,14 +18,14 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 /**
- * Badge com contorno + texto na cor semântica (nunca só cor).
- * O fundo é sempre a superfície elevada para manter o contraste ≥ 4.5.
+ * Pílula de estado: fundo suave + texto escuro na cor semântica + borda
+ * (nunca só cor). Todo par texto/fundo passa AA (≥ 4,5:1) — ver globals.css.
  */
 export function Badge({ tone = "neutral", className, ...props }: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border bg-elevated px-2.5 py-1",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1",
         "text-xs font-semibold",
         TONES[tone],
         className,

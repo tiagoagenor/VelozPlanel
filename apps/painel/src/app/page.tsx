@@ -33,6 +33,7 @@ import type { Environment } from "@velozplanel/contracts";
 import { PLANS } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
+import { AuthGuard } from "@/components/AuthGuard";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { CreateEnvironmentDialog } from "@/components/CreateEnvironmentDialog";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   });
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-bg">
       <AppHeader />
       <main id="conteudo" className="mx-auto max-w-5xl px-4 py-8">
@@ -89,6 +91,7 @@ export default function DashboardPage() {
         onClose={() => setCreateOpen(false)}
       />
     </div>
+    </AuthGuard>
   );
 }
 
@@ -161,7 +164,7 @@ function EnvCard({ env }: { env: Environment }) {
             href={`http://localhost:${env.httpPort}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm text-link hover:bg-surface"
+            className="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm text-link hover:bg-bg"
           >
             Abrir site ↗
           </a>
@@ -169,7 +172,7 @@ function EnvCard({ env }: { env: Environment }) {
 
         <Link
           href={`/env/${env.id}`}
-          className="ml-auto inline-flex h-9 items-center rounded-md px-3 text-sm text-text2 hover:bg-surface"
+          className="ml-auto inline-flex h-9 items-center rounded-md px-3 text-sm text-text2 hover:bg-bg"
         >
           Detalhes →
         </Link>

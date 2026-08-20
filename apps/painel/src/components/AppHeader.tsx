@@ -1,14 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
+
+function NavLink({
+  href,
+  active,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+        active
+          ? "bg-brand-soft text-brand-strong"
+          : "text-text2 hover:bg-bg hover:text-text",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
 
 export function AppHeader() {
   const router = useRouter();
   const qc = useQueryClient();
+  const pathname = usePathname();
 
   const { data: user } = useQuery({
     queryKey: ["me"],
@@ -24,26 +51,37 @@ export function AppHeader() {
   });
 
   return (
-    <header className="border-b border-border-subtle bg-surface">
+    <header className="sticky top-0 z-30 border-b border-border-subtle bg-surface/95 backdrop-blur">
       <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
         <div className="flex items-center gap-4">
-          <Link href="/" className="text-base font-bold text-text">
-            Veloz<span className="text-brand">Panel</span>
-          </Link>
-          <nav aria-label="Navegação principal" className="flex items-center gap-1">
-            <Link
-              href="/"
-              className="rounded-md px-3 py-1.5 text-sm text-text2 hover:bg-elevated"
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-lg font-extrabold tracking-tight text-text"
+          >
+            <span
+              aria-hidden="true"
+              className="grid h-8 w-8 place-items-center rounded-lg bg-brand text-on-solid text-sm font-black"
             >
+              V
+            </span>
+            <span>
+              Veloz<span className="text-brand-strong">Panel</span>
+            </span>
+          </Link>
+          <nav
+            aria-label="Navegação principal"
+            className="flex items-center gap-1"
+          >
+            <NavLink href="/" active={pathname === "/"}>
               Ambientes
-            </Link>
+            </NavLink>
             {user?.role === "admin" ? (
-              <Link
+              <NavLink
                 href="/admin/nodes"
-                className="rounded-md px-3 py-1.5 text-sm text-text2 hover:bg-elevated"
+                active={pathname?.startsWith("/admin") ?? false}
               >
                 Nós
-              </Link>
+              </NavLink>
             ) : null}
           </nav>
         </div>

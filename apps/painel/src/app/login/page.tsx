@@ -63,11 +63,24 @@ function LoginForm() {
       id="conteudo"
       className="flex min-h-screen items-center justify-center bg-bg px-4"
     >
-      <Card className="w-full max-w-sm bg-elevated">
-        <h1 className="mb-1 text-xl font-bold text-text">
-          Veloz<span className="text-brand">Panel</span>
-        </h1>
-        <p className="mb-6 text-sm text-text2">Entre para gerenciar seus ambientes.</p>
+      <Card className="w-full max-w-sm overflow-hidden bg-elevated p-0">
+        <div aria-hidden="true" className="h-1.5 w-full bg-brand" />
+        <div className="p-6">
+          <div className="mb-5 flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="grid h-9 w-9 place-items-center rounded-lg bg-brand text-on-solid text-base font-black"
+            >
+              V
+            </span>
+            <span className="text-xl font-extrabold tracking-tight text-text">
+              Veloz<span className="text-brand-strong">Panel</span>
+            </span>
+          </div>
+          <h1 className="mb-1 text-lg font-bold text-text">Entrar</h1>
+          <p className="mb-6 text-sm text-text2">
+            Acesse para gerenciar seus ambientes de hospedagem.
+          </p>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
           <div className="flex flex-col gap-1.5">
@@ -118,10 +131,11 @@ function LoginForm() {
           </Button>
         </form>
 
-        <p className="mt-6 text-xs text-text3">
-          Teste: <code>client@veloz.dev</code> / <code>veloz123</code> ·
-          admin: <code>admin@veloz.dev</code>
-        </p>
+          <p className="mt-6 text-xs text-text3">
+            Teste: <code>client@veloz.dev</code> / <code>veloz123</code> ·
+            admin: <code>admin@veloz.dev</code>
+          </p>
+        </div>
       </Card>
     </main>
   );

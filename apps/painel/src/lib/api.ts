@@ -7,8 +7,14 @@ import type {
   SessionUser,
 } from "@velozplanel/contracts";
 
-/** Base da API do núcleo (ver NUCLEO-SPEC.md). */
-export const API_BASE = "http://localhost:4000/api/v1";
+/**
+ * Base da API do núcleo (ver NUCLEO-SPEC.md).
+ * Configurável por env para acesso pela rede — ex.:
+ *   NEXT_PUBLIC_API_URL=http://192.168.2.105:4000/api/v1
+ * Default de dev: http://localhost:4000/api/v1
+ */
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
 /** Erro de API tipado, carrega o status HTTP para tratamento (ex.: 401). */
 export class ApiError extends Error {
@@ -41,14 +47,23 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     if (s) url += `?${s}`;
   }
 
-  const res = await fetch(url, {
-    method,
-    // envia/recebe o cookie de sessão httpOnly `vp_session`
-    credentials: "include",
-    headers: body != null ? { "Content-Type": "application/json" } : undefined,
-    body: body != null ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      // envia/recebe o cookie de sessão httpOnly `vp_session`
+      credentials: "include",
+      headers:
+        body != null ? { "Content-Type": "application/json" } : undefined,
+      body: body != null ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+  } catch {
+    // Falha de rede / CORS / API fora do ar: `fetch` lança TypeError.
+    // Normaliza para ApiError(status 0) para o tratamento global tratar como
+    // sessão não confirmável e mandar ao login (ver providers/AuthGuard).
+    throw new ApiError(0, "Não foi possível falar com a API.", "network_error");
+  }
 
   if (res.status === 204) {
     return undefined as T;

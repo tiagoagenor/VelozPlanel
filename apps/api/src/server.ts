@@ -41,7 +41,17 @@ import { metricsRoutes } from "./routes/metrics";
 import { startMetricsCollector } from "./metrics-collector";
 
 const PORT = Number(process.env.PORT ?? 4000);
-const PANEL_ORIGIN = "http://localhost:3000";
+// Origens do painel autorizadas no CORS. Configurável por env `VP_PANEL_ORIGINS`
+// (CSV) para acesso pela rede — ex.:
+//   VP_PANEL_ORIGINS="http://localhost:3000,http://192.168.2.105:3000"
+// Default inclui localhost e o IP da LAN usado nos testes do dono.
+const PANEL_ORIGINS = (
+  process.env.VP_PANEL_ORIGINS ??
+  "http://localhost:3000,http://192.168.2.105:3000"
+)
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
 
 async function main(): Promise<void> {
   const app = Fastify({
@@ -58,7 +68,7 @@ async function main(): Promise<void> {
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(cors, {
-    origin: PANEL_ORIGIN,
+    origin: PANEL_ORIGINS,
     credentials: true,
   });
   await app.register(cookie);

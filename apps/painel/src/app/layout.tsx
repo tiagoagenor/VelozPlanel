@@ -16,7 +16,7 @@ export default function RootLayout({
         {/* Pular para o conteúdo (WCAG 2.4.1) */}
         <a
           href="#conteudo"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-elevated focus:px-4 focus:py-2 focus:text-link"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-elevated focus:vp-pop-shadow focus:px-4 focus:py-2 focus:text-link"
         >
           Pular para o conteúdo
         </a>

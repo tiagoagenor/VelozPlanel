@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { NodeStatus } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
+import { AuthGuard } from "@/components/AuthGuard";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { formatDateTime } from "@/lib/format";
@@ -30,6 +31,7 @@ export default function AdminNodesPage() {
   });
 
   return (
+    <AuthGuard>
     <div className="min-h-screen bg-bg">
       <AppHeader />
       <main id="conteudo" className="mx-auto max-w-5xl px-4 py-8">
@@ -108,5 +110,6 @@ export default function AdminNodesPage() {
         )}
       </main>
     </div>
+    </AuthGuard>
   );
 }

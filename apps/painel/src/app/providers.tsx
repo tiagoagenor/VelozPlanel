@@ -18,13 +18,22 @@ function redirectToLogin() {
   window.location.assign(`/login?next=${next}`);
 }
 
+/**
+ * Falhas que impedem confirmar a sessão: 401 limpo OU rede/CORS/API fora do ar
+ * (ApiError status 0). Nesses casos a rota protegida não pode ficar "solta" —
+ * volta ao login. Foi o bug visto ao abrir o painel pelo IP da rede.
+ */
+function isAuthBlockingError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 0);
+}
+
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = React.useState(
     () =>
       new QueryClient({
         queryCache: new QueryCache({
           onError: (err) => {
-            if (err instanceof ApiError && err.status === 401) {
+            if (isAuthBlockingError(err)) {
               redirectToLogin();
             }
           },
@@ -33,8 +42,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           queries: {
             refetchOnWindowFocus: false,
             retry: (count, err) => {
-              // Não reintenta erros de autenticação.
-              if (err instanceof ApiError && err.status === 401) return false;
+              // Não reintenta erros que impedem confirmar a sessão.
+              if (isAuthBlockingError(err)) return false;
               return count < 1;
             },
           },

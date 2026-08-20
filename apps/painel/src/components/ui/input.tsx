@@ -10,7 +10,7 @@ export const Input = React.forwardRef<
       ref={ref}
       type={type ?? "text"}
       className={cn(
-        "h-11 w-full rounded-md border border-border bg-elevated px-3 text-sm text-text",
+        "h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm text-text",
         "placeholder:text-text3",
         className,
       )}

@@ -55,8 +55,8 @@ export function Dialog({
       onCancel={onClose}
       onClick={onClick}
       className={cn(
-        "m-auto w-[min(92vw,32rem)] rounded-lg border border-border-subtle bg-elevated p-6 text-text",
-        "backdrop:bg-black/50",
+        "vp-pop-shadow m-auto w-[min(92vw,32rem)] rounded-xl border border-border-subtle bg-elevated p-6 text-text",
+        "backdrop:bg-[#1b1730]/45 backdrop:backdrop-blur-sm",
         className,
       )}
     >
@@ -75,7 +75,7 @@ export function Dialog({
           type="button"
           onClick={onClose}
           aria-label="Fechar"
-          className="rounded-md px-2 py-1 text-text2 hover:bg-surface"
+          className="rounded-lg px-2 py-1 text-text2 hover:bg-bg"
         >
           ✕
         </button>

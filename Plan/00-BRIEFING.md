@@ -407,3 +407,20 @@ Decisão do dono: *"o projeto vai ser feito mas voltado para Ubuntu"*.
   O computador do dono NÃO tem IP fixo → nada vai para produção sem passar pelo teste local.
 - **Repositório GitHub:** `git@github.com:tiagoagenor/VelozPlanel.git` (nome do repo conforme o dono: "VelozPlanel").
 - Regra mantida: validar cada etapa (sem erro) ANTES de reportar "ok"; só então o dono testa.
+
+---
+
+# ADENDO 9 — Identidade visual (branco + roxo) e correção do login (núcleo)
+
+## S. Tema visual: branco com roxo (decisão do dono)
+- O núcleo nasceu dark; o dono quer **fundo branco / claro com roxo como cor primária**, no estilo
+  dos painéis de hospedagem do mercado (o próprio Hostoo é branco + roxo — ver `Plan/hostoo/*.png`).
+- Aplicar mantendo **acessibilidade AA** (doc 10): contraste ≥ 4.5:1, estado sempre cor+ícone+texto,
+  foco visível. Tema **claro como padrão**; dark opcional.
+
+## T. Login obrigatório (bug encontrado no teste do dono)
+- Ao abrir o painel pelo IP da rede (`http://192.168.2.105:3000`) NÃO foi pedido login e a tela
+  carregou. Causa: proteção só no cliente + API em `localhost:4000` inacessível de outra origem.
+- Correções: (1) exigir sessão válida antes de renderizar rota protegida (redirect para /login);
+  (2) API base do painel configurável por env (`NEXT_PUBLIC_API_URL`) para funcionar na rede;
+  (3) CORS da API aceitar as origens de rede (`localhost:3000` + IP da LAN), configurável por env.

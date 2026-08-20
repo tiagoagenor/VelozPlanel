@@ -1,9 +1,36 @@
 @import "tailwindcss";
 
 /*
- * Tokens de cor acessíveis (WCAG 2.2 — contraste ≥ 7:1 para texto).
- * Valores retirados de Plan/especialistas/10-acessibilidade-qualidade.md §3.
- * Os tokens trocam sozinhos entre claro/escuro; não usamos variantes dark:.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  VelozPanel — Tema BRANCO + ROXO (claro como PADRÃO), estilo painel de
+ *  hospedagem (ref.: Plan/hostoo/*.png — Hostoo é branco + violeta).
+ *
+ *  Acessibilidade: piso WCAG 2.2 AA (contraste ≥ 4,5:1 para texto). Quase
+ *  todos os pares abaixo passam AAA (≥ 7:1). Contrastes CALCULADOS com a
+ *  fórmula de luminância relativa da WCAG 2.2.
+ *
+ *  PALETA — TEMA CLARO
+ *    Fundo da página      #f5f6fa  (cinza-claro)
+ *    Card / superfície    #ffffff  (branco)
+ *    Roxo primário (btn)  #7c3aed  → texto branco  = 5,70:1  (AA ok)
+ *    Roxo forte (link,    #6d28d9  → sobre #fff     = 7,10:1  (AAA)
+ *      marca, foco)                 → sobre #f5f6fa  = 6,58:1  (AA+)
+ *    Texto corpo          #1b1730  → #fff 17,33:1 · #f5f6fa 16,05:1
+ *    Texto secundário     #443c5a  → #fff 10,30:1 · #f5f6fa  9,53:1
+ *    Texto terciário      #595269  → #fff  7,41:1 · #f5f6fa  6,86:1
+ *    Sucesso (texto/btn)  #0b5f2e  → #fff  7,81:1  (branco no btn)
+ *    Aviso (texto/btn)    #6e4200  → #fff  8,60:1
+ *    Perigo (texto/btn)   #9e1420  → #fff  8,16:1
+ *    Info                 #095078  → #fff  8,64:1
+ *    Neutro               #4a5462  → #fff  7,68:1
+ *
+ *  ESTADO DE AMBIENTE — sempre COR + ÍCONE + TEXTO (pílula suave):
+ *    Ativo=verde  Pausado=âmbar  Provisionando=roxo  Erro=vermelho  Excluindo=cinza
+ *    Ex.: Ativo  #0b5f2e sobre #dcfce7 = 8,68:1 · Provisionando #5b21b6 sobre #ede9fe = 7,57:1
+ *
+ *  Foco visível: anel roxo de 3px + halo de 1px (WCAG 2.4.13).
+ *  Dark mode mantido como OPÇÃO (prefers-color-scheme / [data-theme]); default é claro.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
 @theme inline {
@@ -17,6 +44,9 @@
   --color-text3: var(--vp-text-3);
   --color-link: var(--vp-link);
   --color-brand: var(--vp-brand);
+  --color-brand-strong: var(--vp-brand-strong);
+  --color-brand-hover: var(--vp-brand-hover);
+  --color-brand-soft: var(--vp-brand-soft-bg);
   --color-success: var(--vp-success);
   --color-warning: var(--vp-warning);
   --color-danger: var(--vp-danger);
@@ -25,79 +55,164 @@
   --color-accent: var(--vp-accent);
   --color-focus: var(--vp-focus);
   --color-on-solid: var(--vp-on-solid);
+
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 }
 
-/* ── Tema claro (default) ── */
+/* ── Tema claro (DEFAULT) ── */
 :root {
-  --vp-bg: #ffffff;
-  --vp-surface: #f4f6f9;
+  --vp-bg: #f5f6fa;
+  --vp-surface: #ffffff;
   --vp-elevated: #ffffff;
-  --vp-border: #7e8a9a;
-  --vp-border-subtle: #dde3ea;
-  --vp-text: #10151c;
-  --vp-text-2: #3d4757;
-  --vp-text-3: #46505f;
-  --vp-link: #0a46b8;
-  --vp-brand: #0a46b8;
+  --vp-border: #c3c8d6;
+  --vp-border-subtle: #e6e8f0;
+  --vp-text: #1b1730;
+  --vp-text-2: #443c5a;
+  --vp-text-3: #595269;
+  --vp-link: #6d28d9;
+  --vp-brand: #7c3aed; /* preenchimento de botão primário (texto branco) */
+  --vp-brand-strong: #6d28d9; /* marca, link, foco (sobre branco) */
+  --vp-brand-hover: #5b21b6; /* hover mais escuro */
   --vp-success: #0b5f2e;
   --vp-warning: #6e4200;
   --vp-danger: #9e1420;
   --vp-info: #095078;
   --vp-neutral: #4a5462;
-  --vp-accent: #5a2296;
-  --vp-focus: #0a46b8;
+  --vp-accent: #6b21a8;
+  --vp-focus: #6d28d9;
   --vp-focus-halo: #ffffff;
   /* texto sobre preenchimento sólido de botão */
   --vp-on-solid: #ffffff;
+
+  /* Pílulas de estado (fundo suave + texto escuro) — tema claro */
+  --vp-brand-soft-bg: #ede9fe;
+  --vp-brand-soft-fg: #5b21b6;
+  --vp-brand-soft-bd: #ddd6fe;
+  --vp-success-soft-bg: #dcfce7;
+  --vp-success-soft-fg: #0b5f2e;
+  --vp-success-soft-bd: #bbf7d0;
+  --vp-warning-soft-bg: #fdf0c9;
+  --vp-warning-soft-fg: #6e4200;
+  --vp-warning-soft-bd: #fde68a;
+  --vp-danger-soft-bg: #fde4e4;
+  --vp-danger-soft-fg: #9e1420;
+  --vp-danger-soft-bd: #fecaca;
+  --vp-info-soft-bg: #dbeafe;
+  --vp-info-soft-fg: #0b4f74;
+  --vp-info-soft-bd: #bfdbfe;
+  --vp-neutral-soft-bg: #eef1f6;
+  --vp-neutral-soft-fg: #3a4150;
+  --vp-neutral-soft-bd: #dde3ea;
+  --vp-accent-soft-bg: #f3e8ff;
+  --vp-accent-soft-fg: #6b21a8;
+  --vp-accent-soft-bd: #e9d5ff;
+
+  --vp-shadow-card: 0 1px 2px rgba(27, 23, 48, 0.06),
+    0 1px 3px rgba(27, 23, 48, 0.08);
+  --vp-shadow-pop: 0 10px 30px rgba(27, 23, 48, 0.16);
 }
 
-/* ── Tema escuro por preferência do SO (respeita o toggle explícito) ── */
+/* Tokens de dark mode por preferência do SO (respeita o toggle explícito) */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --vp-bg: #0d1117;
-    --vp-surface: #161b22;
-    --vp-elevated: #1f2733;
-    --vp-border: #657385;
-    --vp-border-subtle: #2a323d;
-    --vp-text: #f2f5f9;
-    --vp-text-2: #c7d0dc;
-    --vp-text-3: #a9b4c4;
-    --vp-link: #8fbbff;
-    --vp-brand: #8fbbff;
+    --vp-bg: #0d0b16;
+    --vp-surface: #161326;
+    --vp-elevated: #1f1b33;
+    --vp-border: #4a4568;
+    --vp-border-subtle: #2a2542;
+    --vp-text: #f2f0f9;
+    --vp-text-2: #cfc9e0;
+    --vp-text-3: #ada6c4;
+    --vp-link: #c4b5fd;
+    --vp-brand: #c4b5fd; /* no escuro, preenchimento claro → texto escuro */
+    --vp-brand-strong: #c4b5fd;
+    --vp-brand-hover: #ddd6fe;
     --vp-success: #6edb97;
     --vp-warning: #ffc53d;
     --vp-danger: #ff9a94;
     --vp-info: #7cc7f0;
     --vp-neutral: #c7d0dc;
-    --vp-accent: #c4a2f5;
-    --vp-focus: #8fbbff;
-    --vp-focus-halo: #0d1117;
-    /* no escuro o preenchimento é claro → texto escuro */
-    --vp-on-solid: #0d1117;
+    --vp-accent: #d8b4fe;
+    --vp-focus: #c4b5fd;
+    --vp-focus-halo: #0d0b16;
+    --vp-on-solid: #17132a;
+
+    --vp-brand-soft-bg: #2e1065;
+    --vp-brand-soft-fg: #c4b5fd;
+    --vp-brand-soft-bd: #4c1d95;
+    --vp-success-soft-bg: #052e16;
+    --vp-success-soft-fg: #6edb97;
+    --vp-success-soft-bd: #14532d;
+    --vp-warning-soft-bg: #3a2a00;
+    --vp-warning-soft-fg: #ffc53d;
+    --vp-warning-soft-bd: #6e4200;
+    --vp-danger-soft-bg: #3f0d10;
+    --vp-danger-soft-fg: #ff9a94;
+    --vp-danger-soft-bd: #7f1d1d;
+    --vp-info-soft-bg: #082f44;
+    --vp-info-soft-fg: #7cc7f0;
+    --vp-info-soft-bd: #095078;
+    --vp-neutral-soft-bg: #262c36;
+    --vp-neutral-soft-fg: #c7d0dc;
+    --vp-neutral-soft-bd: #3a4150;
+    --vp-accent-soft-bg: #2e1065;
+    --vp-accent-soft-fg: #d8b4fe;
+    --vp-accent-soft-bd: #4c1d95;
+
+    --vp-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    --vp-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.6);
   }
 }
 
 /* ── Toggle explícito para escuro vence o media query ── */
 :root[data-theme="dark"] {
-  --vp-bg: #0d1117;
-  --vp-surface: #161b22;
-  --vp-elevated: #1f2733;
-  --vp-border: #657385;
-  --vp-border-subtle: #2a323d;
-  --vp-text: #f2f5f9;
-  --vp-text-2: #c7d0dc;
-  --vp-text-3: #a9b4c4;
-  --vp-link: #8fbbff;
-  --vp-brand: #8fbbff;
+  --vp-bg: #0d0b16;
+  --vp-surface: #161326;
+  --vp-elevated: #1f1b33;
+  --vp-border: #4a4568;
+  --vp-border-subtle: #2a2542;
+  --vp-text: #f2f0f9;
+  --vp-text-2: #cfc9e0;
+  --vp-text-3: #ada6c4;
+  --vp-link: #c4b5fd;
+  --vp-brand: #c4b5fd;
+  --vp-brand-strong: #c4b5fd;
+  --vp-brand-hover: #ddd6fe;
   --vp-success: #6edb97;
   --vp-warning: #ffc53d;
   --vp-danger: #ff9a94;
   --vp-info: #7cc7f0;
   --vp-neutral: #c7d0dc;
-  --vp-accent: #c4a2f5;
-  --vp-focus: #8fbbff;
-  --vp-focus-halo: #0d1117;
-  --vp-on-solid: #0d1117;
+  --vp-accent: #d8b4fe;
+  --vp-focus: #c4b5fd;
+  --vp-focus-halo: #0d0b16;
+  --vp-on-solid: #17132a;
+
+  --vp-brand-soft-bg: #2e1065;
+  --vp-brand-soft-fg: #c4b5fd;
+  --vp-brand-soft-bd: #4c1d95;
+  --vp-success-soft-bg: #052e16;
+  --vp-success-soft-fg: #6edb97;
+  --vp-success-soft-bd: #14532d;
+  --vp-warning-soft-bg: #3a2a00;
+  --vp-warning-soft-fg: #ffc53d;
+  --vp-warning-soft-bd: #6e4200;
+  --vp-danger-soft-bg: #3f0d10;
+  --vp-danger-soft-fg: #ff9a94;
+  --vp-danger-soft-bd: #7f1d1d;
+  --vp-info-soft-bg: #082f44;
+  --vp-info-soft-fg: #7cc7f0;
+  --vp-info-soft-bd: #095078;
+  --vp-neutral-soft-bg: #262c36;
+  --vp-neutral-soft-fg: #c7d0dc;
+  --vp-neutral-soft-bd: #3a4150;
+  --vp-accent-soft-bg: #2e1065;
+  --vp-accent-soft-fg: #d8b4fe;
+  --vp-accent-soft-bd: #4c1d95;
+
+  --vp-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --vp-shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.6);
 }
 
 html,
@@ -113,7 +228,71 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── Foco visível (2.4.13 Focus Appearance, AAA): anel 3px + halo 1px ── */
+/* ── Pílulas de estado (cor + fundo suave + borda). Ícone e texto vêm do JSX. ── */
+.vp-pill {
+  background-color: var(--pill-bg);
+  color: var(--pill-fg);
+  border-color: var(--pill-bd);
+}
+.vp-pill-brand {
+  --pill-bg: var(--vp-brand-soft-bg);
+  --pill-fg: var(--vp-brand-soft-fg);
+  --pill-bd: var(--vp-brand-soft-bd);
+}
+.vp-pill-success {
+  --pill-bg: var(--vp-success-soft-bg);
+  --pill-fg: var(--vp-success-soft-fg);
+  --pill-bd: var(--vp-success-soft-bd);
+}
+.vp-pill-warning {
+  --pill-bg: var(--vp-warning-soft-bg);
+  --pill-fg: var(--vp-warning-soft-fg);
+  --pill-bd: var(--vp-warning-soft-bd);
+}
+.vp-pill-danger {
+  --pill-bg: var(--vp-danger-soft-bg);
+  --pill-fg: var(--vp-danger-soft-fg);
+  --pill-bd: var(--vp-danger-soft-bd);
+}
+.vp-pill-info {
+  --pill-bg: var(--vp-info-soft-bg);
+  --pill-fg: var(--vp-info-soft-fg);
+  --pill-bd: var(--vp-info-soft-bd);
+}
+.vp-pill-neutral {
+  --pill-bg: var(--vp-neutral-soft-bg);
+  --pill-fg: var(--vp-neutral-soft-fg);
+  --pill-bd: var(--vp-neutral-soft-bd);
+}
+.vp-pill-accent {
+  --pill-bg: var(--vp-accent-soft-bg);
+  --pill-fg: var(--vp-accent-soft-fg);
+  --pill-bd: var(--vp-accent-soft-bd);
+}
+
+/* Sombra utilitária dos cards e barra de acento roxa dos títulos de seção. */
+.vp-card-shadow {
+  box-shadow: var(--vp-shadow-card);
+}
+.vp-pop-shadow {
+  box-shadow: var(--vp-shadow-pop);
+}
+.vp-accent-bar {
+  position: relative;
+  padding-left: 0.875rem;
+}
+.vp-accent-bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 4px;
+  border-radius: 9999px;
+  background-color: var(--vp-brand);
+}
+
+/* ── Foco visível (2.4.13 Focus Appearance): anel 3px + halo 1px ── */
 :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
   outline: 3px solid var(--vp-focus);
   outline-offset: 2px;

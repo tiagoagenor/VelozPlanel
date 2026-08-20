@@ -44,17 +44,24 @@ Host reconciliado: **4 vCPU / 15 GB RAM / 98 GB (48 livres)**. VMs de dev serão
 
 ## ALVO ATUAL — "NÚCLEO RODANDO" (escolha do dono, 2026-08-20)
 O dono quer testar quando estiver **tudo pronto e testado por mim** — sem marcos intermediários.
-Alvo do primeiro entregável testável (roda LOCAL, no Mac, com Docker):
-- [ ] N1. Monorepo pnpm (contracts, api, agent, painel) + `pnpm install` limpo
-- [ ] N2. Postgres via docker-compose + schema (Drizzle) das entidades do núcleo
-- [ ] N3. API Fastify: auth (login), nodes, environments (criar/listar/pausar/iniciar), métricas
-- [ ] N4. Agente: cria/roda/para container Docker real (dockerode) = "ambiente"; coleta stats
-- [ ] N5. Painel Next.js: login, dashboard, lista de ambientes, criar ambiente (PHP/Node + versão),
-      detalhe do ambiente com gráficos de consumo, visão super admin de nós
-- [ ] N6. Fluxo ponta a ponta validado por MIM: criar → ver rodando (página do container no browser)
-      → pausar (custo/estado muda) → iniciar → gráficos preenchendo
-- [ ] N7. Prints de tudo funcionando + instruções de como o dono sobe local (`pnpm dev` / compose)
-- [ ] N8. Push do núcleo para o GitHub
+Alvo do primeiro entregável testável (roda LOCAL, no Mac, com Docker): **CONCLUÍDO E VALIDADO 2026-08-20**
+- [x] N1. Monorepo pnpm (contracts, api, agent, painel) + `pnpm install` limpo + typecheck de todos OK
+- [x] N2. Postgres via docker-compose (porta 5433) + schema/seed (admin@ e client@veloz.dev / veloz123, nó local)
+- [x] N3. API Fastify (4000): auth, nodes, environments (criar/listar/pausar/iniciar/excluir), métricas — testado via curl
+- [x] N4. Agente (4100): cria/roda/para container Docker real (php:8.3-cli) e coleta stats de cgroup — container real validado
+- [x] N5. Painel Next.js (3000): login, dashboard com badges de estado (cor+ícone+texto), criar ambiente (modal),
+      detalhe com 2 gráficos uPlot (CPU/RAM), preço do plano — validado no browser
+- [x] N6. Fluxo ponta a ponta validado por MIM: criar (via UI) → container real serve a página → pausar (Exited 137)
+      → iniciar (porta nova gravada) → gráficos preenchendo. **Bug de porta efêmera no restart: encontrado e corrigido.**
+- [x] N7. Instruções de como rodar em NUCLEO-SPEC.md §"Como rodar" e no cabeçalho de apps/api/src/server.ts
+- [x] N8. Push do núcleo para o GitHub (commit f3afdd5)
+
+Correções feitas durante a validação:
+- Agente: `provision`/`start` agora fazem POLL da porta efêmera (evita corrida) e o `start` devolve a NOVA porta.
+- API: rota `start` grava a nova `httpPort` (senão "Abrir site" quebraria após pausar/iniciar).
+- Typecheck da API: 204 no schema do DELETE + tipagem do error handler.
+Pendências conhecidas do núcleo (não bloqueiam o teste): runtime Node ainda não exercido com container (só PHP);
+eixo Y do gráfico de RAM com formatação a polir; auth é JWT em cookie (sem refresh) — suficiente para o núcleo.
 
 Só depois disto: E1..E14 completos (multi-nó, billing real, módulos, SSL, backup) no server + VMs.
 
