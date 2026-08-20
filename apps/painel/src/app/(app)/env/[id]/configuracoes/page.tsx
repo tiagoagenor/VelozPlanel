@@ -3,23 +3,15 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Settings, RefreshCw, AlertTriangle } from "lucide-react";
-import {
-  PLANS,
-  RUNTIME_VERSIONS,
-  type RuntimeKind,
-} from "@velozplanel/contracts";
+import { Settings, RefreshCw, Lock, AlertTriangle } from "lucide-react";
+import { PLANS, RUNTIME_VERSIONS, type RuntimeKind } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
-
-const VERSION_HINT: Record<RuntimeKind, Record<string, string>> = {
-  php: { "8.3": "recomendada", "7.4": "fim de vida" },
-  node: { "22": "LTS", "20": "LTS" },
-};
 
 export default function EnvSettingsPage() {
   const params = useParams<{ id: string }>();
@@ -33,24 +25,17 @@ export default function EnvSettingsPage() {
   });
   const env = envQuery.data;
 
-  const [kind, setKind] = React.useState<RuntimeKind>("php");
-  const [version, setVersion] = React.useState<string>(RUNTIME_VERSIONS.php[0]!);
+  // A linguagem é fixa (definida na criação); só a VERSÃO pode mudar.
+  const kind: RuntimeKind = env?.runtime.kind ?? "php";
+  const [version, setVersion] = React.useState<string>("");
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
-  // Reflete o runtime atual quando o ambiente carrega.
+  // Reflete a versão atual quando o ambiente carrega.
   React.useEffect(() => {
-    if (env) {
-      setKind(env.runtime.kind);
-      setVersion(env.runtime.version);
-    }
-  }, [env?.runtime.kind, env?.runtime.version]);
+    if (env) setVersion(env.runtime.version);
+  }, [env?.runtime.version]);
 
   const versions = RUNTIME_VERSIONS[kind];
-  // Ao trocar de linguagem, garante uma versão válida.
-  React.useEffect(() => {
-    if (!versions.includes(version)) setVersion(versions[0]!);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind]);
 
   const change = useMutation({
     mutationFn: () => api.changeRuntime(id, { kind, version }),
@@ -61,14 +46,21 @@ export default function EnvSettingsPage() {
       setConfirmOpen(false);
       toast.show(
         "success",
-        `Runtime alterado para ${labelKind(updated.runtime.kind)} ${updated.runtime.version}.`,
+        `Versão alterada para ${labelKind(updated.runtime.kind)} ${updated.runtime.version}.`,
       );
     },
     onError: (err) => {
       setConfirmOpen(false);
+      if (err instanceof ApiError && err.code === "language_locked") {
+        toast.show(
+          "error",
+          "A linguagem não pode ser trocada após a criação — só a versão.",
+        );
+        return;
+      }
       toast.show(
         "error",
-        err instanceof Error ? err.message : "Não foi possível trocar o runtime.",
+        err instanceof Error ? err.message : "Não foi possível trocar a versão.",
       );
     },
   });
@@ -90,8 +82,7 @@ export default function EnvSettingsPage() {
   }
 
   const plan = PLANS[env.plan];
-  const dirty =
-    kind !== env.runtime.kind || version !== env.runtime.version;
+  const dirty = version !== env.runtime.version;
 
   return (
     <div className="flex flex-col gap-6">
@@ -101,7 +92,7 @@ export default function EnvSettingsPage() {
           Configurações
         </h1>
         <p className="mt-1 text-sm text-text2">
-          Ajuste o runtime deste ambiente. O plano é definido na criação.
+          Ajuste a versão do runtime deste ambiente. O plano é definido na criação.
         </p>
       </header>
 
@@ -127,40 +118,35 @@ export default function EnvSettingsPage() {
         </dl>
       </Card>
 
-      {/* Trocar runtime */}
+      {/* Trocar versão (linguagem travada) */}
       <Card>
         <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
-          Versão do runtime
+          Versão do {labelKind(kind)}
         </h2>
         <p className="mb-4 text-sm text-text2">
-          Escolha a linguagem e a versão. Trocar recria o container do ambiente.
+          Escolha a versão. Trocar recria o container do ambiente.
         </p>
 
         <div className="flex flex-col gap-5">
+          {/* Linguagem: só leitura */}
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-text2">Linguagem</span>
-            <SegmentedControl<RuntimeKind>
-              label="Linguagem do runtime"
-              value={kind}
-              onChange={setKind}
-              options={[
-                { value: "php", label: "PHP" },
-                { value: "node", label: "Node.js" },
-              ]}
-            />
+            <div className="inline-flex w-fit items-center gap-2 rounded-lg border border-border-subtle bg-bg px-3 py-2 text-sm">
+              <Lock size={15} aria-hidden="true" className="text-text3" />
+              <span className="font-medium text-text">{labelKind(kind)}</span>
+              <span className="text-text3">· definida na criação</span>
+            </div>
           </div>
 
+          {/* Versão: faixa conectada */}
           <div className="flex flex-col gap-2">
             <span className="text-sm font-medium text-text2">Versão</span>
             <SegmentedControl
               label={`Versão do ${labelKind(kind)}`}
               value={version}
               onChange={setVersion}
-              options={versions.map((v) => ({
-                value: v,
-                label: v,
-                hint: VERSION_HINT[kind][v],
-              }))}
+              variant="strip"
+              options={versions.map((v) => ({ value: v, label: v }))}
             />
           </div>
 
@@ -174,8 +160,8 @@ export default function EnvSettingsPage() {
             </Button>
             {dirty ? (
               <span className="text-sm text-text3">
-                De {labelKind(env.runtime.kind)} {env.runtime.version} para{" "}
-                {labelKind(kind)} {version}.
+                De {labelKind(kind)} {env.runtime.version} para {labelKind(kind)}{" "}
+                {version}.
               </span>
             ) : (
               <span className="text-sm text-text3">
@@ -190,13 +176,13 @@ export default function EnvSettingsPage() {
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         title="Recriar o container?"
-        description="Trocar o runtime recria o container com a nova versão. O ambiente fica indisponível por alguns segundos durante a troca."
+        description="Trocar a versão recria o container. O ambiente fica indisponível por alguns segundos durante a troca."
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text2">
             Alterar de{" "}
             <strong>
-              {labelKind(env.runtime.kind)} {env.runtime.version}
+              {labelKind(kind)} {env.runtime.version}
             </strong>{" "}
             para{" "}
             <strong>

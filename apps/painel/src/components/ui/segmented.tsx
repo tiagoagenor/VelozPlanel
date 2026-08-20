@@ -19,8 +19,15 @@ export interface SegmentedControlProps<T extends string> {
   value: T;
   onChange: (value: T) => void;
   options: SegmentedOption<T>[];
-  /** Ocupa toda a largura, dividindo em colunas iguais. */
+  /** Ocupa toda a largura, dividindo em colunas iguais (só no variant "pill"). */
   fluid?: boolean;
+  /**
+   * "pill"  = cápsula com gap entre opções (padrão).
+   * "strip" = faixa horizontal ÚNICA e conectada (estilo Hostoo): sem gap,
+   *           divisórias finas entre opções, cantos só nas pontas; rola no X
+   *           em telas estreitas. Sem sub-rótulos.
+   */
+  variant?: "pill" | "strip";
   className?: string;
 }
 
@@ -42,6 +49,7 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   fluid = false,
+  variant = "pill",
   className,
 }: SegmentedControlProps<T>) {
   const enabled = options.filter((o) => !o.disabled);
@@ -97,13 +105,42 @@ export function SegmentedControl<T extends string>({
       aria-labelledby={labelledBy}
       onKeyDown={onKeyDown}
       className={cn(
-        "inline-flex gap-1 rounded-lg border border-border bg-surface p-1",
-        fluid && "flex w-full",
+        variant === "strip"
+          ? "flex max-w-full overflow-x-auto rounded-lg border border-border bg-surface"
+          : "inline-flex gap-1 rounded-lg border border-border bg-surface p-1",
+        variant === "pill" && fluid && "flex w-full",
         className,
       )}
     >
       {options.map((o) => {
         const selected = o.value === value;
+        if (variant === "strip") {
+          return (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-disabled={o.disabled || undefined}
+              disabled={o.disabled}
+              data-seg={groupId}
+              data-val={o.value}
+              tabIndex={o.value === rovingValue ? 0 : -1}
+              onClick={() => !o.disabled && onChange(o.value)}
+              className={cn(
+                "shrink-0 whitespace-nowrap border-l border-border-subtle px-4 py-2 first:border-l-0",
+                "text-sm font-medium transition-colors duration-150",
+                o.disabled
+                  ? "cursor-not-allowed text-text3 opacity-50"
+                  : selected
+                    ? "bg-brand text-on-solid"
+                    : "text-link hover:bg-brand-soft",
+              )}
+            >
+              {o.label}
+            </button>
+          );
+        }
         return (
           <button
             key={o.value}

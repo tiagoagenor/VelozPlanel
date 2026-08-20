@@ -6,6 +6,7 @@ import { AlertTriangle } from "lucide-react";
 import {
   PLANS,
   RUNTIME_VERSIONS,
+  RECOMMENDED_VERSION,
   createEnvironmentInput,
   type PlanId,
   type RuntimeKind,
@@ -19,11 +20,6 @@ import { planMonthly, planHourly } from "@/lib/format";
 
 const PLAN_IDS = Object.keys(PLANS) as PlanId[];
 
-/** Micro-rótulos por versão (detalhe de produto real, não decorativo). */
-const VERSION_HINT: Record<RuntimeKind, Record<string, string>> = {
-  php: { "8.3": "recomendada", "7.4": "fim de vida" },
-  node: { "22": "LTS", "20": "LTS" },
-};
 
 export function CreateEnvironmentDialog({
   open,
@@ -36,14 +32,14 @@ export function CreateEnvironmentDialog({
   const [name, setName] = React.useState("");
   const [plan, setPlan] = React.useState<PlanId>("start");
   const [kind, setKind] = React.useState<RuntimeKind>("php");
-  const [version, setVersion] = React.useState<string>(RUNTIME_VERSIONS.php[0]!);
+  const [version, setVersion] = React.useState<string>(RECOMMENDED_VERSION.php);
   const [error, setError] = React.useState<string | null>(null);
 
   const versions = RUNTIME_VERSIONS[kind];
 
-  // Ao trocar de runtime, garante uma versão válida selecionada.
+  // Ao trocar de linguagem, pré-seleciona a versão recomendada dela.
   React.useEffect(() => {
-    if (!versions.includes(version)) setVersion(versions[0]!);
+    setVersion(RECOMMENDED_VERSION[kind]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
@@ -62,7 +58,7 @@ export function CreateEnvironmentDialog({
     setName("");
     setPlan("start");
     setKind("php");
-    setVersion(RUNTIME_VERSIONS.php[0]!);
+    setVersion(RECOMMENDED_VERSION.php);
     setError(null);
     onClose();
   }
@@ -134,12 +130,8 @@ export function CreateEnvironmentDialog({
             label={`Versão do ${kind === "php" ? "PHP" : "Node.js"}`}
             value={version}
             onChange={setVersion}
-            fluid
-            options={versions.map((v) => ({
-              value: v,
-              label: v,
-              hint: VERSION_HINT[kind][v],
-            }))}
+            variant="strip"
+            options={versions.map((v) => ({ value: v, label: v }))}
           />
         </div>
 
