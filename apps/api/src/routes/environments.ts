@@ -266,6 +266,15 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const planSpec = PLANS[env.plan as PlanId];
       const newRuntime = req.body;
 
+      // A LINGUAGEM é fixada na criação — só a versão pode mudar depois.
+      if (newRuntime.kind !== env.runtimeKind) {
+        throw new ApiHttpError(
+          400,
+          "language_locked",
+          "não é possível trocar a linguagem após a criação do ambiente; só a versão",
+        );
+      }
+
       // remove o container antigo (se houver) e provisiona um novo com a nova versão
       if (env.containerId) {
         try {

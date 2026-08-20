@@ -11,10 +11,16 @@ import { z } from "zod";
 export const runtimeKind = z.enum(["php", "node"]);
 export type RuntimeKind = z.infer<typeof runtimeKind>;
 
-/** Versões oferecidas no núcleo. Novas entram sem tocar no core (catálogo). */
+/** Versões oferecidas no núcleo (ordem crescente, como na faixa do Hostoo). */
 export const RUNTIME_VERSIONS: Record<RuntimeKind, string[]> = {
-  php: ["8.3", "8.2", "8.1", "7.4"],
-  node: ["22", "20", "18"],
+  php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4"],
+  node: ["18", "20", "22", "24"],
+};
+
+/** Versão recomendada por linguagem (destaque/def. na criação). */
+export const RECOMMENDED_VERSION: Record<RuntimeKind, string> = {
+  php: "8.3",
+  node: "22",
 };
 
 export const runtimeSpec = z.object({
