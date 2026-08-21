@@ -157,5 +157,31 @@ export const wgPeers = pgTable("wg_peers", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type WgPeerRow = typeof wgPeers.$inferSelect;
+
+// Planos (dinâmicos, editáveis pelo super admin). id = slug.
+export const plans = pgTable("plans", {
+  id: text("id").primaryKey(),
+  label: text("label").notNull(),
+  vcpu: doublePrecision("vcpu").notNull(),
+  memMb: integer("mem_mb").notNull(),
+  diskGb: integer("disk_gb").notNull(),
+  priceMonthCents: integer("price_month_cents").notNull(),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+export type PlanRow = typeof plans.$inferSelect;
+
+// Razão de créditos por usuário (saldo = soma de amount_cents).
+export const creditTransactions = pgTable("credit_transactions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  amountCents: integer("amount_cents").notNull(),
+  kind: text("kind").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type CreditTransactionRow = typeof creditTransactions.$inferSelect;
 export type MetricSampleRow = typeof metricSamples.$inferSelect;
 export type NewMetricSampleRow = typeof metricSamples.$inferInsert;

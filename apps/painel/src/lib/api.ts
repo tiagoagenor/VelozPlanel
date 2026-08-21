@@ -25,7 +25,12 @@ import type {
   AuditEntry,
   WgPeer,
   AddWgPeerInput,
-  PlanAdmin,
+  Plan,
+  CreatePlanInput,
+  UpdatePlanInput,
+  CreditTransaction,
+  AddCreditInput,
+  Balance,
   ModuleInfo,
 } from "@velozplanel/contracts";
 
@@ -473,12 +478,57 @@ export function deleteWgPeer(id: string): Promise<void> {
   return request<void>(`/admin/wg/peers/${id}`, { method: "DELETE" });
 }
 
-/* ── Planos e módulos ── */
+/* ── Créditos / saldo ── */
 
-export function listPlans(): Promise<PlanAdmin[]> {
-  return request<PlanAdmin[]>("/admin/plans");
+/** Adiciona (ou remove, com valor negativo) saldo de um cliente. */
+export function addCredit(
+  userId: string,
+  input: AddCreditInput,
+): Promise<CreditTransaction> {
+  return request<CreditTransaction>(`/admin/users/${userId}/credit`, {
+    method: "POST",
+    body: input,
+  });
 }
+
+/** Extrato de créditos/débitos de um cliente (visão admin). */
+export function listUserCredits(userId: string): Promise<CreditTransaction[]> {
+  return request<CreditTransaction[]>(`/admin/users/${userId}/credits`);
+}
+
+/* ── Planos (admin) ── */
+
+/** Todos os planos, ativos e inativos (visão admin). */
+export function listAdminPlans(): Promise<Plan[]> {
+  return request<Plan[]>("/admin/plans");
+}
+
+export function createPlan(input: CreatePlanInput): Promise<Plan> {
+  return request<Plan>("/admin/plans", { method: "POST", body: input });
+}
+
+export function updatePlan(id: string, input: UpdatePlanInput): Promise<Plan> {
+  return request<Plan>(`/admin/plans/${id}`, { method: "PATCH", body: input });
+}
+
+export function deletePlan(id: string): Promise<void> {
+  return request<void>(`/admin/plans/${id}`, { method: "DELETE" });
+}
+
+/* ── Módulos ── */
 
 export function listModules(): Promise<ModuleInfo[]> {
   return request<ModuleInfo[]>("/admin/modules");
+}
+
+/* ═══════════════ CLIENTE ═══════════════ */
+
+/** Planos ativos oferecidos ao cliente (para criação de ambiente). */
+export function listPlans(): Promise<Plan[]> {
+  return request<Plan[]>("/plans");
+}
+
+/** Saldo do próprio usuário + extrato (painel do cliente). */
+export function getBalance(): Promise<Balance> {
+  return request<Balance>("/balance");
 }

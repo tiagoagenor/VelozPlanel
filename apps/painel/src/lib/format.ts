@@ -26,6 +26,37 @@ export function formatCentsFine(cents: number): string {
   return brl4.format(cents / 100);
 }
 
+/** Centavos → "+R$ 30,50" / "−R$ 30,50" (com sinal explícito). */
+export function formatSignedCents(cents: number): string {
+  const sign = cents < 0 ? "−" : "+";
+  return `${sign}${brl.format(Math.abs(cents) / 100)}`;
+}
+
+/**
+ * Texto de um campo de preço em R$ ("30,50", "R$ 30,50", "1.234,56") →
+ * centavos inteiros. Retorna null se não for um número válido.
+ */
+export function parseReaisToCents(input: string): number | null {
+  const cleaned = input
+    .replace(/[R$\s ]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  if (cleaned === "" || cleaned === "-") return null;
+  const reais = Number(cleaned);
+  if (!Number.isFinite(reais)) return null;
+  return Math.round(reais * 100);
+}
+
+/** Centavos → "30,50" (sem símbolo, para popular um campo de edição). */
+export function centsToReaisInput(cents: number): string {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
+
+/** Tarifa horária ativa (centavos/hora) derivada do preço mensal (720 h). */
+export function hourlyActiveFromMonthly(priceMonthCents: number): number {
+  return priceMonthCents / 720;
+}
+
 /** Preço mensal do plano formatado. */
 export function planMonthly(plan: PlanSpec): string {
   return formatCents(plan.priceMonthCents);

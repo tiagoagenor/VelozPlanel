@@ -4,9 +4,10 @@ import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Settings, RefreshCw, Lock, AlertTriangle } from "lucide-react";
-import { PLANS, RUNTIME_VERSIONS, type RuntimeKind } from "@velozplanel/contracts";
+import { RUNTIME_VERSIONS, type RuntimeKind } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import { usePlans } from "@/lib/usePlans";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented";
@@ -24,6 +25,7 @@ export default function EnvSettingsPage() {
     queryFn: () => api.getEnvironment(id),
   });
   const env = envQuery.data;
+  const { byId: plansById } = usePlans();
 
   // A linguagem é fixa (definida na criação); só a VERSÃO pode mudar.
   const kind: RuntimeKind = env?.runtime.kind ?? "php";
@@ -81,7 +83,7 @@ export default function EnvSettingsPage() {
     );
   }
 
-  const plan = PLANS[env.plan];
+  const plan = plansById.get(env.plan);
   const dirty = version !== env.runtime.version;
 
   return (
@@ -108,12 +110,14 @@ export default function EnvSettingsPage() {
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-text3">Plano</dt>
             <dd className="font-medium text-text">
-              {plan.label} · {plan.vcpu} vCPU · {plan.memMb} MB
+              {plan
+                ? `${plan.label} · ${plan.vcpu} vCPU · ${plan.memMb} MB`
+                : env.plan}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-text3">Disco</dt>
-            <dd className="font-medium text-text">{plan.diskGb} GB</dd>
+            <dd className="font-medium text-text">{plan ? `${plan.diskGb} GB` : "—"}</dd>
           </div>
         </dl>
       </Card>

@@ -43,6 +43,7 @@ import { databasesRoutes } from "./routes/databases";
 import { sslRoutes } from "./routes/ssl";
 import { sshRoutes } from "./routes/ssh";
 import { adminRoutes } from "./routes/admin";
+import { plansRoutes } from "./routes/plans";
 import { startMetricsCollector } from "./metrics-collector";
 
 const PORT = Number(process.env.PORT ?? 4000);
@@ -117,6 +118,7 @@ async function main(): Promise<void> {
       await v1.register(sslRoutes);
       await v1.register(sshRoutes);
       await v1.register(adminRoutes);
+      await v1.register(plansRoutes);
     },
     { prefix: "/api/v1" },
   );

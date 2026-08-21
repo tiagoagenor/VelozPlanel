@@ -33,8 +33,8 @@ import {
   Server,
 } from "lucide-react";
 import type { Environment } from "@velozplanel/contracts";
-import { PLANS } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
+import { usePlans } from "@/lib/usePlans";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { CreateEnvironmentDialog } from "@/components/CreateEnvironmentDialog";
 import { StatCard } from "@/components/StatCard";
@@ -151,7 +151,8 @@ export default function DashboardPage() {
 function EnvCard({ env }: { env: Environment }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const plan = PLANS[env.plan];
+  const { byId: plansById } = usePlans();
+  const plan = plansById.get(env.plan);
   const runtimeLabel = env.runtime.kind === "php" ? "PHP" : "Node.js";
   const isRunning = env.state === "running";
   const dimmed = env.state === "paused" || env.state === "error";
@@ -213,7 +214,7 @@ function EnvCard({ env }: { env: Environment }) {
               </Link>
             </h2>
             <p className="truncate text-xs text-text3">
-              {runtimeLabel} {env.runtime.version} · {plan.label}
+              {runtimeLabel} {env.runtime.version} · {plan?.label ?? env.plan}
             </p>
           </div>
         </div>
@@ -239,8 +240,14 @@ function EnvCard({ env }: { env: Environment }) {
               valueText={last ? formatBytes(last.memBytes) : "—"}
             />
           </div>
-        ) : (
+        ) : plan ? (
           <PlanChips plan={plan} />
+        ) : (
+          <ul className="flex flex-wrap gap-1.5">
+            <li className="inline-flex items-center rounded-md border border-border-subtle bg-bg px-2 py-1 text-xs font-medium text-text2">
+              {env.plan}
+            </li>
+          </ul>
         )}
       </div>
 

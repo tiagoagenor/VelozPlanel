@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { PLANS } from "@velozplanel/contracts";
 import { sql, db } from "./client";
 import { users, nodes } from "./schema";
 import { hashPassword } from "../auth";
@@ -147,9 +148,45 @@ async function createSchema(): Promise<void> {
       created_at  timestamptz NOT NULL DEFAULT now()
     )
   `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS plans (
+      id                text PRIMARY KEY,
+      label             text NOT NULL,
+      vcpu              double precision NOT NULL,
+      mem_mb            integer NOT NULL,
+      disk_gb           integer NOT NULL,
+      price_month_cents integer NOT NULL,
+      active            boolean NOT NULL DEFAULT true,
+      sort_order        integer NOT NULL DEFAULT 0
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS credit_transactions (
+      id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      amount_cents integer NOT NULL,
+      kind        text NOT NULL,
+      reason      text,
+      created_at  timestamptz NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS credit_tx_user_idx ON credit_transactions (user_id)`;
 }
 
 async function seed(): Promise<void> {
+  // Semeia os planos padrão (idempotente — não sobrescreve edições do admin).
+  const defaults = Object.values(PLANS);
+  for (let i = 0; i < defaults.length; i++) {
+    const p = defaults[i]!;
+    await sql`
+      INSERT INTO plans (id, label, vcpu, mem_mb, disk_gb, price_month_cents, active, sort_order)
+      VALUES (${p.id}, ${p.label}, ${p.vcpu}, ${p.memMb}, ${p.diskGb}, ${p.priceMonthCents}, true, ${i})
+      ON CONFLICT (id) DO NOTHING
+    `;
+  }
+
   const passwordHash = await hashPassword("veloz123");
 
   await db

@@ -15,10 +15,12 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeft,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import * as api from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { formatCents } from "@/lib/format";
 import { NavIcon, LinkPending } from "@/components/nav-pending";
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -309,6 +311,14 @@ function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
   const { data: user } = useQuery({ queryKey: ["me"], queryFn: api.me });
   const isAdmin = user?.role === "admin";
 
+  // Saldo do cliente (indicador leve no topo).
+  const { data: balance } = useQuery({
+    queryKey: ["balance"],
+    queryFn: api.getBalance,
+    enabled: user?.role === "client",
+    staleTime: 30_000,
+  });
+
   const logout = useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
@@ -329,6 +339,18 @@ function Topbar({ onOpenMobile }: { onOpenMobile: () => void }) {
       </button>
 
       <div className="ml-auto flex items-center gap-3">
+        {balance ? (
+          <span
+            className={cn(
+              "hidden h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-sm font-semibold sm:inline-flex",
+              balance.balanceCents < 0 ? "text-danger" : "text-text",
+            )}
+            aria-label={`Saldo: ${formatCents(balance.balanceCents)}`}
+          >
+            <Wallet size={15} aria-hidden="true" className="text-text3" />
+            {formatCents(balance.balanceCents)}
+          </span>
+        ) : null}
         {isAdmin ? (
           <Link
             href="/admin"

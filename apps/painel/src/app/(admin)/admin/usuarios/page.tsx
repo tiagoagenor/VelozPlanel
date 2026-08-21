@@ -12,10 +12,13 @@ import {
   User as UserIcon,
   AlertTriangle,
   Boxes,
+  Wallet,
+  Receipt,
 } from "lucide-react";
 import {
   createUserInput,
   updateUserInput,
+  addCreditInput,
   type AdminUser,
   type UserRole,
   type AccountStatus,
@@ -30,7 +33,12 @@ import { SegmentedControl } from "@/components/ui/segmented";
 import { useToast } from "@/components/ui/toast";
 import { CenterLoader } from "@/components/Skeletons";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
-import { formatDateTime } from "@/lib/format";
+import {
+  formatDateTime,
+  formatCents,
+  formatSignedCents,
+  parseReaisToCents,
+} from "@/lib/format";
 
 function RoleBadge({ role }: { role: UserRole }) {
   return role === "admin" ? (
@@ -67,6 +75,7 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = React.useState<AdminUser | null>(null);
   const [deleting, setDeleting] = React.useState<AdminUser | null>(null);
   const [detail, setDetail] = React.useState<AdminUser | null>(null);
+  const [crediting, setCrediting] = React.useState<AdminUser | null>(null);
 
   return (
     <>
@@ -113,6 +122,7 @@ export default function AdminUsersPage() {
                   <th scope="col" className="px-4 py-3 font-semibold">Papel</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Status</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">Ambientes</th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">Saldo</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Criado em</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">
                     <span className="sr-only">Ações</span>
@@ -135,9 +145,14 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
                     <td className="px-4 py-3"><StatusBadge status={u.status} /></td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{u.envCount}</td>
+                    <td className={`px-4 py-3 text-right font-medium tabular-nums ${u.balanceCents < 0 ? "text-danger" : "text-text"}`}>{formatCents(u.balanceCents)}</td>
                     <td className="px-4 py-3 text-text2">{formatDateTime(u.createdAt)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => setCrediting(u)} aria-label={`Adicionar saldo para ${u.name}`}>
+                          <Wallet size={15} aria-hidden="true" />
+                          Saldo
+                        </Button>
                         <ToggleStatusButton user={u} />
                         <Button variant="ghost" size="sm" onClick={() => setEditing(u)} aria-label={`Editar ${u.name}`}>
                           <Pencil size={15} aria-hidden="true" />
@@ -168,9 +183,14 @@ export default function AdminUsersPage() {
                 <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3">
                   <RoleBadge role={u.role} />
                   <span className="text-xs text-text3">{u.envCount} ambiente(s)</span>
+                  <span className={`text-xs font-medium ${u.balanceCents < 0 ? "text-danger" : "text-text2"}`}>· Saldo {formatCents(u.balanceCents)}</span>
                   <span className="text-xs text-text3">· {formatDateTime(u.createdAt)}</span>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setCrediting(u)}>
+                    <Wallet size={15} aria-hidden="true" />
+                    Saldo
+                  </Button>
                   <ToggleStatusButton user={u} />
                   <Button variant="outline" size="sm" onClick={() => setEditing(u)}>
                     <Pencil size={15} aria-hidden="true" />
@@ -191,7 +211,96 @@ export default function AdminUsersPage() {
       <EditUserDialog user={editing} onClose={() => setEditing(null)} />
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
       <UserDetailDialog user={detail} onClose={() => setDetail(null)} />
+      <AddCreditDialog user={crediting} onClose={() => setCrediting(null)} />
     </>
+  );
+}
+
+/* ─────────────── Adicionar saldo ─────────────── */
+
+function AddCreditDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [amount, setAmount] = React.useState(""); // em R$ (aceita negativo)
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (user) {
+      setAmount("");
+      setReason("");
+      setError(null);
+    }
+  }, [user]);
+
+  const m = useMutation({
+    mutationFn: (amountCents: number) =>
+      api.addCredit(user!.id, {
+        amountCents,
+        reason: reason.trim() === "" ? null : reason.trim(),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "user-credits", user?.id] });
+      toast.show("success", "Saldo atualizado.");
+      onClose();
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : "Falha ao lançar o saldo."),
+  });
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const amountCents = parseReaisToCents(amount);
+    if (amountCents == null) {
+      setError("Informe um valor em R$ (ex.: 30,50 ou -10,00 para estornar).");
+      return;
+    }
+    const parsed = addCreditInput.safeParse({
+      amountCents,
+      reason: reason.trim() === "" ? null : reason.trim(),
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Verifique os campos.");
+      return;
+    }
+    m.mutate(amountCents);
+  }
+
+  if (!user) return null;
+
+  const cents = parseReaisToCents(amount);
+  const preview =
+    cents != null && cents !== 0
+      ? `${cents < 0 ? "Estorno/débito" : "Crédito"} de ${formatSignedCents(cents)}. Saldo atual: ${formatCents(user.balanceCents)}.`
+      : `Saldo atual: ${formatCents(user.balanceCents)}.`;
+
+  return (
+    <Dialog open={user !== null} onClose={onClose} title="Adicionar saldo" description={`${user.name} · ${user.email}`}>
+      <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="ac-amount">Valor (R$)</Label>
+          <Input id="ac-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="30,50" autoComplete="off" />
+          <p className="text-xs text-text3">Use um valor negativo (ex.: -10,00) para estornar/debitar. {preview}</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="ac-reason">Motivo (opcional)</Label>
+          <Input id="ac-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Ex.: bônus de boas-vindas" autoComplete="off" />
+        </div>
+        {error ? (
+          <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+            <AlertTriangle size={16} aria-hidden="true" />
+            {error}
+          </p>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button type="submit" disabled={m.isPending}>
+            {m.isPending ? "Lançando…" : "Lançar saldo"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 
@@ -478,38 +587,82 @@ function UserDetailDialog({ user, onClose }: { user: AdminUser | null; onClose: 
     enabled: user !== null,
   });
 
+  const credits = useQuery({
+    queryKey: ["admin", "user-credits", user?.id],
+    queryFn: () => api.listUserCredits(user!.id),
+    enabled: user !== null,
+  });
+
   if (!user) return null;
 
   return (
-    <Dialog open={user !== null} onClose={onClose} title={user.name} description={`${user.email} · ${user.envCount} ambiente(s)`}>
-      {q.isPending ? (
-        <div className="py-8"><CenterLoader minHeight="8rem" label="Carregando ambientes…" /></div>
-      ) : q.isError ? (
-        <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
-          <AlertTriangle size={16} aria-hidden="true" />
-          Não foi possível carregar os ambientes.
-        </p>
-      ) : q.data.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 py-8 text-center">
-          <Boxes size={28} aria-hidden="true" className="text-text3" />
-          <p className="text-sm text-text2">Este usuário ainda não tem ambientes.</p>
-        </div>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {q.data.map((env) => (
-            <li key={env.id} className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg p-3">
-              <div className="min-w-0">
-                <p className="truncate font-medium text-text">{env.name}</p>
-                <p className="truncate text-xs text-text3">
-                  {env.plan} · {env.runtime.kind} {env.runtime.version}
-                  {env.nodeName ? ` · ${env.nodeName}` : ""}
-                </p>
-              </div>
-              <EnvStateBadge state={env.state} />
-            </li>
-          ))}
-        </ul>
-      )}
+    <Dialog open={user !== null} onClose={onClose} title={user.name} description={`${user.email} · ${user.envCount} ambiente(s) · Saldo ${formatCents(user.balanceCents)}`}>
+      <div className="flex flex-col gap-6">
+        {/* Ambientes */}
+        <section className="flex flex-col gap-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-text">
+            <Boxes size={16} aria-hidden="true" className="text-text3" />
+            Ambientes
+          </h3>
+          {q.isPending ? (
+            <div className="py-6"><CenterLoader minHeight="6rem" label="Carregando ambientes…" /></div>
+          ) : q.isError ? (
+            <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+              <AlertTriangle size={16} aria-hidden="true" />
+              Não foi possível carregar os ambientes.
+            </p>
+          ) : q.data.length === 0 ? (
+            <p className="text-sm text-text2">Este usuário ainda não tem ambientes.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {q.data.map((env) => (
+                <li key={env.id} className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg p-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-text">{env.name}</p>
+                    <p className="truncate text-xs text-text3">
+                      {env.plan} · {env.runtime.kind} {env.runtime.version}
+                      {env.nodeName ? ` · ${env.nodeName}` : ""}
+                    </p>
+                  </div>
+                  <EnvStateBadge state={env.state} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Extrato de créditos */}
+        <section className="flex flex-col gap-3 border-t border-border-subtle pt-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-text">
+            <Receipt size={16} aria-hidden="true" className="text-text3" />
+            Extrato de créditos
+          </h3>
+          {credits.isPending ? (
+            <div className="py-6"><CenterLoader minHeight="6rem" label="Carregando extrato…" /></div>
+          ) : credits.isError ? (
+            <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+              <AlertTriangle size={16} aria-hidden="true" />
+              Não foi possível carregar o extrato.
+            </p>
+          ) : credits.data.length === 0 ? (
+            <p className="text-sm text-text2">Nenhum lançamento de crédito.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {credits.data.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-3 rounded-lg border border-border-subtle bg-bg p-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-text">{t.reason ?? "—"}</p>
+                    <p className="truncate text-xs text-text3">{formatDateTime(t.createdAt)} · {t.kind}</p>
+                  </div>
+                  <span className={`shrink-0 font-semibold tabular-nums ${t.amountCents < 0 ? "text-danger" : "text-success"}`}>
+                    {formatSignedCents(t.amountCents)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
     </Dialog>
   );
 }

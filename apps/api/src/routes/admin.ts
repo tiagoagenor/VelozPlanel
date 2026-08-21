@@ -11,20 +11,22 @@ import {
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
-  planAdmin as planAdminSchema,
+  plan as planSchema,
+  createPlanInput,
+  updatePlanInput,
+  creditTransaction as creditTxSchema,
+  addCreditInput,
   adminOverview as adminOverviewSchema,
   moduleInfo as moduleInfoSchema,
   apiError,
-  PLANS,
-  hourlyActiveCents,
-  hourlyPausedCents,
 } from "@velozplanel/contracts";
 import type {
   AdminUser,
   AdminEnvironment,
   AuditEntry,
   WgPeer,
-  PlanAdmin,
+  Plan,
+  CreditTransaction,
   AdminOverview,
   ModuleInfo,
   PlanId,
@@ -34,10 +36,11 @@ import type {
   UserRole,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { users, environments, nodes, databases, auditLogs, wgPeers } from "../db/schema";
-import type { UserRow, EnvironmentRow, WgPeerRow, AuditLogRow } from "../db/schema";
+import { users, environments, nodes, databases, auditLogs, wgPeers, plans, creditTransactions } from "../db/schema";
+import type { UserRow, EnvironmentRow, WgPeerRow, AuditLogRow, PlanRow, CreditTransactionRow } from "../db/schema";
 import { requireAdmin, hashPassword, ApiHttpError } from "../auth";
 import { recordAudit } from "../audit";
+import { rowToPlan, listPlans } from "../plans";
 import * as agent from "../agent";
 
 const idParams = z.object({ id: z.string().uuid() });
@@ -52,7 +55,20 @@ async function envCountByUser(): Promise<Map<string, number>> {
   return m;
 }
 
-function toAdminUser(u: UserRow, envCount: number): AdminUser {
+/** Saldo (soma do razão de créditos) por usuário. */
+async function balanceByUser(): Promise<Map<string, number>> {
+  const rows = await db.select().from(creditTransactions);
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.userId, (m.get(r.userId) ?? 0) + r.amountCents);
+  return m;
+}
+
+async function userBalance(userId: string): Promise<number> {
+  const rows = await db.select().from(creditTransactions).where(eq(creditTransactions.userId, userId));
+  return rows.reduce((s, r) => s + r.amountCents, 0);
+}
+
+function toAdminUser(u: UserRow, envCount: number, balanceCents: number): AdminUser {
   return {
     id: u.id,
     email: u.email,
@@ -60,7 +76,19 @@ function toAdminUser(u: UserRow, envCount: number): AdminUser {
     role: u.role as UserRole,
     status: (u.status as AccountStatus) ?? "active",
     envCount,
+    balanceCents,
     createdAt: u.createdAt.toISOString(),
+  };
+}
+
+function toCreditTx(r: CreditTransactionRow): CreditTransaction {
+  return {
+    id: r.id,
+    userId: r.userId,
+    amountCents: r.amountCents,
+    kind: r.kind,
+    reason: r.reason,
+    createdAt: r.createdAt.toISOString(),
   };
 }
 
@@ -113,19 +141,21 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     { schema: { response: { 200: adminOverviewSchema, 401: apiError, 403: apiError } } },
     async (req): Promise<AdminOverview> => {
       await requireAdmin(req);
-      const [allNodes, envs, allUsers, dbCount] = await Promise.all([
+      const [allNodes, envs, allUsers, dbCount, allPlans] = await Promise.all([
         db.select().from(nodes),
         db.select().from(environments),
         db.select().from(users),
         db.select({ c: count() }).from(databases),
+        listPlans(),
       ]);
+      const priceByPlan = new Map(allPlans.map((p) => [p.id, p.priceMonthCents]));
       let monthly = 0;
       const envState = { running: 0, paused: 0, error: 0 };
       for (const e of envs) {
         if (e.state === "running") envState.running++;
         else if (e.state === "paused") envState.paused++;
         else if (e.state === "error") envState.error++;
-        monthly += PLANS[e.plan as PlanId]?.priceMonthCents ?? 0;
+        monthly += priceByPlan.get(e.plan) ?? 0;
       }
       return {
         nodes: { total: allNodes.length, online: allNodes.filter((n) => n.status === "online").length },
@@ -143,8 +173,12 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     { schema: { response: { 200: z.array(adminUserSchema), 401: apiError, 403: apiError } } },
     async (req): Promise<AdminUser[]> => {
       await requireAdmin(req);
-      const [allUsers, counts] = await Promise.all([db.select().from(users), envCountByUser()]);
-      return allUsers.map((u) => toAdminUser(u, counts.get(u.id) ?? 0));
+      const [allUsers, counts, balances] = await Promise.all([
+        db.select().from(users),
+        envCountByUser(),
+        balanceByUser(),
+      ]);
+      return allUsers.map((u) => toAdminUser(u, counts.get(u.id) ?? 0, balances.get(u.id) ?? 0));
     },
   );
 
@@ -163,7 +197,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       const u = inserted[0];
       if (!u) throw new ApiHttpError(500, "internal_error", "falha ao criar usuário");
       await recordAudit(actor, "user.create", u.email, `role=${u.role}`, req);
-      return toAdminUser(u, 0);
+      return toAdminUser(u, 0, 0);
     },
   );
 
@@ -181,8 +215,9 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       const u = updated[0];
       if (!u) throw new ApiHttpError(404, "not_found", "usuário não encontrado");
       const counts = await envCountByUser();
+      const bal = await userBalance(u.id);
       await recordAudit(actor, "user.update", u.email, JSON.stringify(req.body), req);
-      return toAdminUser(u, counts.get(u.id) ?? 0);
+      return toAdminUser(u, counts.get(u.id) ?? 0, bal);
     },
   );
 
@@ -334,22 +369,121 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  /* ── Planos ── */
+  /* ── Planos (CRUD) ── */
   app.get(
     "/admin/plans",
-    { schema: { response: { 200: z.array(planAdminSchema), 401: apiError, 403: apiError } } },
-    async (req): Promise<PlanAdmin[]> => {
+    { schema: { response: { 200: z.array(planSchema), 401: apiError, 403: apiError } } },
+    async (req): Promise<Plan[]> => {
       await requireAdmin(req);
-      return Object.values(PLANS).map((p) => ({
-        id: p.id,
-        label: p.label,
-        vcpu: p.vcpu,
-        memMb: p.memMb,
-        diskGb: p.diskGb,
-        priceMonthCents: p.priceMonthCents,
-        hourlyActiveCents: hourlyActiveCents(p),
-        hourlyPausedCents: hourlyPausedCents(p),
-      }));
+      const rows = await listPlans();
+      return rows.map(rowToPlan);
+    },
+  );
+
+  app.post(
+    "/admin/plans",
+    { schema: { body: createPlanInput, response: { 200: planSchema, 401: apiError, 403: apiError, 409: apiError } } },
+    async (req): Promise<Plan> => {
+      const actor = await requireAdmin(req);
+      const existing = await db.select().from(plans).where(eq(plans.id, req.body.id)).limit(1);
+      if (existing[0]) throw new ApiHttpError(409, "plan_exists", "já existe um plano com este id");
+      const maxOrder = (await listPlans()).length;
+      const inserted = await db
+        .insert(plans)
+        .values({
+          id: req.body.id,
+          label: req.body.label,
+          vcpu: req.body.vcpu,
+          memMb: req.body.memMb,
+          diskGb: req.body.diskGb,
+          priceMonthCents: req.body.priceMonthCents,
+          active: req.body.active,
+          sortOrder: maxOrder,
+        })
+        .returning();
+      const p = inserted[0];
+      if (!p) throw new ApiHttpError(500, "internal_error", "falha ao criar plano");
+      await recordAudit(actor, "plan.create", p.id, `R$${(p.priceMonthCents / 100).toFixed(2)}`, req);
+      return rowToPlan(p);
+    },
+  );
+
+  app.patch(
+    "/admin/plans/:id",
+    { schema: { params: z.object({ id: z.string() }), body: updatePlanInput, response: { 200: planSchema, 401: apiError, 403: apiError, 404: apiError } } },
+    async (req): Promise<Plan> => {
+      const actor = await requireAdmin(req);
+      const patch: Partial<PlanRow> = {};
+      if (req.body.label !== undefined) patch.label = req.body.label;
+      if (req.body.vcpu !== undefined) patch.vcpu = req.body.vcpu;
+      if (req.body.memMb !== undefined) patch.memMb = req.body.memMb;
+      if (req.body.diskGb !== undefined) patch.diskGb = req.body.diskGb;
+      if (req.body.priceMonthCents !== undefined) patch.priceMonthCents = req.body.priceMonthCents;
+      if (req.body.active !== undefined) patch.active = req.body.active;
+      const updated = await db.update(plans).set(patch).where(eq(plans.id, req.params.id)).returning();
+      const p = updated[0];
+      if (!p) throw new ApiHttpError(404, "not_found", "plano não encontrado");
+      await recordAudit(actor, "plan.update", p.id, JSON.stringify(req.body), req);
+      return rowToPlan(p);
+    },
+  );
+
+  app.delete(
+    "/admin/plans/:id",
+    { schema: { params: z.object({ id: z.string() }), response: { 204: z.null(), 401: apiError, 403: apiError, 404: apiError, 409: apiError } } },
+    async (req, reply) => {
+      const actor = await requireAdmin(req);
+      const inUse = await db.select().from(environments).where(eq(environments.plan, req.params.id)).limit(1);
+      if (inUse[0]) throw new ApiHttpError(409, "plan_in_use", "há ambientes usando este plano; desative-o em vez de excluir");
+      const rows = await db.select().from(plans).where(eq(plans.id, req.params.id)).limit(1);
+      if (!rows[0]) throw new ApiHttpError(404, "not_found", "plano não encontrado");
+      await db.delete(plans).where(eq(plans.id, req.params.id));
+      await recordAudit(actor, "plan.delete", req.params.id, null, req);
+      return reply.status(204).send(null);
+    },
+  );
+
+  /* ── Créditos (saldo do cliente) ── */
+  app.get(
+    "/admin/users/:id/credits",
+    { schema: { params: idParams, response: { 200: z.array(creditTxSchema), 401: apiError, 403: apiError } } },
+    async (req): Promise<CreditTransaction[]> => {
+      await requireAdmin(req);
+      const rows = await db
+        .select()
+        .from(creditTransactions)
+        .where(eq(creditTransactions.userId, req.params.id))
+        .orderBy(desc(creditTransactions.createdAt));
+      return rows.map(toCreditTx);
+    },
+  );
+
+  app.post(
+    "/admin/users/:id/credit",
+    { schema: { params: idParams, body: addCreditInput, response: { 200: creditTxSchema, 401: apiError, 403: apiError, 404: apiError } } },
+    async (req): Promise<CreditTransaction> => {
+      const actor = await requireAdmin(req);
+      const target = await db.select().from(users).where(eq(users.id, req.params.id)).limit(1);
+      if (!target[0]) throw new ApiHttpError(404, "not_found", "usuário não encontrado");
+      const inserted = await db
+        .insert(creditTransactions)
+        .values({
+          userId: req.params.id,
+          amountCents: req.body.amountCents,
+          kind: req.body.amountCents >= 0 ? "admin_credit" : "admin_debit",
+          reason: req.body.reason ?? null,
+        })
+        .returning();
+      const tx = inserted[0];
+      if (!tx) throw new ApiHttpError(500, "internal_error", "falha ao lançar crédito");
+      await recordAudit(
+        actor,
+        "user.credit",
+        target[0].email,
+        `R$${(req.body.amountCents / 100).toFixed(2)} motivo="${req.body.reason ?? ""}"`,
+        req,
+      );
+      return toCreditTx(tx);
     },
   );
 

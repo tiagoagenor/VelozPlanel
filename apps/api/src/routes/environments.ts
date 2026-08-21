@@ -21,6 +21,7 @@ import { db } from "../db/client";
 import { environments, nodes } from "../db/schema";
 import type { EnvironmentRow } from "../db/schema";
 import { ApiHttpError, requireUser } from "../auth";
+import { getPlan } from "../plans";
 import * as agent from "../agent";
 
 const idParams = z.object({ id: z.string().uuid() });
@@ -85,7 +86,8 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const { name, plan, runtime } = req.body;
-      const planSpec = PLANS[plan];
+      const planSpec = await getPlan(plan);
+      if (!planSpec) throw new ApiHttpError(400, "invalid_plan", "plano inválido");
 
       // Nó local (representa o Agente). Pode ser null se ainda não houver seed.
       const nodeRows = await db.select().from(nodes).limit(1);
@@ -263,7 +265,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
-      const planSpec = PLANS[env.plan as PlanId];
+      const planSpec = (await getPlan(env.plan)) ?? { vcpu: 1, memMb: 512 };
       const newRuntime = req.body;
 
       // A LINGUAGEM é fixada na criação — só a versão pode mudar depois.

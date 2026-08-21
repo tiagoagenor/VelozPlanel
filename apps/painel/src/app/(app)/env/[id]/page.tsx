@@ -9,9 +9,9 @@ import {
   MemoryStick,
   HardDrive,
 } from "lucide-react";
-import { PLANS } from "@velozplanel/contracts";
 import type { MetricSample } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
+import { usePlans } from "@/lib/usePlans";
 import { TimeSeries } from "@/components/TimeSeries";
 import { MeterBar } from "@/components/ResourceMeter";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,7 +50,8 @@ export default function EnvOverviewPage() {
     lastSample && lastSample.memLimitBytes > 0
       ? (lastSample.memBytes / lastSample.memLimitBytes) * 100
       : null;
-  const plan = env ? PLANS[env.plan] : null;
+  const { byId: plansById } = usePlans();
+  const plan = env ? plansById.get(env.plan) ?? null : null;
 
   if (envQuery.isPending) {
     return (
@@ -77,8 +78,9 @@ export default function EnvOverviewPage() {
             {env.runtime.kind === "php" ? "PHP" : "Node.js"} {env.runtime.version}
           </Field>
           <Field label="Plano">
-            {PLANS[env.plan].label} · {PLANS[env.plan].vcpu} vCPU ·{" "}
-            {PLANS[env.plan].memMb} MB
+            {plan
+              ? `${plan.label} · ${plan.vcpu} vCPU · ${plan.memMb} MB`
+              : env.plan}
           </Field>
           <Field label="Endereço">
             {env.httpPort ? `localhost:${env.httpPort}` : "—"}

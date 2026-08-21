@@ -5,10 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { SlidersHorizontal, AlertTriangle, Info } from "lucide-react";
 import {
   resourceChangeInput,
-  PLANS,
   type AdminEnvironment,
 } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
+import { usePlans } from "@/lib/usePlans";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ export default function AdminEnvironmentsPage() {
     queryKey: ["admin", "environments"],
     queryFn: api.listAllEnvironments,
   });
+  const { byId: plansById } = usePlans({ admin: true });
   const [editing, setEditing] = React.useState<AdminEnvironment | null>(null);
 
   return (
@@ -88,7 +89,7 @@ export default function AdminEnvironmentsPage() {
                       <span className="font-mono text-xs text-text2">{env.ownerEmail}</span>
                     </td>
                     <td className="px-4 py-3 text-text2">{env.nodeName ?? "—"}</td>
-                    <td className="px-4 py-3 text-text2">{PLANS[env.plan]?.label ?? env.plan}</td>
+                    <td className="px-4 py-3 text-text2">{plansById.get(env.plan)?.label ?? env.plan}</td>
                     <td className="px-4 py-3 text-text2">{env.runtime.kind} {env.runtime.version}</td>
                     <td className="px-4 py-3"><EnvStateBadge state={env.state} /></td>
                     <td className="px-4 py-3 text-text2">{formatDateTime(env.createdAt)}</td>
@@ -117,7 +118,7 @@ export default function AdminEnvironmentsPage() {
                 </div>
                 <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border-subtle pt-3 text-sm">
                   <div><dt className="text-xs text-text3">Nó</dt><dd className="text-text">{env.nodeName ?? "—"}</dd></div>
-                  <div><dt className="text-xs text-text3">Plano</dt><dd className="text-text">{PLANS[env.plan]?.label ?? env.plan}</dd></div>
+                  <div><dt className="text-xs text-text3">Plano</dt><dd className="text-text">{plansById.get(env.plan)?.label ?? env.plan}</dd></div>
                   <div><dt className="text-xs text-text3">Runtime</dt><dd className="text-text">{env.runtime.kind} {env.runtime.version}</dd></div>
                 </dl>
                 <p className="mt-3 text-xs text-text3">Criado: {formatDateTime(env.createdAt)}</p>
@@ -147,6 +148,7 @@ function ChangeResourcesDialog({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { byId: plansById } = usePlans({ admin: true });
   const [vcpu, setVcpu] = React.useState("1");
   const [mem, setMem] = React.useState("1024");
   const [reason, setReason] = React.useState("");
@@ -154,12 +156,13 @@ function ChangeResourcesDialog({
 
   React.useEffect(() => {
     if (env) {
-      const plan = PLANS[env.plan];
+      const plan = plansById.get(env.plan);
       setVcpu(plan ? String(plan.vcpu) : "1");
       setMem(plan ? String(plan.memMb) : "1024");
       setReason("");
       setError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env]);
 
   const m = useMutation({

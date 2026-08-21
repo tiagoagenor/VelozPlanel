@@ -31,8 +31,9 @@ export type RuntimeSpec = z.infer<typeof runtimeSpec>;
 
 /* ─────────────── Planos ─────────────── */
 
-export const planId = z.enum(["start", "light", "plus", "pro"]);
-export type PlanId = z.infer<typeof planId>;
+// Plano agora é dinâmico (dados no banco) — o id é uma chave livre (slug).
+export const planId = z.string().min(1);
+export type PlanId = string;
 
 export interface PlanSpec {
   id: PlanId;
@@ -42,6 +43,43 @@ export interface PlanSpec {
   diskGb: number;
   priceMonthCents: number; // preço mensal ativo, em centavos
 }
+
+/** Plano como vem/vai para a API (mesmos campos do PlanSpec + ativo). */
+export const plan = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  vcpu: z.number().min(0.25).max(16),
+  memMb: z.number().int().min(128).max(32768),
+  diskGb: z.number().int().min(1).max(2000),
+  priceMonthCents: z.number().int().min(0),
+  active: z.boolean(),
+});
+export type Plan = z.infer<typeof plan>;
+
+export const createPlanInput = z.object({
+  id: z
+    .string()
+    .min(2)
+    .max(32)
+    .regex(/^[a-z][a-z0-9-]*$/, "use um slug: minúsculas, números e hífen, começando com letra"),
+  label: z.string().min(2).max(40),
+  vcpu: z.number().min(0.25).max(16),
+  memMb: z.number().int().min(128).max(32768),
+  diskGb: z.number().int().min(1).max(2000),
+  priceMonthCents: z.number().int().min(0),
+  active: z.boolean().default(true),
+});
+export type CreatePlanInput = z.infer<typeof createPlanInput>;
+
+export const updatePlanInput = z.object({
+  label: z.string().min(2).max(40).optional(),
+  vcpu: z.number().min(0.25).max(16).optional(),
+  memMb: z.number().int().min(128).max(32768).optional(),
+  diskGb: z.number().int().min(1).max(2000).optional(),
+  priceMonthCents: z.number().int().min(0).optional(),
+  active: z.boolean().optional(),
+});
+export type UpdatePlanInput = z.infer<typeof updatePlanInput>;
 
 export const PLANS: Record<PlanId, PlanSpec> = {
   start: { id: "start", label: "Start", vcpu: 1, memMb: 512, diskGb: 10, priceMonthCents: 3050 },
@@ -370,9 +408,35 @@ export const adminUser = z.object({
   role: userRole,
   status: accountStatus,
   envCount: z.number().int(),
+  balanceCents: z.number().int(), // saldo em centavos (soma do razão de créditos)
   createdAt: z.string().datetime(),
 });
 export type AdminUser = z.infer<typeof adminUser>;
+
+/* ── Créditos / saldo ── */
+export const creditTransaction = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  amountCents: z.number().int(), // positivo = crédito, negativo = débito/estorno
+  kind: z.string(), // "admin_credit" | "admin_debit" | ...
+  reason: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type CreditTransaction = z.infer<typeof creditTransaction>;
+
+/** Admin adiciona (ou remove, se negativo) saldo de um cliente. */
+export const addCreditInput = z.object({
+  amountCents: z.number().int().refine((v) => v !== 0, "informe um valor diferente de zero"),
+  reason: z.string().max(200).nullable().optional(),
+});
+export type AddCreditInput = z.infer<typeof addCreditInput>;
+
+/** Saldo do próprio usuário (painel do cliente). */
+export const balance = z.object({
+  balanceCents: z.number().int(),
+  transactions: z.array(creditTransaction),
+});
+export type Balance = z.infer<typeof balance>;
 
 export const createUserInput = z.object({
   name: z.string().min(2).max(80),
