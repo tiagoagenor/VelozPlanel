@@ -42,6 +42,7 @@ export interface PlanSpec {
   memMb: number; // teto de memória
   diskGb: number;
   priceMonthCents: number; // preço mensal ativo, em centavos
+  maxEnvironments: number; // máx. de ambientes (máquinas) por cliente neste plano
 }
 
 /** Plano como vem/vai para a API (mesmos campos do PlanSpec + ativo). */
@@ -52,6 +53,7 @@ export const plan = z.object({
   memMb: z.number().int().min(128).max(32768),
   diskGb: z.number().int().min(1).max(2000),
   priceMonthCents: z.number().int().min(0),
+  maxEnvironments: z.number().int().min(1).max(1000),
   active: z.boolean(),
 });
 export type Plan = z.infer<typeof plan>;
@@ -67,6 +69,7 @@ export const createPlanInput = z.object({
   memMb: z.number().int().min(128).max(32768),
   diskGb: z.number().int().min(1).max(2000),
   priceMonthCents: z.number().int().min(0),
+  maxEnvironments: z.number().int().min(1).max(1000).default(5),
   active: z.boolean().default(true),
 });
 export type CreatePlanInput = z.infer<typeof createPlanInput>;
@@ -77,15 +80,16 @@ export const updatePlanInput = z.object({
   memMb: z.number().int().min(128).max(32768).optional(),
   diskGb: z.number().int().min(1).max(2000).optional(),
   priceMonthCents: z.number().int().min(0).optional(),
+  maxEnvironments: z.number().int().min(1).max(1000).optional(),
   active: z.boolean().optional(),
 });
 export type UpdatePlanInput = z.infer<typeof updatePlanInput>;
 
 export const PLANS: Record<PlanId, PlanSpec> = {
-  start: { id: "start", label: "Start", vcpu: 1, memMb: 512, diskGb: 10, priceMonthCents: 3050 },
-  light: { id: "light", label: "Light", vcpu: 1.5, memMb: 1024, diskGb: 20, priceMonthCents: 4900 },
-  plus: { id: "plus", label: "Plus", vcpu: 2, memMb: 2048, diskGb: 40, priceMonthCents: 9800 },
-  pro: { id: "pro", label: "Pro", vcpu: 3, memMb: 4096, diskGb: 80, priceMonthCents: 17200 },
+  start: { id: "start", label: "Start", vcpu: 1, memMb: 512, diskGb: 10, priceMonthCents: 3050, maxEnvironments: 2 },
+  light: { id: "light", label: "Light", vcpu: 1.5, memMb: 1024, diskGb: 20, priceMonthCents: 4900, maxEnvironments: 5 },
+  plus: { id: "plus", label: "Plus", vcpu: 2, memMb: 2048, diskGb: 40, priceMonthCents: 9800, maxEnvironments: 10 },
+  pro: { id: "pro", label: "Pro", vcpu: 3, memMb: 4096, diskGb: 80, priceMonthCents: 17200, maxEnvironments: 25 },
 };
 
 /** Tarifa horária ativa derivada do preço mensal (mês contábil = 720 h). */

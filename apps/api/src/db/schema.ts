@@ -166,6 +166,7 @@ export const plans = pgTable("plans", {
   memMb: integer("mem_mb").notNull(),
   diskGb: integer("disk_gb").notNull(),
   priceMonthCents: integer("price_month_cents").notNull(),
+  maxEnvironments: integer("max_environments").notNull().default(5),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
 });

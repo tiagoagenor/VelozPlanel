@@ -12,6 +12,7 @@ export function rowToPlan(p: PlanRow): Plan {
     memMb: p.memMb,
     diskGb: p.diskGb,
     priceMonthCents: p.priceMonthCents,
+    maxEnvironments: p.maxEnvironments,
     active: p.active,
   };
 }
@@ -26,7 +27,7 @@ export async function getPlan(id: string): Promise<PlanRow | undefined> {
 export async function planLimits(id: string): Promise<PlanSpec> {
   const p = await getPlan(id);
   if (!p) throw new Error(`plano desconhecido: ${id}`);
-  return { id: p.id, label: p.label, vcpu: p.vcpu, memMb: p.memMb, diskGb: p.diskGb, priceMonthCents: p.priceMonthCents };
+  return { id: p.id, label: p.label, vcpu: p.vcpu, memMb: p.memMb, diskGb: p.diskGb, priceMonthCents: p.priceMonthCents, maxEnvironments: p.maxEnvironments };
 }
 
 export async function listPlans(activeOnly = false): Promise<PlanRow[]> {

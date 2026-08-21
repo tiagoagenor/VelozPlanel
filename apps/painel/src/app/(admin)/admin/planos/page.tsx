@@ -9,6 +9,7 @@ import {
   Trash2,
   CheckCircle2,
   Ban,
+  Boxes,
 } from "lucide-react";
 import {
   createPlanInput,
@@ -94,6 +95,12 @@ export default function AdminPlansPage() {
                   <th scope="col" className="px-4 py-3 text-right font-semibold">vCPU</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">RAM</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">Disco</th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">
+                    <span className="inline-flex items-center justify-end gap-1">
+                      <Boxes size={14} aria-hidden="true" />
+                      Máx. ambientes
+                    </span>
+                  </th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">R$/mês</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">R$/h ativo</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Status</th>
@@ -110,6 +117,7 @@ export default function AdminPlansPage() {
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{p.vcpu}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{formatBytes(p.memMb * 1024 * 1024)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{p.diskGb} GB</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-text2">{p.maxEnvironments}</td>
                     <td className="px-4 py-3 text-right font-semibold tabular-nums text-text">{formatCents(p.priceMonthCents)}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-text2">{formatCentsFine(hourlyActiveFromMonthly(p.priceMonthCents))}</td>
                     <td className="px-4 py-3"><ActiveBadge active={p.active} /></td>
@@ -146,6 +154,7 @@ export default function AdminPlansPage() {
                   <div><dt className="text-xs text-text3">vCPU</dt><dd className="tabular-nums text-text">{p.vcpu}</dd></div>
                   <div><dt className="text-xs text-text3">RAM</dt><dd className="tabular-nums text-text">{formatBytes(p.memMb * 1024 * 1024)}</dd></div>
                   <div><dt className="text-xs text-text3">Disco</dt><dd className="tabular-nums text-text">{p.diskGb} GB</dd></div>
+                  <div className="col-span-3 flex items-center gap-1.5"><dt className="inline-flex items-center gap-1 text-xs text-text3"><Boxes size={13} aria-hidden="true" />Máx. ambientes</dt><dd className="tabular-nums text-text">{p.maxEnvironments}</dd></div>
                 </dl>
                 <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-border-subtle pt-3 text-sm">
                   <div><dt className="text-xs text-text3">R$/mês</dt><dd className="font-semibold tabular-nums text-text">{formatCents(p.priceMonthCents)}</dd></div>
@@ -234,6 +243,7 @@ function PlanFormDialog({
   const [vcpu, setVcpu] = React.useState("1");
   const [memMb, setMemMb] = React.useState("512");
   const [diskGb, setDiskGb] = React.useState("10");
+  const [maxEnvironments, setMaxEnvironments] = React.useState("5");
   const [price, setPrice] = React.useState(""); // em R$
   const [active, setActive] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -246,6 +256,7 @@ function PlanFormDialog({
       setVcpu(String(plan.vcpu));
       setMemMb(String(plan.memMb));
       setDiskGb(String(plan.diskGb));
+      setMaxEnvironments(String(plan.maxEnvironments));
       setPrice(centsToReaisInput(plan.priceMonthCents));
       setActive(plan.active);
     } else {
@@ -254,6 +265,7 @@ function PlanFormDialog({
       setVcpu("1");
       setMemMb("512");
       setDiskGb("10");
+      setMaxEnvironments("5");
       setPrice("");
       setActive(true);
     }
@@ -288,6 +300,7 @@ function PlanFormDialog({
       vcpu: Number(vcpu),
       memMb: Number(memMb),
       diskGb: Number(diskGb),
+      maxEnvironments: Number(maxEnvironments),
       priceMonthCents,
     };
 
@@ -357,6 +370,12 @@ function PlanFormDialog({
             <Label htmlFor="pf-disk">Disco (GB)</Label>
             <Input id="pf-disk" inputMode="numeric" value={diskGb} onChange={(e) => setDiskGb(e.target.value)} placeholder="10" autoComplete="off" />
           </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="pf-maxenv">Máx. ambientes por cliente</Label>
+          <Input id="pf-maxenv" type="number" min={1} inputMode="numeric" value={maxEnvironments} onChange={(e) => setMaxEnvironments(e.target.value)} placeholder="5" autoComplete="off" />
+          <p className="text-xs text-text3">Quantas máquinas (ambientes) um cliente pode ter neste plano.</p>
         </div>
 
         <div className="flex flex-col gap-1.5">

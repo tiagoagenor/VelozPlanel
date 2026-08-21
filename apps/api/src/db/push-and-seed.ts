@@ -157,10 +157,12 @@ async function createSchema(): Promise<void> {
       mem_mb            integer NOT NULL,
       disk_gb           integer NOT NULL,
       price_month_cents integer NOT NULL,
+      max_environments  integer NOT NULL DEFAULT 5,
       active            boolean NOT NULL DEFAULT true,
       sort_order        integer NOT NULL DEFAULT 0
     )
   `;
+  await sql`ALTER TABLE plans ADD COLUMN IF NOT EXISTS max_environments integer NOT NULL DEFAULT 5`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS credit_transactions (
@@ -181,8 +183,8 @@ async function seed(): Promise<void> {
   for (let i = 0; i < defaults.length; i++) {
     const p = defaults[i]!;
     await sql`
-      INSERT INTO plans (id, label, vcpu, mem_mb, disk_gb, price_month_cents, active, sort_order)
-      VALUES (${p.id}, ${p.label}, ${p.vcpu}, ${p.memMb}, ${p.diskGb}, ${p.priceMonthCents}, true, ${i})
+      INSERT INTO plans (id, label, vcpu, mem_mb, disk_gb, price_month_cents, max_environments, active, sort_order)
+      VALUES (${p.id}, ${p.label}, ${p.vcpu}, ${p.memMb}, ${p.diskGb}, ${p.priceMonthCents}, ${p.maxEnvironments}, true, ${i})
       ON CONFLICT (id) DO NOTHING
     `;
   }

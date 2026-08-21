@@ -10,6 +10,7 @@ import {
   type RuntimeKind,
 } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { usePlans } from "@/lib/usePlans";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,16 @@ export function CreateEnvironmentDialog({
       resetAndClose();
     },
     onError: (err) => {
+      // 409 env_limit_reached: mostra a mensagem da API (ex.: "limite de N
+      // ambiente(s) do plano X atingido") de forma clara.
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        (err.code === "env_limit_reached" || err.message)
+      ) {
+        setError(err.message || "Limite de ambientes do plano atingido.");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Falha ao criar ambiente.");
     },
   });
@@ -163,7 +174,7 @@ export function CreateEnvironmentDialog({
                 options={plans.map((p) => ({
                   value: p.id,
                   label: p.label,
-                  hint: `${p.memMb} MB`,
+                  hint: `${p.memMb} MB · máx ${p.maxEnvironments}`,
                 }))}
               />
               {selectedPlan ? (

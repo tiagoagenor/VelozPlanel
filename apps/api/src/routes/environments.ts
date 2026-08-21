@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, count } from "drizzle-orm";
 import {
   environment as environmentSchema,
   createEnvironmentInput,
@@ -88,6 +88,22 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const { name, plan, runtime } = req.body;
       const planSpec = await getPlan(plan);
       if (!planSpec) throw new ApiHttpError(400, "invalid_plan", "plano inválido");
+
+      // Limite de máquinas por cliente definido no plano (admin não é limitado).
+      if (user.role !== "admin") {
+        const [c] = await db
+          .select({ c: count() })
+          .from(environments)
+          .where(eq(environments.ownerId, user.id));
+        const current = c?.c ?? 0;
+        if (current >= planSpec.maxEnvironments) {
+          throw new ApiHttpError(
+            409,
+            "env_limit_reached",
+            `limite de ${planSpec.maxEnvironments} ambiente(s) do plano ${planSpec.label} atingido`,
+          );
+        }
+      }
 
       // Nó local (representa o Agente). Pode ser null se ainda não houver seed.
       const nodeRows = await db.select().from(nodes).limit(1);

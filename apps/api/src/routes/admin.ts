@@ -397,6 +397,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
           memMb: req.body.memMb,
           diskGb: req.body.diskGb,
           priceMonthCents: req.body.priceMonthCents,
+          maxEnvironments: req.body.maxEnvironments,
           active: req.body.active,
           sortOrder: maxOrder,
         })
@@ -419,6 +420,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       if (req.body.memMb !== undefined) patch.memMb = req.body.memMb;
       if (req.body.diskGb !== undefined) patch.diskGb = req.body.diskGb;
       if (req.body.priceMonthCents !== undefined) patch.priceMonthCents = req.body.priceMonthCents;
+      if (req.body.maxEnvironments !== undefined) patch.maxEnvironments = req.body.maxEnvironments;
       if (req.body.active !== undefined) patch.active = req.body.active;
       const updated = await db.update(plans).set(patch).where(eq(plans.id, req.params.id)).returning();
       const p = updated[0];
