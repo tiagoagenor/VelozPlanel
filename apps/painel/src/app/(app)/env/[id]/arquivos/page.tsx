@@ -1195,7 +1195,6 @@ export default function EnvArquivosPage() {
             <AlertTriangle size={16} aria-hidden="true" className="shrink-0 text-warning" />
             <span>
               Você alterou arquivos. Em apps <strong>Node/compilados</strong> a mudança só vale depois de <strong>reiniciar</strong> o ambiente.
-              <span className="text-text2"> (PHP aplica na hora.)</span>
             </span>
           </p>
           <div className="flex items-center gap-2">
