@@ -350,6 +350,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     },
     async (req): Promise<{ log: string }> => {
       const user = await requireUser(req);
+      if (user.role !== "admin") throw new ApiHttpError(403, "forbidden", "apenas administradores podem ver logs");
       const env = await loadEnvironmentForUser(req.params.id, user);
       if (!env.containerId) return { log: "" };
       return agent.containerLogs(await agentUrlForEnv(env), env.containerId, req.query.tail ?? 200);
@@ -363,6 +364,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     { schema: { params: idParams, querystring: logsQuery } },
     async (req, reply) => {
       const user = await requireUser(req);
+      if (user.role !== "admin") return reply.code(403).send({ error: "forbidden", message: "apenas administradores podem ver logs" });
       const env = await loadEnvironmentForUser(req.params.id, user);
       if (!env.containerId) {
         return reply.code(409).send({ error: "no_container", message: "ambiente ainda não tem container" });

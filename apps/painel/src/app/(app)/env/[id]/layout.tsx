@@ -32,7 +32,6 @@ import {
   FolderSync,
   Rocket,
   Braces,
-  ScrollText,
   Archive,
   Play,
   Pause,
@@ -73,7 +72,6 @@ const SECTIONS: Section[] = [
   { seg: "sftp", label: "SFTP", icon: FolderSync },
   { seg: "deploy", label: "Deploy", icon: Rocket },
   { seg: "variaveis", label: "Variáveis", icon: Braces },
-  { seg: "logs", label: "Logs", icon: ScrollText },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
 

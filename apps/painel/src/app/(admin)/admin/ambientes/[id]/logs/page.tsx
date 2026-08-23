@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ScrollText, Play, Pause, Trash2, RotateCw, AlertTriangle, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ScrollText, Play, Pause, Trash2, RotateCw, AlertTriangle, Loader2, ArrowLeft } from "lucide-react";
 import * as api from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,9 +15,11 @@ const MAX_LINES = 5000; // teto de memória do visualizador
 
 type Status = "connecting" | "live" | "ended" | "error" | "empty";
 
-export default function EnvLogsPage() {
+export default function AdminEnvLogsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
+
+  const envQ = useQuery({ queryKey: ["environment", id], queryFn: () => api.getEnvironment(id) });
 
   const [lines, setLines] = React.useState<string[]>([]);
   const [tail, setTail] = React.useState<number>(200);
@@ -55,6 +59,7 @@ export default function EnvLogsPage() {
       if (!res.ok || !res.body) {
         let msg = `Falha ao abrir os logs (HTTP ${res.status}).`;
         if (res.status === 409) msg = "O ambiente ainda não tem um container. Inicie-o para ver os logs.";
+        else if (res.status === 403) msg = "Sem permissão para ver os logs.";
         setStatus("error");
         setErrorMsg(msg);
         return;
@@ -86,19 +91,14 @@ export default function EnvLogsPage() {
     [id, append],
   );
 
-  // Conecta ao montar e sempre que a quantidade de linhas (tail) muda.
   React.useEffect(() => {
     void start(tail);
     return () => abortRef.current?.abort();
   }, [start, tail]);
 
-  // Auto-scroll pro fim quando chegam linhas novas (se habilitado).
   React.useEffect(() => {
     if (autoScroll && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight;
   }, [lines, autoScroll]);
-
-  const live = status === "live";
-  const paused = status === "ended" && abortRef.current?.signal.aborted;
 
   function onScroll() {
     const el = boxRef.current;
@@ -107,14 +107,25 @@ export default function EnvLogsPage() {
     setAutoScroll(atBottom);
   }
 
+  const live = status === "live";
+
   return (
     <div className="flex flex-col gap-4">
+      <div>
+        <Link href="/admin/ambientes" className="inline-flex items-center gap-1.5 text-sm text-text2 hover:text-text">
+          <ArrowLeft size={15} aria-hidden="true" /> Ambientes
+        </Link>
+        <h1 className="mt-1.5 flex items-center gap-2 text-[28px] font-bold leading-tight text-text">
+          <ScrollText size={24} aria-hidden="true" className="text-text3" />
+          Logs {envQ.data ? <span className="font-mono text-lg text-text2">· {envQ.data.name}</span> : null}
+        </h1>
+        <p className="mt-1 text-sm text-text2">
+          stdout/stderr do container em tempo real. Visível apenas para administradores.
+        </p>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ScrollText size={20} aria-hidden="true" className="text-text3" />
-          <h2 className="text-lg font-semibold text-text">Logs do ambiente</h2>
-          <StatusPill status={status} />
-        </div>
+        <StatusPill status={status} />
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-sm text-text2">
             Linhas
@@ -128,7 +139,7 @@ export default function EnvLogsPage() {
               ))}
             </select>
           </label>
-          {status === "live" ? (
+          {live ? (
             <Button variant="outline" size="sm" onClick={() => abortRef.current?.abort()}>
               <Pause size={15} aria-hidden="true" /> Pausar
             </Button>
@@ -156,7 +167,7 @@ export default function EnvLogsPage() {
         <div
           ref={boxRef}
           onScroll={onScroll}
-          className="h-[60vh] overflow-auto rounded-xl bg-[#0d1117] p-4 font-mono text-[12.5px] leading-relaxed text-[#d1d5db]"
+          className="h-[62vh] overflow-auto rounded-xl bg-[#0d1117] p-4 font-mono text-[12.5px] leading-relaxed text-[#d1d5db]"
         >
           {status === "connecting" && lines.length === 0 ? (
             <p className="flex items-center gap-2 text-[#9ca3af]">
@@ -166,9 +177,7 @@ export default function EnvLogsPage() {
             <p className="text-[#9ca3af]">Sem logs para exibir.</p>
           ) : (
             lines.map((l, i) => (
-              <div key={i} className="whitespace-pre-wrap break-all">
-                {l || " "}
-              </div>
+              <div key={i} className="whitespace-pre-wrap break-all">{l || " "}</div>
             ))
           )}
         </div>

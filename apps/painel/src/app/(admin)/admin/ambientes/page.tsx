@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SlidersHorizontal, AlertTriangle, Info } from "lucide-react";
+import { SlidersHorizontal, AlertTriangle, Info, ScrollText } from "lucide-react";
 import {
   resourceChangeInput,
   type AdminEnvironment,
@@ -28,6 +29,7 @@ function memLabel(mb: string): string {
 }
 
 export default function AdminEnvironmentsPage() {
+  const router = useRouter();
   const q = useQuery({
     queryKey: ["admin", "environments"],
     queryFn: api.listAllEnvironments,
@@ -93,11 +95,17 @@ export default function AdminEnvironmentsPage() {
                     <td className="px-4 py-3 text-text2">{env.runtime.kind} {env.runtime.version}</td>
                     <td className="px-4 py-3"><EnvStateBadge state={env.state} /></td>
                     <td className="px-4 py-3 text-text2">{formatDateTime(env.createdAt)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <Button variant="ghost" size="sm" onClick={() => setEditing(env)} aria-label={`Alterar recursos de ${env.name}`}>
-                        <SlidersHorizontal size={15} aria-hidden="true" />
-                        Alterar recursos
-                      </Button>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => router.push(`/admin/ambientes/${env.id}/logs`)} aria-label={`Ver logs de ${env.name}`}>
+                          <ScrollText size={15} aria-hidden="true" />
+                          Logs
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditing(env)} aria-label={`Alterar recursos de ${env.name}`}>
+                          <SlidersHorizontal size={15} aria-hidden="true" />
+                          Alterar recursos
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -122,8 +130,12 @@ export default function AdminEnvironmentsPage() {
                   <div><dt className="text-xs text-text3">Runtime</dt><dd className="text-text">{env.runtime.kind} {env.runtime.version}</dd></div>
                 </dl>
                 <p className="mt-3 text-xs text-text3">Criado: {formatDateTime(env.createdAt)}</p>
-                <div className="mt-3">
-                  <Button variant="outline" size="sm" onClick={() => setEditing(env)} className="w-full">
+                <div className="mt-3 flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => router.push(`/admin/ambientes/${env.id}/logs`)} className="flex-1">
+                    <ScrollText size={15} aria-hidden="true" />
+                    Logs
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditing(env)} className="flex-1">
                     <SlidersHorizontal size={15} aria-hidden="true" />
                     Alterar recursos
                   </Button>
