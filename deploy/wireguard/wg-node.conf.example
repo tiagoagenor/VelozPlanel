@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WireGuard — NÓ de hospedagem. Interface 10.77.0.X/24 (X=2 local, X=3 remoto).
+#
+# Instale em /etc/wireguard/wg0.conf, ajuste o Address para o IP deste nó,
+# preencha as chaves e o endpoint público do hub (187), e suba com `wg-quick`.
+# TEMPLATE — sem chaves reais; nunca versione o wg0.conf preenchido.
+# ─────────────────────────────────────────────────────────────────────────────
+[Interface]
+# node-local = 10.77.0.2/24 · node-remoto = 10.77.0.3/24
+Address = 10.77.0.2/24
+PrivateKey = COLE_A_PRIVATE_KEY_DESTE_NO
+
+# ── Peer: HUB (187) ──────────────────────────────────────────────────────────
+[Peer]
+PublicKey = COLE_A_PUBLIC_KEY_DO_HUB
+# IP público (ou DNS) do 187 na porta UDP 51820.
+Endpoint = IP_PUBLICO_DO_187:51820
+# Alcança o hub (API e MariaDB em 10.77.0.1) por dentro do túnel.
+# Use 10.77.0.0/24 para enxergar também o outro nó (se o hub rotear).
+AllowedIPs = 10.77.0.1/32
+PersistentKeepalive = 25

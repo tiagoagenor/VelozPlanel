@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddyfile do plano de controle VelozPlanel.
+#
+# ENDEREÇO DO SITE (variável no topo):
+#   {$SITE_ADDRESS::443}  → default `:443` com `tls internal` (cert self-signed).
+#
+#   Ainda sem domínio: mantemos `:443` + `tls internal` (criptografa o tráfego,
+#   o navegador acusa cert não confiável — esperado).
+#
+#   PARA PRODUÇÃO COM DOMÍNIO (Let's Encrypt automático):
+#     1. defina  SITE_ADDRESS=meudominio.com  no .env do compose;
+#     2. REMOVA (ou comente) a linha `tls internal` abaixo.
+#   O Caddy passa a emitir/renovar o cert ACME sozinho na porta 443.
+# ─────────────────────────────────────────────────────────────────────────────
+
+{$SITE_ADDRESS::443} {
+	# Cert self-signed enquanto não há domínio. Remover ao migrar p/ Let's Encrypt.
+	tls internal
+
+	encode gzip zstd
+
+	# /api/* → API Fastify. O restante → Painel Next.
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+	handle {
+		reverse_proxy painel:3000
+	}
+}
+
+# :80 → redireciona tudo para HTTPS (443).
+# (Com domínio real o Caddy já faz esse redirect automaticamente; manter este
+#  bloco é inofensivo e cobre o caso sem-domínio.)
+:80 {
+	redir https://{host}{uri} permanent
+}

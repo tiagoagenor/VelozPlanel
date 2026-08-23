@@ -29,7 +29,11 @@ import cors from "@fastify/cors";
 import { z } from "zod";
 import { runtimeSpec } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
+import * as ingress from "./ingress.js";
 import * as files from "./files.js";
+import { startSshGateway } from "./ssh.js";
+import { startSftpGateway } from "./sftp.js";
+import * as deploy from "./deploy.js";
 
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 4100);
 
@@ -46,6 +50,18 @@ const app = Fastify({
 
 await app.register(cors, { origin: true, credentials: true });
 
+// Autenticação da API HTTP do agente (defesa em profundidade). Só o plano de
+// controle tem o token (VP_INTERNAL_TOKEN) — mesmo que um container de cliente
+// alcance a porta 4100, é rejeitado. `/health` fica aberto (healthcheck).
+const AGENT_TOKEN = process.env.VP_INTERNAL_TOKEN ?? "";
+app.addHook("onRequest", async (req, reply) => {
+  if (req.url === "/health") return;
+  if (!AGENT_TOKEN) return; // dev sem token configurado: sem checagem
+  if (req.headers["x-agent-token"] !== AGENT_TOKEN) {
+    return reply.code(401).send({ error: "unauthorized" });
+  }
+});
+
 /* ─────────────── Schemas de entrada ─────────────── */
 
 const provisionBody = z.object({
@@ -56,6 +72,37 @@ const provisionBody = z.object({
     vcpu: z.number().positive(),
     memMb: z.number().positive(),
   }),
+  startupScript: z.string().nullable().optional(),
+  startFile: z.string().nullable().optional(),
+  phpNodeVersion: z.string().nullable().optional(),
+  phpRoot: z.string().nullable().optional(),
+  envVars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean().optional() })).optional(),
+  network: z.object({
+    name: z.string().min(1),
+    subnet: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/),
+    gateway: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  }).nullable().optional(),
+  ip: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/).nullable().optional(),
+  ownerId: z.string().min(1).nullable().optional(),
+});
+
+// aplica novo arquivo de start no container Node (grava marcador + reinicia o node)
+const nodeStartBody = z.object({
+  containerId: z.string().min(1),
+  startFile: z.string().min(1),
+});
+
+// troca a versão de Node (via nvm) num container PHP. Versão só dígitos e pontos
+// (2ª borda de validação contra injeção; a API já valida contra a lista).
+const nodeVersionBody = z.object({
+  containerId: z.string().min(1),
+  version: z.string().regex(/^[0-9]+(\.[0-9]+){0,2}$/),
+});
+const containerIdOnly = z.object({ containerId: z.string().min(1) });
+const phpRootBody = z.object({
+  containerId: z.string().min(1),
+  root: z.string().regex(/^\/var\/www(\/[A-Za-z0-9._-]+)*$/),
+  useRouter: z.boolean(),
 });
 
 const containerIdBody = z.object({
@@ -139,6 +186,195 @@ app.post("/start", async (req, reply) => {
   }
 });
 
+// Provisiona um ambiente de SERVIÇO (redis/mysql/… ou uma ferramenta de UI):
+// container stock na bridge do dono, IP fixo, volume, SEM porta publicada.
+const provisionServiceBody = z.object({
+  envId: z.string().min(1),
+  name: z.string().min(1),
+  image: z.string().min(1),
+  limits: z.object({ vcpu: z.number().positive(), memMb: z.number().positive() }),
+  network: z.object({
+    name: z.string().min(1),
+    subnet: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/),
+    gateway: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  }),
+  ip: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  ownerId: z.string().min(1),
+  dataPath: z.string().nullable().optional(),
+  env: z.array(z.object({ key: z.string().min(1), value: z.string() })).optional(),
+  readiness: z.string().nullable().optional(),
+  role: z.string().optional(),
+  publishPort: z.number().int().min(1).max(65535).nullable().optional(),
+});
+
+app.post("/provision-service", async (req, reply) => {
+  const parsed = provisionServiceBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const result = await dockerDriver.provisionService(parsed.data);
+    req.log.info({ envId: parsed.data.envId, containerId: result.containerId, ready: result.ready }, "service provisioned");
+    return reply.code(201).send(result);
+  } catch (err) {
+    req.log.error({ err }, "provision-service failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+const envVarsBody = z.object({
+  containerId: z.string().min(1),
+  vars: z.array(z.object({ key: z.string().min(1), value: z.string() })),
+});
+const deployKeyBody = z.object({ envId: z.string().min(1), image: z.string().min(1) });
+const httpCredsSchema = z.object({ username: z.string(), password: z.string() }).optional();
+const deployProbeBody = z.object({
+  envId: z.string().min(1), image: z.string().min(1), repoUrl: z.string().min(1), http: httpCredsSchema,
+});
+const deployImportBody = z.object({ envId: z.string().min(1), image: z.string().min(1), privateKey: z.string().min(1) });
+const deployDetectBody = z.object({ envId: z.string().min(1), image: z.string().min(1), repoUrl: z.string().min(1), branch: z.string().min(1), http: httpCredsSchema });
+const deployRunBody = z.object({
+  envId: z.string().min(1), image: z.string().min(1),
+  appContainerId: z.string().min(1), workdir: z.string().min(1),
+  repoUrl: z.string().min(1), branch: z.string().min(1),
+  steps: z.array(z.object({ kind: z.string(), command: z.string().nullable().optional(), cwd: z.string().nullable().optional(), enabled: z.boolean() })),
+  buildEnv: z.array(z.object({ key: z.string(), value: z.string() })),
+  framework: z.string(), runModel: z.string(), http: httpCredsSchema, subdir: z.string().nullable().optional(),
+  runId: z.string().min(1), nodeStartFile: z.string().nullable().optional(), historyLimit: z.number().int().optional(),
+});
+
+app.post("/env-vars", async (req, reply) => {
+  const parsed = envVarsBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const r = await dockerDriver.writeEnvFileAndRestart(parsed.data.containerId, parsed.data.vars);
+    return reply.code(200).send(r);
+  } catch (err) {
+    req.log.error({ err }, "env-vars failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/deploy/key", async (req, reply) => {
+  const parsed = deployKeyBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try { return reply.code(200).send(await deploy.generateDeployKey(parsed.data.envId, parsed.data.image)); }
+  catch (err) { req.log.error({ err }, "deploy/key failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/key/import", async (req, reply) => {
+  const parsed = deployImportBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try { return reply.code(200).send(await deploy.importDeployKey(parsed.data.envId, parsed.data.image, parsed.data.privateKey)); }
+  catch (err) { req.log.error({ err }, "deploy/key/import failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/reset", async (req, reply) => {
+  const parsed = deployKeyBody.safeParse(req.body); // { envId, image } — usa só envId
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try { await deploy.resetDeploy(parsed.data.envId); return reply.code(200).send({ ok: true }); }
+  catch (err) { req.log.error({ err }, "deploy/reset failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/probe", async (req, reply) => {
+  const parsed = deployProbeBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const d = parsed.data;
+  try { return reply.code(200).send(await deploy.probeRepo(d.envId, d.image, d.repoUrl, d.http)); }
+  catch (err) { req.log.error({ err }, "deploy/probe failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/branches", async (req, reply) => {
+  const parsed = deployProbeBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const d = parsed.data;
+  try { return reply.code(200).send(await deploy.listBranches(d.envId, d.image, d.repoUrl, d.http)); }
+  catch (err) { req.log.error({ err }, "deploy/branches failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/test", async (req, reply) => {
+  const parsed = deployProbeBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const d = parsed.data;
+  try { return reply.code(200).send(await deploy.testGit(d.envId, d.image, d.repoUrl, d.http)); }
+  catch (err) { req.log.error({ err }, "deploy/test failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/detect", async (req, reply) => {
+  const parsed = deployDetectBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try { return reply.code(200).send(await deploy.detectStack(parsed.data.envId, parsed.data.image, parsed.data.repoUrl, parsed.data.branch, parsed.data.http)); }
+  catch (err) { req.log.error({ err }, "deploy/detect failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.post("/deploy/run", async (req, reply) => {
+  const parsed = deployRunBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try { deploy.startDeploy(parsed.data); return reply.code(202).send({ started: true }); }
+  catch (err) { req.log.error({ err }, "deploy/run failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
+app.get("/deploy/log/:runId", async (req, reply) => {
+  const { runId } = req.params as { runId: string };
+  return reply.code(200).send(deploy.getDeployLog(runId));
+});
+
+app.post("/node-version", async (req, reply) => {
+  const parsed = nodeVersionBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const versionFull = await dockerDriver.applyNodeVersion(parsed.data.containerId, parsed.data.version);
+    return reply.code(200).send({ versionFull });
+  } catch (err) {
+    req.log.error({ err }, "node-version failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/node-current", async (req, reply) => {
+  const parsed = containerIdOnly.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const current = await dockerDriver.readNodeCurrent(parsed.data.containerId);
+    return reply.code(200).send({ current });
+  } catch (err) {
+    req.log.error({ err }, "node-current failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/php-root", async (req, reply) => {
+  const parsed = phpRootBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await dockerDriver.applyPhpRoot(parsed.data.containerId, parsed.data.root, parsed.data.useRouter);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "php-root failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/node-start", async (req, reply) => {
+  const parsed = nodeStartBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply
+      .code(400)
+      .send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    await dockerDriver.applyNodeStart(parsed.data.containerId, parsed.data.startFile);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "node-start failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
 app.post("/stop", async (req, reply) => {
   const parsed = containerIdBody.safeParse(req.body);
   if (!parsed.success) {
@@ -198,6 +434,159 @@ app.get("/stats/:id", async (req, reply) => {
     return reply.send(result);
   } catch (err) {
     req.log.error({ err }, "stats failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// Logs do container. Snapshot (JSON) + stream ao vivo (SSE).
+function clampTail(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 200;
+  return Math.min(2000, Math.max(1, Math.floor(n)));
+}
+
+app.get("/container/:id/logs", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const tail = clampTail((req.query as { tail?: unknown })?.tail);
+  try {
+    return reply.send({ log: await dockerDriver.logSnapshot(parsed.data.id, tail) });
+  } catch (err) {
+    req.log.error({ err }, "logs snapshot failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.get("/container/:id/logs/stream", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const tail = clampTail((req.query as { tail?: unknown })?.tail);
+  let stream: NodeJS.ReadableStream;
+  try {
+    stream = await dockerDriver.logStream(parsed.data.id, tail);
+  } catch (err) {
+    req.log.error({ err }, "logs stream failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+  reply.hijack();
+  const raw = reply.raw;
+  raw.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  raw.write("retry: 3000\n\n");
+  let buf = "";
+  const onData = (chunk: Buffer): void => {
+    buf += dockerDriver.cleanLog(chunk.toString("utf8"));
+    const parts = buf.split("\n");
+    buf = parts.pop() ?? "";
+    for (const line of parts) raw.write(`data: ${line}\n\n`);
+  };
+  stream.on("data", onData);
+  stream.on("end", () => { if (buf) raw.write(`data: ${buf}\n\n`); raw.end(); });
+  stream.on("error", () => raw.end());
+  const hb = setInterval(() => raw.write(": ping\n\n"), 25_000);
+  const cleanup = (): void => {
+    clearInterval(hb);
+    try { (stream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.(); } catch { /* noop */ }
+  };
+  req.raw.on("close", cleanup);
+});
+
+const attachNetworkBody = z.object({
+  containerId: z.string().min(1),
+  network: z.object({
+    name: z.string().min(1),
+    subnet: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/),
+    gateway: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  }),
+  ip: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  ownerId: z.string().min(1),
+});
+
+app.post("/network/attach", async (req, reply) => {
+  const parsed = attachNetworkBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const r = await dockerDriver.attachNetwork(
+      parsed.data.containerId,
+      { ...parsed.data.network, ip: parsed.data.ip },
+      parsed.data.ownerId,
+    );
+    return reply.code(200).send(r);
+  } catch (err) {
+    req.log.error({ err }, "network/attach failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+/* ── Ingress por domínio (Caddy do nó) ── */
+app.get("/ingress/available", async () => ({ available: await ingress.available() }));
+
+app.put("/ingress/site", async (req, reply) => {
+  const parsed = z.object({ domain: z.string().min(3), upstream: z.string().min(3) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await ingress.putSite(parsed.data.domain, parsed.data.upstream);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "ingress/site put failed");
+    return reply.code(500).send(errorPayload(err));
+  }
+});
+
+app.delete("/ingress/site", async (req, reply) => {
+  const parsed = z.object({ domain: z.string().min(3) }).safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await ingress.removeSite(parsed.data.domain);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "ingress/site delete failed");
+    return reply.code(500).send(errorPayload(err));
+  }
+});
+
+app.post("/volume/remove", async (req, reply) => {
+  const parsed = z.object({ name: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    await dockerDriver.removeVolume(parsed.data.name);
+    return reply.code(204).send(null);
+  } catch (err) {
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.get("/container/:id/ip", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const ip = await dockerDriver.containerIp(parsed.data.id);
+    return reply.send({ ip });
+  } catch (err) {
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.get("/disk/:id", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const result = await dockerDriver.diskUsage(parsed.data.id);
+    return reply.send(result);
+  } catch (err) {
+    req.log.error({ err }, "disk failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
   }
 });
@@ -353,6 +742,8 @@ app.delete("/files/:cid", async (req, reply) => {
 try {
   await app.listen({ port: AGENT_PORT, host: "0.0.0.0" });
   app.log.info(`Agente VelozPlanel escutando em :${AGENT_PORT}`);
+  startSshGateway(app.log);
+  startSftpGateway(app.log);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

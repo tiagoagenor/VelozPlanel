@@ -9,6 +9,9 @@ import { users } from "./db/schema";
 const JWT_SECRET = process.env.VP_JWT_SECRET ?? "dev-secret";
 export const SESSION_COOKIE = "vp_session";
 const SESSION_MAX_AGE_S = 60 * 60 * 24 * 7; // 7 dias
+// Em produção (HTTPS) o cookie deve ir com Secure. Ligado por VP_COOKIE_SECURE=1.
+const COOKIE_SECURE =
+  process.env.VP_COOKIE_SECURE === "1" || process.env.VP_COOKIE_SECURE === "true";
 
 /** Erro HTTP padronizado (formato `apiError` do contracts). */
 export class ApiHttpError extends Error {
@@ -60,14 +63,14 @@ export function setSessionCookie(reply: FastifyReply, token: string): void {
   reply.setCookie(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: false, // dev local (http)
+    secure: COOKIE_SECURE, // true em produção (HTTPS) via VP_COOKIE_SECURE=1
     path: "/",
     maxAge: SESSION_MAX_AGE_S,
   });
 }
 
 export function clearSessionCookie(reply: FastifyReply): void {
-  reply.clearCookie(SESSION_COOKIE, { path: "/" });
+  reply.clearCookie(SESSION_COOKIE, { path: "/", secure: COOKIE_SECURE });
 }
 
 /* ─────────────── Guards ─────────────── */

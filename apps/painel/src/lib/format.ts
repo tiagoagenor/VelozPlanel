@@ -94,3 +94,17 @@ export function formatDateTime(iso: string | null): string {
     timeStyle: "short",
   }).format(d);
 }
+
+/**
+ * Estimativa de duração do saldo → texto amigável.
+ * null = sem máquina ativa (não está gastando) → "—".
+ */
+export function formatEstimate(months: number | null): string {
+  if (months == null || !isFinite(months) || months <= 0) return "—";
+  if (months >= 1) {
+    const m = Math.floor(months);
+    return `${m} ${m === 1 ? "mês" : "meses"}`;
+  }
+  const days = Math.max(1, Math.round(months * 30));
+  return `${days} ${days === 1 ? "dia" : "dias"}`;
+}

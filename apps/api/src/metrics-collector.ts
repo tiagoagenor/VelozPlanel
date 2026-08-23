@@ -1,8 +1,9 @@
 import type { FastifyBaseLogger } from "fastify";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client";
-import { environments, metricSamples } from "./db/schema";
+import { environments, metricSamples, nodes } from "./db/schema";
 import * as agent from "./agent";
+import { DEFAULT_AGENT_URL } from "./agent";
 
 const INTERVAL_MS = 5000;
 
@@ -23,10 +24,16 @@ export function startMetricsCollector(log: FastifyBaseLogger): () => void {
         .from(environments)
         .where(eq(environments.state, "running"));
 
+      // Mapa nó → URL do Agente (uma consulta por ciclo, não por ambiente).
+      const nodeRows = await db.select().from(nodes);
+      const agentByNode = new Map<string, string>();
+      for (const n of nodeRows) if (n.agentUrl) agentByNode.set(n.id, n.agentUrl);
+
       for (const env of envs) {
         if (!env.containerId) continue;
+        const agentUrl = (env.nodeId && agentByNode.get(env.nodeId)) || DEFAULT_AGENT_URL;
         try {
-          const s = await agent.stats(env.containerId);
+          const s = await agent.stats(agentUrl, env.containerId);
           await db.insert(metricSamples).values({
             envId: env.id,
             cpuPct: s.cpuPct,

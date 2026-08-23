@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Exemplo do pdns.conf (backend gpgsql). Em produção, NÃO edite à mão: rode
+# `./gen-pdns-conf.sh`, que preenche os segredos a partir do .env. O arquivo real
+# `pdns.conf` NÃO deve ser versionado (contém a senha do DB e a API key).
+#
+# Por que arquivo montado e não env: a imagem powerdns/pdns-auth-49 ignora as
+# variáveis PDNS_* (só lê PDNS_AUTH_API_KEY) — a config vem deste arquivo, que o
+# compose monta em /etc/powerdns/pdns.conf.
+# ─────────────────────────────────────────────────────────────────────────────
+local-address=0.0.0.0, ::
+launch=gpgsql
+gpgsql-host=postgres
+gpgsql-port=5432
+gpgsql-dbname=pdns
+gpgsql-user=pdns
+gpgsql-password=TROQUE_pdns_db_forte
+api=yes
+api-key=TROQUE_pdns_api_key_forte
+webserver=yes
+webserver-address=0.0.0.0
+webserver-port=8081
+# 8081 nunca é publicada; liberamos só a faixa privada do Docker + a WireGuard.
+webserver-allow-from=127.0.0.1,172.16.0.0/12,10.100.0.0/24
+# Primário: envia NOTIFY e permite AXFR só para o secundário (184) pela WireGuard.
+primary=yes
+secondary=no
+allow-axfr-ips=127.0.0.1,10.100.0.4
+also-notify=10.100.0.4
+default-soa-content=ns1.geestao.top hostmaster.@ 1 10800 3600 604800 3600
+# Autoritativo apenas (sem recursão → sem open-resolver/amplification).
+version-string=anonymous
+disable-syslog=yes

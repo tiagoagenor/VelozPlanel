@@ -35,3 +35,6 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+
+# pdns.conf gerado com segredos (use pdns.conf.example + gen-pdns-conf.sh)
+deploy/control-plane/pdns.conf

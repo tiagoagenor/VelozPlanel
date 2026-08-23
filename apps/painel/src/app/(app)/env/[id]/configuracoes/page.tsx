@@ -67,6 +67,67 @@ export default function EnvSettingsPage() {
     },
   });
 
+  const [startup, setStartup] = React.useState<string>("");
+  React.useEffect(() => {
+    setStartup(env?.startupScript ?? "");
+  }, [env?.startupScript]);
+  const startupDirty = startup !== (env?.startupScript ?? "");
+  const saveStartup = useMutation({
+    mutationFn: () => api.setStartupScript(id, startup.trim() === "" ? null : startup),
+    onSuccess: (updated) => {
+      qc.setQueryData(["environment", id], updated);
+      toast.show(
+        "success",
+        "Comandos salvos. Aplicam na próxima criação/recriação do container.",
+      );
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao salvar."),
+  });
+
+  // Arquivo de inicialização do Node (ex.: server.js). Só em ambiente Node.
+  const [startFile, setStartFile] = React.useState<string>("");
+  React.useEffect(() => {
+    setStartFile(env?.nodeStartFile ?? "");
+  }, [env?.nodeStartFile]);
+  const startFileDirty = startFile !== (env?.nodeStartFile ?? "");
+  const saveStartFile = useMutation({
+    mutationFn: () => api.setNodeStartFile(id, startFile.trim() === "" ? null : startFile.trim()),
+    onSuccess: (updated) => {
+      qc.setQueryData(["environment", id], updated);
+      toast.show(
+        "success",
+        `App reiniciado com ${updated.nodeStartFile ?? "index.js"}.`,
+      );
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao salvar."),
+  });
+
+  // Node via nvm — só ambientes PHP. Versão escolhida + leitura ao vivo do
+  // container (reflete troca feita no terminal).
+  const isPhp = env?.runtime.kind === "php";
+  const [phpNode, setPhpNode] = React.useState<string>("22");
+  React.useEffect(() => {
+    setPhpNode(env?.phpNodeVersion ?? "22");
+  }, [env?.phpNodeVersion]);
+  const phpNodeLive = useQuery({
+    queryKey: ["php-node-current", id],
+    queryFn: () => api.getPhpNodeCurrent(id),
+    enabled: !!env && isPhp && env.state === "running",
+    refetchOnWindowFocus: true,
+  });
+  const savePhpNode = useMutation({
+    mutationFn: () => api.setPhpNodeVersion(id, phpNode),
+    onSuccess: (updated) => {
+      qc.setQueryData(["environment", id], updated);
+      qc.invalidateQueries({ queryKey: ["php-node-current", id] });
+      toast.show("success", `Node ${updated.phpNodeVersionFull ?? phpNode} aplicado.`);
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao aplicar a versão do Node."),
+  });
+
   if (envQuery.isPending) {
     return (
       <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
@@ -104,7 +165,7 @@ export default function EnvSettingsPage() {
           <div className="flex flex-col gap-1">
             <dt className="text-xs text-text3">Runtime atual</dt>
             <dd className="font-medium text-text">
-              {labelKind(env.runtime.kind)} {env.runtime.version}
+              {labelKind(env.runtime.kind)} {env.runtimeVersionFull ?? env.runtime.version}
             </dd>
           </div>
           <div className="flex flex-col gap-1">
@@ -173,6 +234,112 @@ export default function EnvSettingsPage() {
               </span>
             )}
           </div>
+        </div>
+      </Card>
+
+      {/* Arquivo de inicialização do Node */}
+      {env.runtime.kind === "node" && (
+        <Card>
+          <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
+            Arquivo de inicialização
+          </h2>
+          <p className="mb-4 text-sm text-text2">
+            Qual arquivo o Node executa ao iniciar (dentro de <code>/app</code>) — ex.:{" "}
+            <code>server.js</code>, <code>index.js</code> ou <code>dist/main.js</code>.
+            Ao salvar, o app <strong>reinicia</strong> com esse arquivo (seus arquivos
+            são mantidos). Vazio = <code>index.js</code>.
+          </p>
+          <input
+            value={startFile}
+            onChange={(e) => setStartFile(e.target.value)}
+            spellCheck={false}
+            aria-label="Arquivo de inicialização do Node"
+            placeholder="index.js"
+            className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              onClick={() => saveStartFile.mutate()}
+              disabled={!startFileDirty || saveStartFile.isPending}
+            >
+              {saveStartFile.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
+            </Button>
+            <span className="text-sm text-text3">
+              O app reinicia na hora, sem recriar o container.
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {/* Node.js via nvm — só ambientes PHP */}
+      {env.runtime.kind === "php" && (
+        <Card>
+          <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
+            Node.js (via nvm)
+          </h2>
+          <p className="mb-4 text-sm text-text2">
+            Todo ambiente PHP vem com <strong>Node.js</strong>. Escolha a versão aqui — aplica
+            <strong> na hora</strong>, sem recriar o container. Você também pode trocar no
+            terminal com <code>nvm use &lt;versão&gt;</code> / <code>nvm alias default &lt;versão&gt;</code>.
+          </p>
+          <SegmentedControl
+            label="Versão do Node"
+            value={phpNode}
+            onChange={setPhpNode}
+            options={RUNTIME_VERSIONS.node.map((v) => ({ value: v, label: v }))}
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => savePhpNode.mutate()}
+              disabled={savePhpNode.isPending}
+            >
+              {savePhpNode.isPending ? "Aplicando…" : "Aplicar versão"}
+            </Button>
+            <span className="text-sm text-text3">
+              {phpNodeLive.data?.current
+                ? `Atual no container: ${phpNodeLive.data.current}`
+                : env.phpNodeVersionFull
+                  ? `Atual: ${env.phpNodeVersionFull}`
+                  : "Atual: default da imagem (22)"}
+            </span>
+          </div>
+          <p className="mt-2 text-xs text-text3">
+            A escolha no painel é a permanente (reaplicada se o container for recriado). Uma
+            troca feita só no terminal vale até o container ser recriado. Versões ainda não
+            baixadas são instaladas na 1ª troca (precisa de internet no ambiente).
+          </p>
+        </Card>
+      )}
+
+      {/* Comandos de inicialização */}
+      <Card>
+        <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
+          Comandos de inicialização
+        </h2>
+        <p className="mb-4 text-sm text-text2">
+          Shell rodado <strong>uma vez</strong>, quando o container é criado — ex.:{" "}
+          <code>apt-get update</code>, instalar pacotes, ou criar aliases. Aplica na
+          próxima criação/recriação do container.
+        </p>
+        <textarea
+          value={startup}
+          onChange={(e) => setStartup(e.target.value)}
+          spellCheck={false}
+          rows={8}
+          aria-label="Comandos de inicialização"
+          placeholder={"apt-get update\napt-get install -y htop\necho \"alias ll='ls -la'\" > /etc/profile.d/veloz.sh"}
+          className="w-full resize-y rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => saveStartup.mutate()}
+            disabled={!startupDirty || saveStartup.isPending}
+          >
+            {saveStartup.isPending ? "Salvando…" : "Salvar"}
+          </Button>
+          <span className="text-sm text-text3">
+            Para valer agora, recrie o container (reaplique a versão acima).
+          </span>
         </div>
       </Card>
 

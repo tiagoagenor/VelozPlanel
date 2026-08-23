@@ -2,15 +2,18 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import ssh2 from "ssh2";
 import { and, eq } from "drizzle-orm";
 import {
   sshConfig as sshConfigSchema,
   sshKey as sshKeySchema,
   addSshKeyInput,
+  generateSshKeyInput,
+  generatedSshKey as generatedSshKeySchema,
   updateSshConfigInput,
   apiError,
 } from "@velozplanel/contracts";
-import type { SshConfig, SshKey, SshAuthMode, SshAccessScope } from "@velozplanel/contracts";
+import type { SshConfig, SshKey, GeneratedSshKey, SshAuthMode, SshAccessScope } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { sshConfigs, sshKeys, nodes } from "../db/schema";
 import type { SshConfigRow, SshKeyRow, EnvironmentRow } from "../db/schema";
@@ -27,6 +30,11 @@ const keyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid() });
  */
 const SSH_HOST = process.env.VP_SSH_HOST ?? "localhost";
 const SSH_PORT = 2222;
+
+const { utils: sshUtils } = ssh2;
+
+/** Teto de chaves por ambiente — evita abuso/DoS por geração ilimitada. */
+const MAX_KEYS_PER_ENV = 20;
 
 /** Tipos de chave pública SSH aceitos (algoritmo no 1º campo da linha). */
 const ALLOWED_KEY_TYPES = [
@@ -130,8 +138,9 @@ async function loadOrCreateSshConfig(env: EnvironmentRow): Promise<SshConfigRow>
   const existing = rows[0];
   if (existing) return existing;
 
-  // username honesto e estável: env_<8 primeiros hex do id do ambiente>.
-  const username = `env_${env.id.replace(/-/g, "").slice(0, 8)}`;
+  // username honesto, estável e ÚNICO: env_<32 hex do id> (UUID inteiro).
+  // Hex completo evita colisão de prefixo entre ambientes.
+  const username = `env_${env.id.replace(/-/g, "")}`;
   const inserted = await db
     .insert(sshConfigs)
     .values({ envId: env.id, username, port: SSH_PORT })
@@ -167,14 +176,15 @@ function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[], host: string): SshCon
   const keyRequired = authMode === "key" || authMode === "both";
 
   const notes: string[] = [];
-  if (cfg.enabled && keyRequired && keys.length === 0) {
+  if (!cfg.enabled) {
+    notes.push("Ligue o SSH e adicione a sua chave pública para poder conectar.");
+  } else if (keyRequired && keys.length === 0) {
     notes.push(
-      "O modo de autenticação exige chave, mas nenhuma chave pública foi adicionada ainda — adicione uma chave para poder conectar.",
+      "O SSH está ligado, mas nenhuma chave pública foi adicionada ainda — adicione uma chave para conectar.",
     );
+  } else {
+    notes.push(`Conecte com: ssh -p ${cfg.port} ${cfg.username}@${host}`);
   }
-  notes.push(
-    "A configuração fica salva. O acesso SSH/SFTP passa a valer quando o gateway SSH for provisionado (fase de infra) — no núcleo local ainda não há gateway aceitando conexão.",
-  );
 
   return {
     envId: cfg.envId,
@@ -186,7 +196,7 @@ function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[], host: string): SshCon
     accessScope,
     allowlist: Array.isArray(cfg.allowlist) ? (cfg.allowlist as string[]) : [],
     keys: keys.map(toSshKey),
-    gatewayActive: false,
+    gatewayActive: true,
     message: notes.join(" "),
   };
 }
@@ -272,6 +282,11 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       await loadOrCreateSshConfig(env);
 
+      const existing = await loadKeys(env.id);
+      if (existing.length >= MAX_KEYS_PER_ENV) {
+        throw new ApiHttpError(409, "too_many_keys", `limite de ${MAX_KEYS_PER_ENV} chaves por ambiente atingido; remova alguma antes de adicionar outra`);
+      }
+
       const parsed = parseAndFingerprint(req.body.publicKey);
       if (!parsed.ok) {
         throw new ApiHttpError(400, "invalid_key", `chave pública inválida: ${parsed.reason}`);
@@ -299,6 +314,78 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
       const row = inserted[0];
       if (!row) throw new ApiHttpError(500, "internal_error", "falha ao salvar a chave");
       return toSshKey(row);
+    },
+  );
+
+  // POST /environments/:id/ssh/keys/generate — gera um par ed25519 NO SERVIDOR,
+  // vinculado ao ambiente. Guarda SÓ a chave pública; devolve a PRIVADA uma
+  // única vez para o cliente baixar. A privada nunca é armazenada nem logada.
+  // Autorização idêntica às demais rotas de chave (loadEnvironmentForUser):
+  // só o dono do ambiente (ou admin) chega aqui — isolamento entre clientes.
+  app.post(
+    "/environments/:id/ssh/keys/generate",
+    {
+      schema: {
+        params: idParams,
+        body: generateSshKeyInput,
+        response: {
+          200: generatedSshKeySchema,
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+        },
+      },
+    },
+    async (req, reply): Promise<GeneratedSshKey> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      await loadOrCreateSshConfig(env);
+
+      // A resposta carrega a chave privada — nunca deve ser cacheada.
+      reply.header("cache-control", "no-store");
+      reply.header("pragma", "no-cache");
+
+      const existing = await loadKeys(env.id);
+      if (existing.length >= MAX_KEYS_PER_ENV) {
+        throw new ApiHttpError(409, "too_many_keys", `limite de ${MAX_KEYS_PER_ENV} chaves por ambiente atingido; remova alguma antes de gerar outra`);
+      }
+
+      // Gera o par ed25519 (CSPRNG do OpenSSL via ssh2). public = linha
+      // authorized_keys; private = formato OpenSSH (id_ed25519).
+      const pair = sshUtils.generateKeyPairSync("ed25519");
+      // Rotula a linha pública com o label (não afeta o fingerprint, que é do blob).
+      const [type, blob] = pair.public.trim().split(/\s+/);
+      const parsed = parseAndFingerprint(`${type} ${blob} ${req.body.label}`);
+      if (!parsed.ok) {
+        throw new ApiHttpError(500, "keygen_failed", "falha ao gerar a chave");
+      }
+
+      // Colisão de fingerprint é praticamente impossível, mas mantemos a regra.
+      const dup = await db
+        .select()
+        .from(sshKeys)
+        .where(and(eq(sshKeys.envId, env.id), eq(sshKeys.fingerprint, parsed.fingerprint)))
+        .limit(1);
+      if (dup[0]) {
+        throw new ApiHttpError(409, "duplicate_key", "colisão de chave; tente novamente");
+      }
+
+      const inserted = await db
+        .insert(sshKeys)
+        .values({
+          envId: env.id,
+          label: req.body.label,
+          publicKey: parsed.normalized,
+          fingerprint: parsed.fingerprint,
+        })
+        .returning();
+      const row = inserted[0];
+      if (!row) throw new ApiHttpError(500, "internal_error", "falha ao salvar a chave");
+
+      // A chave PRIVADA sai só aqui, uma vez. Não é persistida nem logada.
+      return { key: toSshKey(row), privateKey: pair.private };
     },
   );
 

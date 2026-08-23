@@ -13,14 +13,14 @@ export type RuntimeKind = z.infer<typeof runtimeKind>;
 
 /** Versões oferecidas no núcleo (ordem crescente, como na faixa do Hostoo). */
 export const RUNTIME_VERSIONS: Record<RuntimeKind, string[]> = {
-  php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4"],
-  node: ["18", "20", "22", "24"],
+  php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"],
+  node: ["18", "20", "22", "24", "25", "26"],
 };
 
 /** Versão recomendada por linguagem (destaque/def. na criação). */
 export const RECOMMENDED_VERSION: Record<RuntimeKind, string> = {
   php: "8.3",
-  node: "22",
+  node: "24",
 };
 
 export const runtimeSpec = z.object({
@@ -85,6 +85,79 @@ export const updatePlanInput = z.object({
 });
 export type UpdatePlanInput = z.infer<typeof updatePlanInput>;
 
+/* ─────────────── Tipos de ambiente (catálogo + preço por tipo) ─────────────── */
+
+export const envCategory = z.enum(["app", "service", "stack"]);
+export type EnvCategory = z.infer<typeof envCategory>;
+
+/** Ferramenta de UI de um serviço (ligada por proxy autenticado; nunca porta pública). */
+export const envToolKind = z.enum(["phpmyadmin", "adminer", "redisinsight", "rabbitmq_mgmt"]);
+export type EnvToolKind = z.infer<typeof envToolKind>;
+
+/**
+ * Tipo de ambiente como vem/vai para a API.
+ * Modelo B: o PLANO é dono do preço de compute; o tipo carrega apenas um
+ * ADICIONAL opcional (`priceMonthCents`, default 0) e o REQUISITO MÍNIMO de
+ * recursos (`minVcpu`/`minMemMb`) que restringe quais planos o tipo aceita.
+ */
+export const envType = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  category: envCategory,
+  image: z.string().nullable(),
+  internalPort: z.number().int().nullable(),
+  dataPath: z.string().nullable(),
+  needsDb: z.boolean(),
+  childType: z.string().nullable(),
+  defaultTool: envToolKind.nullable(),
+  allowsPublicDomain: z.boolean(),
+  priceMonthCents: z.number().int().min(0), // ADICIONAL do tipo (R$/mês), default 0
+  minVcpu: z.number().min(0), // vCPU mínimo p/ rodar este tipo (0 = sem mínimo)
+  minMemMb: z.number().int().min(0), // RAM mínima (MB) p/ rodar este tipo
+  active: z.boolean(),
+  sortOrder: z.number().int(),
+});
+export type EnvType = z.infer<typeof envType>;
+
+/** Um plano atende ao requisito mínimo de recursos de um tipo? */
+export function planMeetsType(
+  plan: { vcpu: number; memMb: number },
+  type: { minVcpu: number; minMemMb: number },
+): boolean {
+  return plan.vcpu >= type.minVcpu && plan.memMb >= type.minMemMb;
+}
+
+// Super admin cria um tipo novo (raro; o catálogo já vem semeado).
+export const createEnvTypeInput = z.object({
+  id: z.string().min(2).max(32).regex(/^[a-z][a-z0-9-]*$/, "use um slug: minúsculas, números e hífen"),
+  label: z.string().min(2).max(40),
+  category: envCategory,
+  image: z.string().max(200).nullable().default(null),
+  internalPort: z.number().int().min(1).max(65535).nullable().default(null),
+  dataPath: z.string().max(200).nullable().default(null),
+  needsDb: z.boolean().default(false),
+  childType: z.string().max(32).nullable().default(null),
+  defaultTool: envToolKind.nullable().default(null),
+  allowsPublicDomain: z.boolean().default(false),
+  priceMonthCents: z.number().int().min(0).default(0), // adicional, default 0
+  minVcpu: z.number().min(0).max(16).default(0),
+  minMemMb: z.number().int().min(0).max(32768).default(0),
+  active: z.boolean().default(true),
+});
+export type CreateEnvTypeInput = z.infer<typeof createEnvTypeInput>;
+
+// O que o super admin edita no dia a dia: adicional, mínimos, rótulo, status.
+export const updateEnvTypeInput = z.object({
+  label: z.string().min(2).max(40).optional(),
+  priceMonthCents: z.number().int().min(0).optional(), // adicional
+  minVcpu: z.number().min(0).max(16).optional(),
+  minMemMb: z.number().int().min(0).max(32768).optional(),
+  defaultTool: envToolKind.nullable().optional(),
+  allowsPublicDomain: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+export type UpdateEnvTypeInput = z.infer<typeof updateEnvTypeInput>;
+
 export const PLANS: Record<PlanId, PlanSpec> = {
   start: { id: "start", label: "Start", vcpu: 1, memMb: 512, diskGb: 10, priceMonthCents: 3050, maxEnvironments: 2 },
   light: { id: "light", label: "Light", vcpu: 1.5, memMb: 1024, diskGb: 20, priceMonthCents: 4900, maxEnvironments: 5 },
@@ -92,13 +165,16 @@ export const PLANS: Record<PlanId, PlanSpec> = {
   pro: { id: "pro", label: "Pro", vcpu: 3, memMb: 4096, diskGb: 80, priceMonthCents: 17200, maxEnvironments: 25 },
 };
 
-/** Tarifa horária ativa derivada do preço mensal (mês contábil = 720 h). */
-export function hourlyActiveCents(plan: PlanSpec): number {
-  return plan.priceMonthCents / 720;
+/**
+ * Tarifa horária ATIVA (mês contábil = 720 h). Modelo B:
+ * preço do plano (compute) + adicional do tipo (default 0).
+ */
+export function hourlyActiveCents(plan: PlanSpec, adderMonthCents = 0): number {
+  return (plan.priceMonthCents + adderMonthCents) / 720;
 }
-/** Pausado cobra só disco: R$ 0,25/GB/mês. */
-export function hourlyPausedCents(plan: PlanSpec): number {
-  return (plan.diskGb * 25) / 720;
+/** Pausado cobra só disco. Taxa configurável (R$/GB/mês); default R$ 0,25. */
+export function hourlyPausedCents(plan: PlanSpec, diskRateCents = 25): number {
+  return (plan.diskGb * diskRateCents) / 720;
 }
 
 /* ─────────────── Estados do ambiente ─────────────── */
@@ -125,6 +201,19 @@ export const environment = z.object({
   containerId: z.string().nullable(),
   httpPort: z.number().int().nullable(), // porta publicada no host de dev
   domain: z.string().nullable(), // domínio próprio configurado pelo cliente
+  autoSubdomain: z.string().nullable(), // endereço temporário <sub>.jamees.top
+  runtimeVersionFull: z.string().nullable(), // versão real resolvida no container (ex.: 24.19.0)
+  startupScript: z.string().nullable(), // comandos rodados 1x na criação do container
+  nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node (ex.: server.js); null = index.js
+  phpNodeVersion: z.string().nullable(), // versão Node escolhida (envs PHP via nvm); null = default da base
+  phpNodeVersionFull: z.string().nullable(), // versão Node real resolvida no container (ex.: 22.12.0)
+  accessUrl: z.string().nullable(), // URL pública p/ abrir o site (domínio https, ou IP do nó:porta)
+  type: z.string().nullable(), // slug do tipo (env_types); null = app legado
+  category: envCategory.nullable(), // app | service | stack
+  connection: z.record(z.string(), z.string()).nullable(), // dados de conexão do serviço (host interno/porta/credenciais)
+  region: z.string().nullable(), // região do nó onde o ambiente roda
+  internalIp: z.string().nullable(), // IP interno na rede do dono (serviços/stacks); null p/ app legado
+  errorMessage: z.string().nullable(), // mensagem de falha do job (provision/delete); null se ok
   createdAt: z.string().datetime(),
 });
 export type Environment = z.infer<typeof environment>;
@@ -140,6 +229,287 @@ export const setDomainInput = z.object({
 });
 export type SetDomainInput = z.infer<typeof setDomainInput>;
 
+/** Define/limpa os comandos de inicialização do ambiente (rodam 1x na criação). */
+export const setStartupScriptInput = z.object({
+  startupScript: z.string().max(20000).nullable(),
+});
+export type SetStartupScriptInput = z.infer<typeof setStartupScriptInput>;
+
+/** Define o arquivo que inicia o app Node (ex.: server.js). Aplica ao reiniciar. */
+export const setNodeStartFileInput = z.object({
+  nodeStartFile: z
+    .string()
+    .max(200)
+    .regex(/^[A-Za-z0-9_.\/-]+$/, "use um caminho de arquivo simples, ex.: server.js ou dist/main.js")
+    .nullable(),
+});
+export type SetNodeStartFileInput = z.infer<typeof setNodeStartFileInput>;
+
+/** Define a versão do Node (via nvm) de um ambiente PHP. Aplica ao vivo. */
+export const setPhpNodeVersionInput = z.object({
+  phpNodeVersion: z.enum(RUNTIME_VERSIONS.node as [string, ...string[]]),
+});
+export type SetPhpNodeVersionInput = z.infer<typeof setPhpNodeVersionInput>;
+
+/** Leitura ao vivo da versão Node atual no container (reflete troca no terminal). */
+export const phpNodeCurrent = z.object({
+  current: z.string().nullable(), // ex.: "22.12.0"; null se nvm indisponível
+});
+export type PhpNodeCurrent = z.infer<typeof phpNodeCurrent>;
+
+/* ─────────────── Deploy (Git) ─────────────── */
+
+export const deployConnectionMode = z.enum(["none", "public", "ssh", "http", "local"]);
+export type DeployConnectionMode = z.infer<typeof deployConnectionMode>;
+
+export const deployProvider = z.enum(["github", "gitlab", "bitbucket", "generic"]);
+export type DeployProvider = z.infer<typeof deployProvider>;
+
+export const deployStepKind = z.enum([
+  "git_sync",
+  "composer_install",
+  "npm_ci",
+  "npm_build",
+  "laravel_fix_index",
+  "php_migrate",
+  "artisan_migrate",
+  "artisan_clear",
+  "artisan_optimize",
+  "artisan_storage_link",
+  "node_restart",
+  "shell",
+]);
+export type DeployStepKind = z.infer<typeof deployStepKind>;
+
+export const deployRunStatus = z.enum(["running", "success", "failed", "interrupted"]);
+export type DeployRunStatus = z.infer<typeof deployRunStatus>;
+
+export const deployRunTrigger = z.enum(["manual", "auto"]);
+export type DeployRunTrigger = z.infer<typeof deployRunTrigger>;
+
+export const deployStrategy = z.enum(["place", "recreate"]);
+export type DeployStrategy = z.infer<typeof deployStrategy>;
+
+export const deployFramework = z.enum(["none", "nextjs", "laravel"]);
+export type DeployFramework = z.infer<typeof deployFramework>;
+
+export const deployRunModel = z.enum(["standalone", "next_start"]);
+export type DeployRunModel = z.infer<typeof deployRunModel>;
+
+export const deployMode = z.enum(["simple", "advanced"]);
+export type DeployMode = z.infer<typeof deployMode>;
+
+// URL de repositório: aceita git@host:owner/repo(.git) ou https://host/owner/repo(.git).
+// Só caracteres seguros (sem metacaracteres de shell) — validação de borda.
+const REPO_URL_RE = /^[A-Za-z0-9@:._/-]+$/;
+const GIT_REF_RE = /^[A-Za-z0-9._/-]+$/; // branch/ref
+
+export const deployStep = z.object({
+  id: z.string().uuid(),
+  ord: z.number().int(),
+  enabled: z.boolean(),
+  kind: deployStepKind,
+  command: z.string().nullable(), // livre só em kind="shell"
+  label: z.string(),
+  cwd: z.string().nullable(),
+  mutatesData: z.boolean(),
+});
+export type DeployStep = z.infer<typeof deployStep>;
+
+export const deployConfig = z.object({
+  envId: z.string().uuid(),
+  connectionMode: deployConnectionMode,
+  provider: deployProvider,
+  repoUrl: z.string().nullable(),
+  branch: z.string(),
+  isPrivate: z.boolean().nullable(),
+  mode: deployMode,
+  subdir: z.string().nullable(), // pasta do projeto no repo (monorepo)
+  historyLimit: z.number().int(), // quantos deploys manter (0 = nunca apagar)
+  publicKey: z.string().nullable(), // só a PÚBLICA (a privada nunca sai do nó)
+  fingerprint: z.string().nullable(),
+  httpUsername: z.string().nullable(), // usuário do HTTPS (a senha/token nunca volta)
+  hasHttpCredentials: z.boolean(),
+  connectionVerifiedAt: z.string().datetime().nullable(),
+  needsReconnect: z.boolean(),
+  autoEnabled: z.boolean(),
+  intervalMinutes: z.number().int(),
+  deployStrategy: deployStrategy,
+  framework: deployFramework,
+  runModel: deployRunModel,
+  lastRunStatus: deployRunStatus.nullable(),
+  lastRunAt: z.string().datetime().nullable(),
+  steps: z.array(deployStep),
+  gatewayActive: z.boolean(),
+  message: z.string().nullable(),
+});
+export type DeployConfig = z.infer<typeof deployConfig>;
+
+/** Define a conexão do repositório (modo, provedor, URL, branch, densidade da UI). */
+export const setDeployConnectionInput = z.object({
+  connectionMode: deployConnectionMode,
+  provider: deployProvider.default("github"),
+  repoUrl: z.string().max(400).regex(REPO_URL_RE, "URL de repositório inválida").nullable(),
+  // branch é OPCIONAL — o sistema detecta a padrão do repo (o usuário não digita).
+  branch: z.string().min(1).max(200).regex(GIT_REF_RE, "branch inválida").optional(),
+  mode: deployMode.default("simple"),
+  framework: deployFramework.optional(), // preset escolhido no wizard (ex.: nextjs)
+});
+export type SetDeployConnectionInput = z.infer<typeof setDeployConnectionInput>;
+
+/** Sondagem do repositório (público x privado x inalcançável) sem gravar nada. */
+export const deployProbeInput = z.object({
+  repoUrl: z.string().min(1).max(400).regex(REPO_URL_RE, "URL de repositório inválida"),
+});
+export type DeployProbeInput = z.infer<typeof deployProbeInput>;
+
+export const deployProbeResult = z.object({
+  reachable: z.boolean(),
+  isPrivate: z.boolean().nullable(),
+  provider: deployProvider,
+  message: z.string(),
+  defaultBranch: z.string().nullable(), // branch padrão detectada (o usuário não digita)
+});
+export type DeployProbeResult = z.infer<typeof deployProbeResult>;
+
+/** Resposta da geração da deploy key: só a PÚBLICA (para colar no GitHub). */
+export const generatedDeployKey = z.object({
+  publicKey: z.string(),
+  fingerprint: z.string(),
+});
+export type GeneratedDeployKey = z.infer<typeof generatedDeployKey>;
+
+/** Importa uma chave PRIVADA fornecida pelo usuário (guardada só no nó). */
+export const importDeployKeyInput = z.object({
+  privateKey: z.string().min(1).max(20000),
+});
+export type ImportDeployKeyInput = z.infer<typeof importDeployKeyInput>;
+
+/** Credenciais HTTPS (usuário + senha/token) para repositório privado por HTTP. */
+export const setDeployHttpCredentialsInput = z.object({
+  username: z.string().min(1).max(200),
+  password: z.string().min(1).max(1000),
+});
+export type SetDeployHttpCredentialsInput = z.infer<typeof setDeployHttpCredentialsInput>;
+
+/** Salva a lista ordenada de passos (fonte única no banco). */
+export const setDeployStepsInput = z.object({
+  mode: deployMode,
+  subdir: z
+    .string()
+    .max(300)
+    .regex(/^[A-Za-z0-9._/-]*$/, "pasta inválida")
+    .refine((v) => !v.split("/").includes(".."), "pasta não pode conter '..'")
+    .nullable()
+    .optional(),
+  steps: z
+    .array(
+      z.object({
+        enabled: z.boolean(),
+        kind: deployStepKind,
+        command: z.string().max(4000).nullable(),
+        label: z.string().min(1).max(120),
+        cwd: z
+          .string()
+          .max(300)
+          .regex(/^[A-Za-z0-9._/-]*$/, "pasta inválida")
+          .refine((v) => !v.split("/").includes(".."), "pasta não pode conter '..'")
+          .nullable(),
+        mutatesData: z.boolean().optional(),
+      }),
+    )
+    .max(50),
+});
+export type SetDeployStepsInput = z.infer<typeof setDeployStepsInput>;
+
+/** Liga/desliga o deploy automático e define o intervalo (mín. 5 min). */
+export const setDeployAutoInput = z.object({
+  autoEnabled: z.boolean(),
+  intervalMinutes: z.number().int().min(5).max(1440),
+});
+export type SetDeployAutoInput = z.infer<typeof setDeployAutoInput>;
+
+export const deployBranchesResult = z.object({
+  ok: z.boolean(),
+  branches: z.array(z.string()),
+  current: z.string(),
+  message: z.string(),
+});
+export type DeployBranchesResult = z.infer<typeof deployBranchesResult>;
+
+export const setDeployHistoryInput = z.object({
+  historyLimit: z.number().int().min(0).max(500), // 0 = nunca apagar
+});
+export type SetDeployHistoryInput = z.infer<typeof setDeployHistoryInput>;
+
+export const setDeployBranchInput = z.object({
+  branch: z.string().min(1).max(200).regex(GIT_REF_RE, "branch inválida"),
+});
+export type SetDeployBranchInput = z.infer<typeof setDeployBranchInput>;
+
+export const deployRun = z.object({
+  id: z.string().uuid(),
+  trigger: deployRunTrigger,
+  status: deployRunStatus,
+  exitCode: z.number().int().nullable(),
+  failedStepKind: deployStepKind.nullable(),
+  commitSha: z.string().nullable(),
+  commitMessage: z.string().nullable(),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime().nullable(),
+});
+export type DeployRun = z.infer<typeof deployRun>;
+
+/* ─────────────── Variáveis de ambiente (gerenciadas) ─────────────── */
+
+export const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Chaves proibidas — quebrariam o container ou injetariam código. */
+export const RESERVED_ENV_KEYS = [
+  "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "NVM_DIR", "HOME", "PWD", "SHELL",
+  "IFS", "ENV", "BASH_ENV", "PS4",
+];
+
+/** Var como sai no GET — valor MASCARADO (revelar só via endpoint dedicado). */
+export const envVar = z.object({
+  key: z.string(),
+  buildTime: z.boolean(),
+  hasValue: z.boolean(),
+  valueMasked: z.string(),
+});
+export type EnvVar = z.infer<typeof envVar>;
+
+export const setEnvVarsInput = z.object({
+  vars: z
+    .array(
+      z.object({
+        key: z
+          .string()
+          .min(1)
+          .max(256)
+          .regex(ENV_KEY_RE, "chave inválida (use letras, números e _; começa com letra ou _)")
+          .refine(
+            (k) => !RESERVED_ENV_KEYS.includes(k) && !k.startsWith("VP_"),
+            "chave reservada pelo sistema",
+          ),
+        value: z.string().max(32768),
+        buildTime: z.boolean().default(false),
+      }),
+    )
+    .max(100),
+});
+export type SetEnvVarsInput = z.infer<typeof setEnvVarsInput>;
+
+export const envVarsConfig = z.object({
+  vars: z.array(envVar),
+  applied: z.boolean(), // aplicado ao vivo? (false = precisa recriar)
+  message: z.string().nullable(),
+});
+export type EnvVarsConfig = z.infer<typeof envVarsConfig>;
+
+/** Trocar a versão/linguagem do runtime (recria o container). */
+
+/** Trocar a versão/linguagem do runtime (recria o container). */
+
 /** Trocar a versão/linguagem do runtime (recria o container). */
 export const changeRuntimeInput = runtimeSpec;
 export type ChangeRuntimeInput = RuntimeSpec;
@@ -151,7 +521,12 @@ export const createEnvironmentInput = z.object({
     .max(40)
     .regex(/^[a-z0-9-]+$/, "use apenas letras minúsculas, números e hífen"),
   plan: planId,
-  runtime: runtimeSpec,
+  // App (php/node): runtime é obrigatório. Serviço (redis/mysql/…): informe `type`.
+  runtime: runtimeSpec.optional(),
+  type: z.string().optional(), // slug em env_types; ausente/undefined = app (usa runtime)
+  region: z.string().max(60).optional(), // região escolhida; ausente = auto
+  nodeId: z.string().uuid().optional(), // nó específico (avançado); ausente = auto pela região
+  template: deployFramework.default("none"), // "nextjs" pré-configura o deploy
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
 
@@ -169,11 +544,14 @@ export const node = z.object({
   memMbTotal: z.number(),
   envCount: z.number().int(),
   publicHost: z.string().nullable(), // IP/host público do nó (SSH, DNS). Configurado pelo super admin.
+  httpHost: z.string().nullable(), // host onde as portas HTTP do site são alcançáveis (Abrir site). Fallback: publicHost. Nó local NAT = IP da LAN.
+  alertMessage: z.string().nullable(), // aviso do super admin sobre a máquina (mostrado na criação)
+  agentUrl: z.string().nullable(), // endpoint do Agente do nó (ex.: http://10.77.0.2:4100 via WireGuard)
   lastSeenAt: z.string().datetime().nullable(),
 });
 export type Node = z.infer<typeof node>;
 
-/** Super admin edita o host público do nó (usado em SSH e registro A do DNS). */
+/** Super admin edita o host público e o endpoint do Agente do nó. */
 export const updateNodeInput = z.object({
   publicHost: z
     .string()
@@ -182,9 +560,33 @@ export const updateNodeInput = z.object({
       /^([a-z0-9-]+\.)*[a-z0-9-]+$|^(\d{1,3}\.){3}\d{1,3}$/i,
       "informe um IP ou hostname válido, ex.: 200.9.22.2 ou node1.velozplanel.com",
     )
-    .nullable(),
+    .nullable()
+    .optional(),
+  httpHost: z
+    .string()
+    .max(253)
+    .regex(
+      /^([a-z0-9-]+\.)*[a-z0-9-]+$|^(\d{1,3}\.){3}\d{1,3}$/i,
+      "informe um IP ou hostname válido, ex.: 192.168.2.111",
+    )
+    .nullable()
+    .optional(),
+  agentUrl: z
+    .string()
+    .url("informe uma URL válida, ex.: http://10.77.0.2:4100")
+    .nullable()
+    .optional(),
+  alertMessage: z.string().max(500).nullable().optional(),
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
+
+/** Região disponível para criar ambiente (com aviso opcional da máquina). */
+export const regionOption = z.object({
+  region: z.string(),
+  alert: z.string().nullable(), // aviso do super admin (ex.: "instável")
+  online: z.boolean(), // há nó online com Agente nessa região
+});
+export type RegionOption = z.infer<typeof regionOption>;
 
 /* ─────────────── Métricas ─────────────── */
 
@@ -201,6 +603,12 @@ export const metricSeries = z.object({
   samples: z.array(metricSample),
 });
 export type MetricSeries = z.infer<typeof metricSeries>;
+
+/** Uso de disco atual do ambiente (medido sob demanda no nó). */
+export const diskUsage = z.object({
+  diskBytes: z.number().int().nonnegative(),
+});
+export type DiskUsage = z.infer<typeof diskUsage>;
 
 /* ─────────────── Auth ─────────────── */
 
@@ -360,6 +768,23 @@ export const addSshKeyInput = z.object({
 });
 export type AddSshKeyInput = z.infer<typeof addSshKeyInput>;
 
+/** Gera um par de chaves ed25519 no servidor (vinculado ao ambiente). */
+export const generateSshKeyInput = z.object({
+  label: z.string().min(1).max(60),
+});
+export type GenerateSshKeyInput = z.infer<typeof generateSshKeyInput>;
+
+/**
+ * Resposta ÚNICA da geração: metadados da chave (pública) + a chave PRIVADA.
+ * A privada NÃO é armazenada no servidor — só aparece nesta resposta, uma vez,
+ * para o cliente baixar. Se perder, gera outra e apaga a antiga.
+ */
+export const generatedSshKey = z.object({
+  key: sshKey,
+  privateKey: z.string(), // formato OpenSSH (id_ed25519)
+});
+export type GeneratedSshKey = z.infer<typeof generatedSshKey>;
+
 export const sshAuthMode = z.enum(["key", "password", "both"]);
 export type SshAuthMode = z.infer<typeof sshAuthMode>;
 
@@ -399,6 +824,37 @@ export const updateSshConfigInput = z.object({
 });
 export type UpdateSshConfigInput = z.infer<typeof updateSshConfigInput>;
 
+/* ─────────────── SFTP (transferência de arquivos, só senha) ─────────────── */
+// Módulo SEPARADO do SSH: o SSH é shell só por chave (porta 2222); o SFTP é
+// transferência de arquivos só por senha (porta 2223). A senha é gerada pelo
+// painel (sempre aleatória) e só o hash fica no servidor.
+
+export const sftpConfig = z.object({
+  envId: z.string().uuid(),
+  enabled: z.boolean(),
+  username: z.string(),
+  host: z.string(),
+  port: z.number().int(),
+  hasPassword: z.boolean(), // já existe senha definida para este ambiente?
+  passwordSetAt: z.string().datetime().nullable(),
+  gatewayActive: z.boolean(),
+  message: z.string().nullable(),
+});
+export type SftpConfig = z.infer<typeof sftpConfig>;
+
+export const setSftpEnabledInput = z.object({ enabled: z.boolean() });
+export type SetSftpEnabledInput = z.infer<typeof setSftpEnabledInput>;
+
+/**
+ * Resposta ÚNICA da geração/reset da senha SFTP: a senha em texto aparece só
+ * aqui, uma vez (o servidor guarda apenas o hash). Depois disso, só reset.
+ */
+export const generatedSftpPassword = z.object({
+  password: z.string(),
+  passwordSetAt: z.string().datetime(),
+});
+export type GeneratedSftpPassword = z.infer<typeof generatedSftpPassword>;
+
 /* ═══════════════ SUPER ADMIN ═══════════════ */
 
 /* ── Usuários / clientes ── */
@@ -412,7 +868,8 @@ export const adminUser = z.object({
   role: userRole,
   status: accountStatus,
   envCount: z.number().int(),
-  balanceCents: z.number().int(), // saldo em centavos (soma do razão de créditos)
+  balanceCents: z.number().int(), // saldo total gastável (dinheiro + bônus) = soma do razão
+  bonusCents: z.number().int(), // parte do saldo que veio de bônus/cortesia
   createdAt: z.string().datetime(),
 });
 export type AdminUser = z.infer<typeof adminUser>;
@@ -428,16 +885,22 @@ export const creditTransaction = z.object({
 });
 export type CreditTransaction = z.infer<typeof creditTransaction>;
 
-/** Admin adiciona (ou remove, se negativo) saldo de um cliente. */
+/** Admin adiciona (ou remove, se negativo) saldo de um cliente. `kind` distingue
+ *  dinheiro (top-up/pagamento) de bônus (cortesia). Débito (valor negativo) ignora o kind. */
 export const addCreditInput = z.object({
   amountCents: z.number().int().refine((v) => v !== 0, "informe um valor diferente de zero"),
+  kind: z.enum(["money", "bonus"]).default("money"),
   reason: z.string().max(200).nullable().optional(),
 });
 export type AddCreditInput = z.infer<typeof addCreditInput>;
 
 /** Saldo do próprio usuário (painel do cliente). */
 export const balance = z.object({
-  balanceCents: z.number().int(),
+  balanceCents: z.number().int(), // saldo total gastável = dinheiro + bônus
+  moneyCents: z.number().int(), // parte do saldo que é dinheiro (não-bônus)
+  bonusCents: z.number().int(), // parte do saldo concedida como bônus/cortesia
+  monthlyBurnCents: z.number().int(), // gasto mensal estimado (soma dos ambientes ATIVOS pelo preço do plano)
+  estimateMonths: z.number().nullable(), // meses que o saldo dura no ritmo atual; null = sem máquina ativa (não gasta)
   transactions: z.array(creditTransaction),
 });
 export type Balance = z.infer<typeof balance>;
@@ -549,6 +1012,82 @@ export const adminOverview = z.object({
 });
 export type AdminOverview = z.infer<typeof adminOverview>;
 
+/* ── Faturamento / cobrança por hora (cron configurável) ── */
+export const billingSettings = z.object({
+  enabled: z.boolean(),
+  intervalMinutes: z.number().int().min(1).max(1440), // de quanto em quanto tempo o cron roda
+  suspendOnZero: z.boolean(), // pausar ambiente do cliente quando o saldo zerar
+  domainPriceMonthCents: z.number().int().min(0), // taxa de gerência por domínio/mês
+  // Taxas por recurso (calculadora dos planos). rateDiskGb também cobra o pausado.
+  rateVcpuMonthCents: z.number().int().min(0),
+  rateRamGbMonthCents: z.number().int().min(0),
+  rateDiskGbMonthCents: z.number().int().min(0),
+  lastRunAt: z.string().datetime().nullable(), // quando a última execução TERMINOU (não o cursor do agendador)
+  nextRunAt: z.string().datetime().nullable(),
+  running: z.boolean(), // se o job está executando agora
+  chargedTodayCents: z.number().int(), // total debitado hoje (estimativa)
+  // Resumo da última execução concluída (para o card "Última execução").
+  lastInstances: z.number().int().nullable(), // instâncias cobráveis na última rodada
+  lastSuspended: z.number().int().nullable(), // ambientes suspensos na última rodada
+  lastChargedCents: z.number().int().nullable(), // cobrado na última rodada
+  lastOk: z.boolean().nullable(), // true = ok, false = falhou, null = nunca rodou
+});
+export type BillingSettings = z.infer<typeof billingSettings>;
+
+/** Uma hora do rollup de execuções de cobrança (histórico da tela). */
+export const billingRunHour = z.object({
+  hour: z.string().datetime(),
+  runs: z.number().int(),
+  chargedCents: z.number().int(),
+  chargeEvents: z.number().int(),
+  suspended: z.number().int(),
+  instances: z.number().int(),
+  errors: z.number().int(),
+  firstRunAt: z.string().datetime(),
+  lastRunAt: z.string().datetime(),
+});
+export type BillingRunHour = z.infer<typeof billingRunHour>;
+
+export const updateBillingSettingsInput = z.object({
+  enabled: z.boolean().optional(),
+  intervalMinutes: z.number().int().min(1).max(1440).optional(),
+  suspendOnZero: z.boolean().optional(),
+  domainPriceMonthCents: z.number().int().min(0).optional(),
+  rateVcpuMonthCents: z.number().int().min(0).optional(),
+  rateRamGbMonthCents: z.number().int().min(0).optional(),
+  rateDiskGbMonthCents: z.number().int().min(0).optional(),
+});
+export type UpdateBillingSettingsInput = z.infer<typeof updateBillingSettingsInput>;
+
+/** Logs de um container (snapshot das últimas linhas). */
+export const containerLogs = z.object({ log: z.string() });
+export type ContainerLogs = z.infer<typeof containerLogs>;
+
+/* ── Subdomínio temporário (jamees.top) + reservados ── */
+// Formato do subdomínio: começa/termina alfanumérico, 3–30 chars, sem "--".
+export const SUBDOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$/;
+export const setSubdomainInput = z.object({
+  subdomain: z
+    .string()
+    .transform((s) => s.trim().toLowerCase().replace(/\.jamees\.top\.?$/, ""))
+    .refine((s) => SUBDOMAIN_RE.test(s) && !s.includes("--"), "Use 3 a 30 letras, números ou hífen — começando e terminando com letra/número, sem “--”."),
+});
+export type SetSubdomainInput = z.infer<typeof setSubdomainInput>;
+
+export const reservedSubdomain = z.object({
+  name: z.string(),
+  reason: z.string().nullable(),
+  locked: z.boolean(),
+  createdAt: z.string(),
+});
+export type ReservedSubdomain = z.infer<typeof reservedSubdomain>;
+
+export const createReservedSubdomainInput = z.object({
+  name: z.string().transform((s) => s.trim().toLowerCase()).refine((s) => SUBDOMAIN_RE.test(s) && !s.includes("--"), "Nome de subdomínio inválido."),
+  reason: z.string().max(120).optional(),
+});
+export type CreateReservedSubdomainInput = z.infer<typeof createReservedSubdomainInput>;
+
 /* ── Catálogo de módulos ── */
 export const moduleInfo = z.object({
   key: z.string(),
@@ -558,6 +1097,213 @@ export const moduleInfo = z.object({
   status: z.enum(["builtin", "active", "planned"]),
 });
 export type ModuleInfo = z.infer<typeof moduleInfo>;
+
+/* ─────────────── DNS / Gerenciador de domínios (admin global) ─────────────── */
+
+/** Estados de uma zona, derivados na API a partir da verificação de delegação. */
+export const dnsZoneStatus = z.enum([
+  "pending", // criada, ainda não delegada no registrar
+  "pending_verification", // já resolvia na internet — exige confirmar delegação p/ nós antes de liberar o editor
+  "active", // 2/2 nameservers respondendo + delegada
+  "active_no_redundancy", // delegada, só o primário responde
+  "error", // SERVFAIL nos NS
+  "unknown", // timeout do resolver (transitório)
+]);
+export type DnsZoneStatus = z.infer<typeof dnsZoneStatus>;
+
+/** Tipos de registro suportados na R1. SOA/NS aparecem (só leitura/estruturais). */
+export const dnsRecordType = z.enum(["A", "AAAA", "CNAME", "MX", "TXT", "NS", "CAA", "SRV", "SOA"]);
+export type DnsRecordType = z.infer<typeof dnsRecordType>;
+
+/** Por que um conjunto de registros é protegido de edição/remoção. */
+export const dnsProtectedReason = z.enum(["system", "panel"]).nullable();
+export type DnsProtectedReason = z.infer<typeof dnsProtectedReason>;
+
+/** Uma zona (domínio) como a lista do painel a enxerga. */
+export const dnsZone = z.object({
+  name: z.string(), // ex.: geestao.top (sem ponto final)
+  status: dnsZoneStatus,
+  serial: z.number().int().nullable(),
+  checkedAt: z.string().nullable(),
+  checkMsg: z.string().nullable(),
+  recordCount: z.number().int(), // RRsets do painel (exclui os "system")
+  environmentId: z.string().nullable(),
+  ownerId: z.string().nullable(), // dono da zona (cliente) — null = zona do painel/admin
+  ownerEmail: z.string().nullable(), // conveniência p/ a lista admin
+  deletable: z.boolean(),
+  undeletableReason: z.string().nullable(),
+});
+export type DnsZone = z.infer<typeof dnsZone>;
+
+/** Um conjunto de registros (RRset) agrupado por (nome, tipo). */
+export const dnsRRset = z.object({
+  name: z.string(), // rótulo relativo à zona ("@" no ápice, "www", …)
+  fqdn: z.string(), // nome canônico completo (ex.: www.geestao.top.)
+  type: dnsRecordType,
+  ttl: z.number().int(),
+  records: z.array(z.string()), // conteúdos crus (ex.: "187.127.49.205"; MX "10 mail.x.")
+  protected: z.boolean(),
+  protectedReason: dnsProtectedReason,
+  protectedMsg: z.string().nullable(),
+});
+export type DnsRRset = z.infer<typeof dnsRRset>;
+
+/** Um nameserver deste servidor (host + IP para glue/delegação). */
+export const dnsNameserver = z.object({ host: z.string(), ip: z.string() });
+export type DnsNameserver = z.infer<typeof dnsNameserver>;
+
+/** Nameservers deste servidor DNS (alimenta o card de delegação). */
+export const dnsServerInfo = z.object({
+  nameservers: z.array(dnsNameserver),
+});
+export type DnsServerInfo = z.infer<typeof dnsServerInfo>;
+
+/** Criar zona — só o nome; SOA/NS/glue nascem automaticamente. */
+export const createZoneInput = z.object({
+  name: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(3)
+    .max(253)
+    .regex(
+      /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/,
+      "informe um domínio válido (ex.: exemplo.com ou lab.exemplo.com)",
+    ),
+});
+export type CreateZoneInput = z.infer<typeof createZoneInput>;
+
+/** Resultado da criação: alerta anti-takeover se o domínio já resolve hoje. */
+export const createZoneResult = z.object({
+  zone: dnsZone,
+  alreadyResolves: z.boolean(),
+  resolvesTo: z.array(z.string()),
+});
+export type CreateZoneResult = z.infer<typeof createZoneResult>;
+
+/** Upsert de um RRset (substitui o conjunto inteiro). */
+export const upsertRRsetInput = z.object({
+  name: z.string().trim().max(253), // "@" ou rótulo/subnome
+  type: dnsRecordType,
+  ttl: z.number().int().min(60).max(604800).default(300),
+  records: z.array(z.string().trim().min(1)).min(1).max(50),
+});
+export type UpsertRRsetInput = z.infer<typeof upsertRRsetInput>;
+
+export const deleteRRsetInput = z.object({
+  name: z.string().trim().max(253),
+  type: dnsRecordType,
+});
+export type DeleteRRsetInput = z.infer<typeof deleteRRsetInput>;
+
+/** Verificação de delegação — booleanos crus + serial + diagnóstico (nunca 500). */
+export const verifyResult = z.object({
+  status: dnsZoneStatus,
+  delegatedAtParent: z.boolean(),
+  primaryAnswering: z.boolean(),
+  secondaryAnswering: z.boolean(),
+  serial: z.number().int().nullable(),
+  checkedAt: z.string(),
+  error: z.enum(["timeout", "servfail"]).nullable(),
+  // Diagnóstico do apontamento (quando há um host esperado do ambiente vinculado):
+  resolvedTo: z.array(z.string()).default([]), // o que os NS respondem hoje para o nome
+  expected: z.string().nullable().default(null), // host esperado (do ambiente), se houver
+  match: z.boolean().default(false), // resolvedTo contém o expected?
+});
+export type VerifyResult = z.infer<typeof verifyResult>;
+
+/** Descoberta: registros atuais no mundo (para importar antes de delegar). */
+export const discoverResult = z.object({
+  partial: z.boolean(), // algum NS atual deu timeout
+  rrsets: z.array(
+    z.object({
+      name: z.string(),
+      type: dnsRecordType,
+      ttl: z.number().int(),
+      records: z.array(z.string()),
+    }),
+  ),
+});
+export type DiscoverResult = z.infer<typeof discoverResult>;
+
+/* ── Apontar domínio → ambiente + preview "como está ficando" ── */
+
+/** Escada de 3 degraus (o teto da Fase 1 é "dns_pronto"; "publicado" é Fase 2). */
+export const servingStatus = z.enum([
+  "sem_apontamento", // nenhum registro aponta para ambiente
+  "aguardando_propagacao", // apontado; verify ainda não confirma
+  "dns_pronto", // verify confirma A == host do ambiente [teto Fase 1]
+  "publicado", // vhost/HTTPS no ar [Fase 2]
+]);
+export type ServingStatus = z.infer<typeof servingStatus>;
+
+/** Entrada do "apontar para ambiente" (caminho fácil). */
+export const pointInput = z.object({
+  label: z.string().trim().max(63).default("@"), // "@" (raiz) ou subnome (ex.: "loja")
+  environmentId: z.string().uuid(),
+  includeWww: z.boolean().default(true), // só aplica quando label = "@"
+});
+export type PointInput = z.infer<typeof pointInput>;
+
+/** Um apontamento domínio(label)→ambiente com seu estado de serviço. */
+export const dnsPoint = z.object({
+  zone: z.string().default(""), // preenchido quando fora do contexto de uma zona
+  label: z.string(),
+  fqdn: z.string(),
+  environmentId: z.string(),
+  environmentName: z.string(),
+  envState: z.string(),
+  servingStatus,
+  managed: z.boolean(), // o A ainda bate com o host atual do ambiente?
+  resolvedTo: z.string().nullable(),
+});
+export type DnsPoint = z.infer<typeof dnsPoint>;
+
+/** Preview "como está ficando a configuração" (derivado no backend). */
+export const dnsZoneEffective = z.object({
+  zone: z.string(),
+  points: z.array(dnsPoint),
+  mail: z.array(z.object({ via: z.string(), prio: z.number().int() })),
+  ssl: z.array(z.object({ ca: z.string() })),
+  verifications: z.array(z.object({ kind: z.string(), label: z.string() })),
+  warnings: z.array(z.object({ label: z.string(), msg: z.string() })),
+});
+export type DnsZoneEffective = z.infer<typeof dnsZoneEffective>;
+
+export const pointResult = z.object({ effective: dnsZoneEffective });
+export type PointResult = z.infer<typeof pointResult>;
+
+/** Descrições amigáveis por tipo de registro (fonte única admin+cliente). */
+export const DNS_TYPE_INFO: Record<
+  DnsRecordType,
+  { label: string; description: string; hasPriority: boolean; placeholder: string }
+> = {
+  A: { label: "A", description: "Conecta seu domínio ou subdomínio a um site usando um endereço IPv4.", hasPriority: false, placeholder: "203.0.113.10" },
+  AAAA: { label: "AAAA", description: "Conecta seu domínio a um site usando um endereço IPv6.", hasPriority: false, placeholder: "2001:db8::1" },
+  CNAME: { label: "CNAME", description: "Aponta um subdomínio ou alias para outro domínio. Na raiz (@) não pode ser usado — use um registro A.", hasPriority: false, placeholder: "destino.exemplo.com" },
+  MX: { label: "MX", description: "Controla para onde os e-mails do seu domínio são entregues.", hasPriority: true, placeholder: "10 mail.meusite.com.br" },
+  TXT: { label: "TXT", description: "Guarda informações em texto, como verificações e configurações de e-mail.", hasPriority: false, placeholder: "v=spf1 include:_spf.google.com ~all" },
+  NS: { label: "NS", description: "Delega um subdomínio para outros servidores de nomes.", hasPriority: false, placeholder: "ns1.exemplo.com" },
+  CAA: { label: "CAA", description: "Define quais autoridades podem emitir certificados SSL para o domínio.", hasPriority: false, placeholder: '0 issue "letsencrypt.org"' },
+  SRV: { label: "SRV", description: "Informa o endereço e a porta de um serviço específico (ex.: chat, VoIP).", hasPriority: true, placeholder: "10 5 443 servico.exemplo.com" },
+  SOA: { label: "SOA", description: "Registro estrutural da zona (gerenciado pelo servidor).", hasPriority: false, placeholder: "" },
+};
+
+/** Presets que pré-preenchem a linha de adição (nunca salvam sozinhos). */
+export const DNS_PRESETS: Array<{ id: string; label: string; type: DnsRecordType; recordLabel: string; template: string; help: string }> = [
+  { id: "google-site", label: "Verificação do Google", type: "TXT", recordLabel: "@", template: "google-site-verification=", help: "Cole só o código que o Google te deu, depois do sinal de igual." },
+  { id: "spf-basic", label: "E-mail: SPF básico", type: "TXT", recordLabel: "@", template: "v=spf1 include:_spf.google.com ~all", help: "SPF para envio de e-mail pelo Google Workspace." },
+  { id: "mx-basic", label: "E-mail: MX", type: "MX", recordLabel: "@", template: "10 mail.meusite.com.br", help: "Troque pelo servidor de e-mail do seu provedor." },
+];
+
+/** Opções amigáveis de TTL (rótulo → segundos). */
+export const DNS_TTL_OPTIONS: Array<{ label: string; seconds: number }> = [
+  { label: "Automático (5 min)", seconds: 300 },
+  { label: "30 minutos", seconds: 1800 },
+  { label: "1 hora", seconds: 3600 },
+  { label: "12 horas", seconds: 43200 },
+  { label: "1 dia", seconds: 86400 },
+];
 
 /* ─────────────── Erro padronizado da API ─────────────── */
 

@@ -12,10 +12,12 @@ export interface TimeSeriesProps {
   /** Rótulo da série (usado na tooltip e na tabela oculta). */
   label: string;
   /** Papel de cor semântica → lê o token CSS correspondente. */
-  tone?: "brand" | "info" | "success" | "warning" | "danger";
+  tone?: "brand" | "info" | "success" | "warning" | "danger" | "cpu" | "mem";
   /** Formata o valor (cabeçalho, eixo Y e tooltip). */
   format?: (v: number | null) => string;
   height?: number;
+  /** Mostra o cabeçalho interno (valor atual + horário). Padrão: true. */
+  showHeader?: boolean;
 }
 
 const TONE_VAR: Record<NonNullable<TimeSeriesProps["tone"]>, string> = {
@@ -24,6 +26,8 @@ const TONE_VAR: Record<NonNullable<TimeSeriesProps["tone"]>, string> = {
   success: "--vp-success",
   warning: "--vp-warning",
   danger: "--vp-danger",
+  cpu: "--vp-chart-cpu",
+  mem: "--vp-chart-mem",
 };
 
 function readVar(el: HTMLElement, name: string, fallback: string): string {
@@ -46,6 +50,7 @@ export function TimeSeries({
   tone = "brand",
   format = (v) => (v == null ? "—" : String(v)),
   height = 200,
+  showHeader = true,
 }: TimeSeriesProps) {
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const plotRef = React.useRef<uPlot | null>(null);
@@ -95,7 +100,7 @@ export function TimeSeries({
           grid: { stroke: gridColor, width: 1 },
           ticks: { stroke: gridColor },
           font: "12px ui-sans-serif, system-ui, sans-serif",
-          size: 52,
+          size: 68,
           values: (_u, splits) => splits.map((v) => format(v)),
         },
       ],
@@ -141,14 +146,16 @@ export function TimeSeries({
 
   return (
     <figure className="m-0">
-      <div className="mb-3 flex items-baseline gap-2">
-        <span className="text-2xl font-bold tabular-nums text-text">
-          {format(lastValue)}
-        </span>
-        <span className="text-xs text-text3">
-          agora · última amostra às {lastTimeText}
-        </span>
-      </div>
+      {showHeader ? (
+        <div className="mb-3 flex items-baseline gap-2">
+          <span className="text-2xl font-bold tabular-nums text-text">
+            {format(lastValue)}
+          </span>
+          <span className="text-xs text-text3">
+            agora · última amostra às {lastTimeText}
+          </span>
+        </div>
+      ) : null}
       <div ref={wrapRef} className="w-full" style={{ minHeight: height }} />
       {/* Alternativa textual ao <canvas> (WCAG 1.4.9). */}
       <figcaption className="sr-only" id={tableId}>

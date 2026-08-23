@@ -676,6 +676,67 @@ function UploadModal({
   );
 }
 
+/* ─────────────── Editor de código com numeração de linhas ───────────────
+ * Textarea simples + calha de números à esquerda, com rolagem sincronizada e
+ * mesma métrica de linha (leading-6 / py-3). `wrap="off"` mantém 1 linha lógica
+ * por linha visual, então a numeração nunca desalinha. */
+function CodeEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const taRef = React.useRef<HTMLTextAreaElement>(null);
+  const gutterRef = React.useRef<HTMLDivElement>(null);
+  const lineCount = React.useMemo(() => Math.max(1, value.split("\n").length), [value]);
+
+  const syncScroll = () => {
+    if (gutterRef.current && taRef.current) {
+      gutterRef.current.scrollTop = taRef.current.scrollTop;
+    }
+  };
+
+  // Tab insere indentação em vez de trocar o foco (comportamento de editor).
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Tab") return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const next = value.slice(0, start) + "  " + value.slice(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    });
+  };
+
+  return (
+    <div className="flex h-[60vh] overflow-hidden rounded-lg border border-border bg-surface font-mono text-sm">
+      <div
+        ref={gutterRef}
+        aria-hidden="true"
+        className="select-none overflow-hidden border-r border-border-subtle bg-bg px-3 py-3 text-right leading-6 tabular-nums text-text3"
+      >
+        {Array.from({ length: lineCount }, (_, i) => (
+          <div key={i}>{i + 1}</div>
+        ))}
+      </div>
+      <textarea
+        ref={taRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={syncScroll}
+        onKeyDown={onKeyDown}
+        spellCheck={false}
+        wrap="off"
+        aria-label="Conteúdo do arquivo"
+        className="flex-1 resize-none overflow-auto whitespace-pre bg-transparent px-3 py-3 leading-6 text-text outline-none"
+      />
+    </div>
+  );
+}
+
 export default function EnvArquivosPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -1180,19 +1241,14 @@ export default function EnvArquivosPage() {
                   Arquivo grande — exibindo apenas o começo. Salvar aqui pode truncar o conteúdo.
                 </p>
               ) : null}
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                spellCheck={false}
-                className="h-[50vh] w-full resize-y rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text focus:border-brand-strong"
-              />
+              <CodeEditor value={content} onChange={setContent} />
             </>
           )}
         </Card>
       ) : null}
 
       {/* Filtro por nome */}
-      {root && !notRunning && !listQuery.isError ? (
+      {!editing && root && !notRunning && !listQuery.isError ? (
         <div className="relative max-w-xs">
           <Search
             size={16}
@@ -1217,7 +1273,7 @@ export default function EnvArquivosPage() {
       ) : null}
 
       {/* Barra de ações em massa — sempre renderizada (altura estável) */}
-      {root && !notRunning && !listQuery.isError ? (
+      {!editing && root && !notRunning && !listQuery.isError ? (
         <div
           className={`flex min-h-[3rem] flex-wrap items-center gap-2 rounded-lg border px-3 py-2 transition-colors ${
             selected.size > 0
@@ -1270,8 +1326,8 @@ export default function EnvArquivosPage() {
         </div>
       ) : null}
 
-      {/* Listagem */}
-      {listQuery.isPending ? (
+      {/* Listagem (escondida enquanto um arquivo está aberto no editor) */}
+      {!editing && (listQuery.isPending ? (
         <div className="grid h-40 place-items-center">
           <Loader2 size={24} className="animate-spin text-brand-strong" aria-label="Carregando" />
         </div>
@@ -1409,7 +1465,7 @@ export default function EnvArquivosPage() {
             ) : null}
           </div>
         </>
-      )}
+      ))}
 
       {/* Modal: enviar arquivo (dropzone + pasta de destino) */}
       {root ? (

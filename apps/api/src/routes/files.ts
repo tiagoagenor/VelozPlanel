@@ -16,6 +16,7 @@ import type { FileList, FileContent, RuntimeKind } from "@velozplanel/contracts"
 import { ApiHttpError, requireUser } from "../auth";
 import * as agent from "../agent";
 import { loadEnvironmentForUser } from "./environments";
+import { agentUrlForEnv } from "../nodes";
 import type { EnvironmentRow } from "../db/schema";
 
 /**
@@ -123,6 +124,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const kind = env.runtimeKind as RuntimeKind;
       const confineRoot = confineRootFor(kind);
       // Sem `path`, abre na pasta web servida (defaultPath, ex.: /var/www).
@@ -131,7 +133,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
         req.query.path,
         defaultPathFor(kind),
       );
-      const { entries } = await agent.listFiles(containerId, target);
+      const { entries } = await agent.listFiles(agentUrl, containerId, target);
       // `root` é o limite de confinamento — o breadcrumb/árvore sobem até ele.
       return { path: target, root: confineRoot, entries };
     },
@@ -159,12 +161,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
       }
-      const result = await agent.readFile(containerId, target);
+      const result = await agent.readFile(agentUrl, containerId, target);
       return { path: target, content: result.content, truncated: result.truncated };
     },
   );
@@ -191,12 +194,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "não é possível gravar sobre a raiz");
       }
-      await agent.writeFile(containerId, target, req.body.content);
+      await agent.writeFile(agentUrl, containerId, target, req.body.content);
       return { ok: true };
     },
   );
@@ -224,6 +228,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       // Confina a pasta de destino à raiz…
       const destDir = resolveWithinRoot(root, req.body.dir);
@@ -233,7 +238,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       if (target === root) {
         throw new ApiHttpError(400, "invalid_path", "caminho de destino inválido");
       }
-      await agent.uploadFile(containerId, target, req.body.contentBase64);
+      await agent.uploadFile(agentUrl, containerId, target, req.body.contentBase64);
       return { ok: true };
     },
   );
@@ -260,12 +265,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "invalid_path", "caminho inválido");
       }
-      await agent.mkdir(containerId, target);
+      await agent.mkdir(agentUrl, containerId, target);
       return { ok: true };
     },
   );
@@ -292,12 +298,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "cannot_rename_root", "não é possível renomear a raiz");
       }
-      await agent.renameFile(containerId, target, req.body.newName);
+      await agent.renameFile(agentUrl, containerId, target, req.body.newName);
       return { ok: true };
     },
   );
@@ -324,12 +331,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.body.path);
       if (target === root) {
         throw new ApiHttpError(400, "cannot_chmod_root", "não é possível alterar a raiz");
       }
-      await agent.chmodFile(containerId, target, req.body.mode);
+      await agent.chmodFile(agentUrl, containerId, target, req.body.mode);
       return { ok: true };
     },
   );
@@ -356,12 +364,13 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
         throw new ApiHttpError(400, "is_directory", "o caminho é um diretório");
       }
-      const result = await agent.downloadFile(containerId, target);
+      const result = await agent.downloadFile(agentUrl, containerId, target);
       const bytes = Buffer.from(result.base64, "base64");
       const filename = sanitizeFilename(result.name);
       reply
@@ -396,6 +405,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       const target = resolveWithinRoot(root, req.query.path);
       if (target === root) {
@@ -405,7 +415,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
           "não é possível excluir a raiz do ambiente",
         );
       }
-      await agent.removeFile(containerId, target);
+      await agent.removeFile(agentUrl, containerId, target);
       return reply.status(204).send(null);
     },
   );

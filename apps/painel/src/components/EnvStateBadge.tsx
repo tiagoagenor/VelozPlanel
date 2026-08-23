@@ -20,7 +20,7 @@ interface StateMeta {
 
 /** Estado sempre com cor + ícone (Lucide SVG) + texto (nunca só cor). */
 const STATE_META: Record<EnvState, StateMeta> = {
-  running: { tone: "success", icon: CheckCircle2, label: "Ativo" },
+  running: { tone: "success", icon: CheckCircle2, label: "Rodando" },
   paused: { tone: "warning", icon: PauseCircle, label: "Pausado" },
   provisioning: { tone: "brand", icon: Loader2, label: "Provisionando", spin: true },
   error: { tone: "danger", icon: AlertTriangle, label: "Erro" },

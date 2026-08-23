@@ -15,12 +15,14 @@ import {
   Loader2,
   ShieldCheck,
   Network,
+  Download,
+  Sparkles,
 } from "lucide-react";
 import type {
   SshConfig,
-  SshAuthMode,
   SshAccessScope,
   UpdateSshConfigInput,
+  GeneratedSshKey,
 } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -146,6 +148,53 @@ export default function EnvSshPage() {
       ),
   });
 
+  // Geração de chave NO SERVIDOR — a privada volta uma única vez.
+  const [genLabel, setGenLabel] = React.useState("");
+  const [generated, setGenerated] = React.useState<GeneratedSshKey | null>(null);
+  const [genError, setGenError] = React.useState<string | null>(null);
+  const [privCopied, setPrivCopied] = React.useState(false);
+  const generate = useMutation({
+    mutationFn: (label: string) => api.generateSshKey(id, { label }),
+    onSuccess: (res) => {
+      setGenerated(res); // mostra a privada UMA vez (não fica no servidor)
+      setGenError(null);
+      setGenLabel("");
+      qc.invalidateQueries({ queryKey: ["ssh", id] });
+    },
+    onError: (err) =>
+      setGenError(err instanceof Error ? err.message : "Não foi possível gerar a chave."),
+  });
+
+  // Nome do arquivo da chave privada: identificável e vinculado ao ambiente,
+  // ex.: "vp-env_a5c1fecc-meu-notebook" (não só o rótulo cru).
+  function keyFileName(): string {
+    const user = ssh?.username ?? "velozplanel";
+    const label = generated?.key.label ?? "";
+    const raw = label ? `vp-${user}-${label}` : `vp-${user}-id_ed25519`;
+    return (
+      raw
+        .replace(/[^A-Za-z0-9_.-]/g, "_")
+        .replace(/_+/g, "_")
+        .replace(/^[_-]+|[_-]+$/g, "") || "id_ed25519"
+    );
+  }
+
+  function downloadPrivateKey() {
+    if (!generated) return;
+    const safe = keyFileName();
+    const blob = new Blob([generated.privateKey.endsWith("\n") ? generated.privateKey : generated.privateKey + "\n"], {
+      type: "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = safe;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   // Estado local do formulário de chave e do campo de IP.
   const [keyLabel, setKeyLabel] = React.useState("");
   const [keyValue, setKeyValue] = React.useState("");
@@ -157,7 +206,7 @@ export default function EnvSshPage() {
   function patch(cfg: SshConfig, partial: Partial<UpdateSshConfigInput>) {
     save.mutate({
       enabled: cfg.enabled,
-      authMode: cfg.authMode,
+      authMode: "key",
       accessScope: cfg.accessScope,
       allowlist: cfg.allowlist,
       ...partial,
@@ -197,8 +246,6 @@ export default function EnvSshPage() {
   }
 
   const sshCmd = `ssh -p ${ssh.port} ${ssh.username}@${ssh.host}`;
-  const sftpCmd = `sftp -P ${ssh.port} ${ssh.username}@${ssh.host}`;
-  const keyRequired = ssh.authMode === "key" || ssh.authMode === "both";
 
   function addIp() {
     const v = ipDraft.trim();
@@ -264,7 +311,6 @@ export default function EnvSshPage() {
           </div>
           <div className="grid grid-cols-1 gap-4">
             <CopyField label="Conectar via SSH" value={sshCmd} mono />
-            <CopyField label="Transferir arquivos (SFTP)" value={sftpCmd} mono />
           </div>
         </div>
       </Card>
@@ -275,7 +321,7 @@ export default function EnvSshPage() {
           <div className="flex flex-col gap-1">
             <span className="font-semibold text-text">Ativar acesso SSH</span>
             <span className="max-w-md text-sm text-text2">
-              Guarda a intenção de liberar acesso por SSH/SFTP a este ambiente.
+              Libera o acesso por SSH (terminal) a este ambiente. O SSH é só por chave.
             </span>
           </div>
           <button
@@ -299,43 +345,6 @@ export default function EnvSshPage() {
               aria-hidden="true"
             />
           </button>
-        </div>
-      </Card>
-
-      {/* Modo de autenticação */}
-      <Card>
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <span
-              id="ssh-auth-label"
-              className="vp-accent-bar text-base font-semibold text-text"
-            >
-              Modo de autenticação
-            </span>
-            <span className="text-sm text-text2">
-              Recomendado: <strong>Chave</strong> — mais seguro que senha.
-            </span>
-          </div>
-          <SegmentedControl<SshAuthMode>
-            label="Modo de autenticação"
-            labelledBy="ssh-auth-label"
-            value={ssh.authMode}
-            onChange={(v) => patch(ssh, { authMode: v })}
-            options={[
-              { value: "key", label: "Chave" },
-              { value: "password", label: "Senha" },
-              { value: "both", label: "Ambos" },
-            ]}
-          />
-          {keyRequired && ssh.keys.length === 0 ? (
-            <p className="flex items-start gap-2 text-sm text-warning">
-              <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
-              <span>
-                Este modo exige chave — adicione uma chave pública abaixo para
-                poder conectar.
-              </span>
-            </p>
-          ) : null}
         </div>
       </Card>
 
@@ -489,6 +498,114 @@ export default function EnvSshPage() {
               Nenhuma chave pública cadastrada ainda.
             </p>
           )}
+
+          {/* Reveal ÚNICO da chave privada recém-gerada */}
+          {generated ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-warning" />
+                <p className="text-sm text-text">
+                  Esta é a <strong>única vez</strong> que a chave privada aparece. Baixe ou
+                  copie agora e guarde em local seguro — o servidor <strong>não</strong> a
+                  armazena e não há como recuperá-la depois. Se perder, gere outra e apague esta.
+                </p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="gen-priv">Chave privada ({generated.key.label})</Label>
+                <textarea
+                  id="gen-priv"
+                  readOnly
+                  value={generated.privateKey}
+                  rows={8}
+                  spellCheck={false}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" onClick={downloadPrivateKey}>
+                  <Download size={16} aria-hidden="true" />
+                  Baixar chave privada
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(generated.privateKey);
+                      setPrivCopied(true);
+                      setTimeout(() => setPrivCopied(false), 1500);
+                    } catch {
+                      /* ignora */
+                    }
+                  }}
+                >
+                  {privCopied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+                  {privCopied ? "Copiada" : "Copiar"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    setGenerated(null);
+                    setPrivCopied(false);
+                  }}
+                >
+                  Já guardei — fechar
+                </Button>
+              </div>
+              <div className="flex flex-col gap-1.5 border-t border-border-subtle pt-3">
+                <span className="text-xs font-medium text-text3">Conectar com esta chave</span>
+                <code className="block overflow-x-auto rounded bg-surface px-3 py-2 font-mono text-xs text-text2">
+                  ssh -i {keyFileName()} -p {ssh.port} {ssh.username}@{ssh.host}
+                </code>
+                <span className="text-xs text-text3">
+                  No Linux/macOS, ajuste as permissões: <code>chmod 600 {keyFileName()}</code>
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Gerar chave NO SERVIDOR (o painel cria o par e entrega a privada) */}
+          <div className="flex flex-col gap-3 rounded-lg border border-border-subtle bg-bg/50 p-4">
+            <div className="flex items-start gap-2">
+              <Sparkles size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-brand-strong" />
+              <p className="text-sm text-text2">
+                Não tem uma chave? O painel gera um par <strong>ed25519</strong> para este
+                ambiente e te entrega a <strong>chave privada</strong> para baixar. Só a
+                pública fica no servidor.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex min-w-[200px] flex-1 flex-col gap-1.5">
+                <Label htmlFor="gen-label">Rótulo</Label>
+                <Input
+                  id="gen-label"
+                  value={genLabel}
+                  maxLength={60}
+                  placeholder="ex.: meu-notebook"
+                  onChange={(e) => setGenLabel(e.target.value)}
+                />
+              </div>
+              <Button
+                type="button"
+                disabled={generate.isPending || genLabel.trim().length < 1}
+                onClick={() => generate.mutate(genLabel.trim())}
+              >
+                {generate.isPending ? (
+                  <Loader2 size={16} aria-hidden="true" className="animate-spin" />
+                ) : (
+                  <Sparkles size={16} aria-hidden="true" />
+                )}
+                {generate.isPending ? "Gerando…" : "Gerar chave"}
+              </Button>
+            </div>
+            {genError ? (
+              <p role="alert" className="text-sm text-danger">
+                {genError}
+              </p>
+            ) : null}
+          </div>
 
           {/* Formulário de nova chave */}
           <form

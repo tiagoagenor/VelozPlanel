@@ -39,6 +39,9 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
         memMbTotal: n.memMbTotal,
         envCount: countByNode.get(n.id) ?? 0,
         publicHost: n.publicHost,
+        httpHost: n.httpHost,
+        alertMessage: n.alertMessage,
+        agentUrl: n.agentUrl,
         lastSeenAt: n.lastSeenAt ? n.lastSeenAt.toISOString() : null,
       }));
     },
@@ -56,9 +59,14 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (req): Promise<Node> => {
       await requireAdmin(req);
+      const patch: Partial<{ publicHost: string | null; httpHost: string | null; alertMessage: string | null; agentUrl: string | null }> = {};
+      if (req.body.publicHost !== undefined) patch.publicHost = req.body.publicHost;
+      if (req.body.httpHost !== undefined) patch.httpHost = req.body.httpHost;
+      if (req.body.alertMessage !== undefined) patch.alertMessage = req.body.alertMessage;
+      if (req.body.agentUrl !== undefined) patch.agentUrl = req.body.agentUrl;
       const updated = await db
         .update(nodes)
-        .set({ publicHost: req.body.publicHost })
+        .set(patch)
         .where(eq(nodes.id, req.params.id))
         .returning();
       const n = updated[0];
@@ -76,6 +84,9 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
         memMbTotal: n.memMbTotal,
         envCount: c?.c ?? 0,
         publicHost: n.publicHost,
+        httpHost: n.httpHost,
+        alertMessage: n.alertMessage,
+        agentUrl: n.agentUrl,
         lastSeenAt: n.lastSeenAt ? n.lastSeenAt.toISOString() : null,
       };
     },

@@ -17,7 +17,7 @@ const VARIANTS: Record<Variant, string> = {
   primary: "bg-brand text-on-solid hover:bg-brand-hover",
   danger: "bg-danger text-on-solid hover:brightness-90",
   outline:
-    "bg-surface text-text border border-border hover:bg-bg hover:border-brand-strong",
+    "bg-transparent text-text2 border border-border hover:border-brand-strong hover:text-brand-strong hover:bg-brand-soft/50",
   ghost: "bg-transparent text-link hover:bg-brand-soft",
 };
 
@@ -39,7 +39,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type={type ?? "button"}
         className={cn(
-          "inline-flex items-center justify-center gap-2 rounded-lg font-semibold",
+          "inline-flex items-center justify-center gap-2 rounded-[10px] font-medium",
           "transition-[background-color,filter,border-color] duration-150",
           "disabled:opacity-50 disabled:cursor-not-allowed select-none",
           VARIANTS[variant],

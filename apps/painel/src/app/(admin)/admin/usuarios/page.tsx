@@ -222,12 +222,14 @@ function AddCreditDialog({ user, onClose }: { user: AdminUser | null; onClose: (
   const qc = useQueryClient();
   const toast = useToast();
   const [amount, setAmount] = React.useState(""); // em R$ (aceita negativo)
+  const [kind, setKind] = React.useState<"money" | "bonus">("money");
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (user) {
       setAmount("");
+      setKind("money");
       setReason("");
       setError(null);
     }
@@ -237,6 +239,7 @@ function AddCreditDialog({ user, onClose }: { user: AdminUser | null; onClose: (
     mutationFn: (amountCents: number) =>
       api.addCredit(user!.id, {
         amountCents,
+        kind,
         reason: reason.trim() === "" ? null : reason.trim(),
       }),
     onSuccess: () => {
@@ -258,6 +261,7 @@ function AddCreditDialog({ user, onClose }: { user: AdminUser | null; onClose: (
     }
     const parsed = addCreditInput.safeParse({
       amountCents,
+      kind,
       reason: reason.trim() === "" ? null : reason.trim(),
     });
     if (!parsed.success) {
@@ -270,14 +274,35 @@ function AddCreditDialog({ user, onClose }: { user: AdminUser | null; onClose: (
   if (!user) return null;
 
   const cents = parseReaisToCents(amount);
+  const isDebit = cents != null && cents < 0;
+  const label = kind === "bonus" ? "Bônus" : "Dinheiro";
   const preview =
     cents != null && cents !== 0
-      ? `${cents < 0 ? "Estorno/débito" : "Crédito"} de ${formatSignedCents(cents)}. Saldo atual: ${formatCents(user.balanceCents)}.`
-      : `Saldo atual: ${formatCents(user.balanceCents)}.`;
+      ? `${cents < 0 ? "Estorno/débito" : `${label} de`} ${formatSignedCents(cents)}. Saldo atual: ${formatCents(user.balanceCents)}${user.bonusCents ? ` (bônus: ${formatCents(user.bonusCents)})` : ""}.`
+      : `Saldo atual: ${formatCents(user.balanceCents)}${user.bonusCents ? ` (bônus: ${formatCents(user.bonusCents)})` : ""}.`;
 
   return (
     <Dialog open={user !== null} onClose={onClose} title="Adicionar saldo" description={`${user.name} · ${user.email}`}>
       <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label>Tipo</Label>
+          <div role="radiogroup" aria-label="Tipo de lançamento" className="inline-flex w-fit rounded-lg border border-border bg-bg p-0.5">
+            {([["money", "Dinheiro"], ["bonus", "Bônus"]] as const).map(([k, lbl]) => (
+              <button
+                key={k}
+                type="button"
+                role="radio"
+                aria-checked={kind === k}
+                disabled={isDebit}
+                onClick={() => setKind(k)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 ${kind === k ? "bg-surface text-text shadow-sm" : "text-text3 hover:text-text"}`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-text3">{isDebit ? "Em débito/estorno o tipo é ignorado." : "Bônus e dinheiro somam no saldo; o cliente vê os dois separados."}</p>
+        </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="ac-amount">Valor (R$)</Label>
           <Input id="ac-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="30,50" autoComplete="off" />

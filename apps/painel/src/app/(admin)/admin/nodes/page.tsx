@@ -128,7 +128,7 @@ export default function AdminNodesPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => setEditing(node)}
-                        aria-label={`Editar host público de ${node.name}`}
+                        aria-label={`Editar endereços de ${node.name}`}
                       >
                         <Pencil size={15} aria-hidden="true" />
                         Editar
@@ -191,10 +191,10 @@ function NodeCard({ node, onEdit }: { node: Node; onEdit: () => void }) {
           size="sm"
           onClick={onEdit}
           className="w-full"
-          aria-label={`Editar host público de ${node.name}`}
+          aria-label={`Editar endereços de ${node.name}`}
         >
           <Pencil size={15} aria-hidden="true" />
-          Editar host público
+          Editar endereços
         </Button>
       </div>
     </div>
@@ -220,28 +220,32 @@ function EditPublicHostDialog({
   const qc = useQueryClient();
   const toast = useToast();
   const [value, setValue] = React.useState("");
+  const [httpValue, setHttpValue] = React.useState("");
+  const [alertValue, setAlertValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
   // Pré-preenche com o valor atual sempre que abrir para um nó.
   React.useEffect(() => {
     if (node) {
       setValue(node.publicHost ?? "");
+      setHttpValue(node.httpHost ?? "");
+      setAlertValue(node.alertMessage ?? "");
       setError(null);
     }
   }, [node]);
 
   const mutation = useMutation({
-    mutationFn: (publicHost: string | null) =>
-      api.updateNode(node!.id, publicHost),
+    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null }) =>
+      api.updateNode(node!.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
-      toast.show("success", "Host público atualizado.");
+      toast.show("success", "Nó atualizado.");
       onClose();
     },
     onError: (err) => {
       toast.show(
         "error",
-        err instanceof Error ? err.message : "Falha ao atualizar host público.",
+        err instanceof Error ? err.message : "Falha ao atualizar o nó.",
       );
     },
   });
@@ -249,9 +253,15 @@ function EditPublicHostDialog({
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const trimmed = value.trim();
-    const publicHost = trimmed === "" ? null : trimmed;
-    const parsed = updateNodeInput.safeParse({ publicHost });
+    const pub = value.trim();
+    const http = httpValue.trim();
+    const alert = alertValue.trim();
+    const patch = {
+      publicHost: pub === "" ? null : pub,
+      httpHost: http === "" ? null : http,
+      alertMessage: alert === "" ? null : alert,
+    };
+    const parsed = updateNodeInput.safeParse(patch);
     if (!parsed.success) {
       setError(
         parsed.error.issues[0]?.message ??
@@ -259,7 +269,11 @@ function EditPublicHostDialog({
       );
       return;
     }
-    mutation.mutate(parsed.data.publicHost);
+    mutation.mutate({
+      publicHost: parsed.data.publicHost ?? null,
+      httpHost: parsed.data.httpHost ?? null,
+      alertMessage: parsed.data.alertMessage ?? null,
+    });
   }
 
   if (!node) return null;
@@ -268,24 +282,60 @@ function EditPublicHostDialog({
     <Dialog
       open={node !== null}
       onClose={onClose}
-      title={`Host público — ${node.name}`}
+      title={`Endereços — ${node.name}`}
       description={PUBLIC_HOST_HELP}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="node-public-host">Host público</Label>
+          <Label htmlFor="node-public-host">Host público (SSH/SFTP, DNS)</Label>
           <Input
             id="node-public-host"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder="200.9.22.2 ou node1.velozplanel.com"
+            placeholder="200.9.22.2 ou node1.jamees.com"
             aria-describedby="node-public-host-help"
             autoComplete="off"
             spellCheck={false}
             className="font-mono"
           />
           <p id="node-public-host-help" className="text-xs text-text3">
-            IP ou hostname. Deixe em branco para remover.
+            IP ou hostname para SSH/SFTP e registro A do DNS. Deixe em branco para remover.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="node-http-host">Host HTTP (Abrir site)</Label>
+          <Input
+            id="node-http-host"
+            value={httpValue}
+            onChange={(e) => setHttpValue(e.target.value)}
+            placeholder="192.168.2.111 (deixe em branco = usa o host público)"
+            aria-describedby="node-http-host-help"
+            autoComplete="off"
+            spellCheck={false}
+            className="font-mono"
+          />
+          <p id="node-http-host-help" className="text-xs text-text3">
+            Endereço onde as portas HTTP publicadas dos ambientes são alcançáveis
+            (botão &ldquo;Abrir site&rdquo;). Num nó local atrás de NAT, use o IP da
+            LAN. Em branco = usa o host público.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="node-alert">Aviso da máquina (mostrado na criação)</Label>
+          <textarea
+            id="node-alert"
+            value={alertValue}
+            onChange={(e) => setAlertValue(e.target.value)}
+            rows={3}
+            maxLength={500}
+            placeholder="Ex.: Servidor local instável — use só para testes."
+            aria-describedby="node-alert-help"
+            className="w-full resize-y rounded-lg border border-border bg-bg p-3 text-sm text-text outline-none focus:border-brand-strong"
+          />
+          <p id="node-alert-help" className="text-xs text-text3">
+            Aparece como alerta quando o cliente escolhe esta região ao criar um ambiente. Em branco = sem aviso.
           </p>
         </div>
 

@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Nó de hospedagem VelozPlanel — roda SÓ o agente (driver Docker).
+#
+# O agente monta o docker.sock do host e cria containers-irmãos dos clientes.
+# A porta 4100 é publicada APENAS na interface WireGuard (AGENT_BIND_IP), nunca
+# na interface pública. A API (no hub) fala com este agente por 10.77.0.X:4100.
+#
+# Imagem transferida via `docker save velozplanel/agent:prod | ssh no docker load`
+# (há `build:` como fallback, contexto = raiz do monorepo).
+#
+# Subir (a partir deste diretório):
+#   AGENT_BIND_IP=10.77.0.2 docker compose -f docker-compose.node.yml up -d
+#     node-local  → AGENT_BIND_IP=10.77.0.2
+#     node-remoto → AGENT_BIND_IP=10.77.0.3
+# ─────────────────────────────────────────────────────────────────────────────
+name: velozplanel-node
+
+services:
+  agent:
+    image: velozplanel/agent:prod
+    build:
+      context: ../..
+      dockerfile: apps/agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      AGENT_PORT: "4100"
+      # Dir de vhosts gerenciados do Caddy (ingress por domínio). Ver setup-caddy-ingress.sh.
+      CADDY_SITES_DIR: /etc/caddy/managed
+    # Publica 4100 SÓ no IP WireGuard do nó (fora da interface pública).
+    ports:
+      - "${AGENT_BIND_IP:?defina AGENT_BIND_IP (ex.: 10.77.0.2 no nó local, 10.77.0.3 no remoto)}:4100:4100"
+    volumes:
+      # Acesso ao Docker do host para criar/gerir os containers dos clientes.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Ingress: o agente escreve vhosts do Caddy aqui; um systemd path unit no
+      # host recarrega o Caddy sozinho. Só serve em nós públicos com Caddy nativo
+      # (rode deploy/node/setup-caddy-ingress.sh uma vez no host). Em nós sem
+      # Caddy, o diretório fica ocioso.
+      - /etc/caddy/managed:/etc/caddy/managed
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s

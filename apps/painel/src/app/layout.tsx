@@ -11,8 +11,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "VelozPanel",
-  description: "Painel de ambientes do VelozPlanel",
+  title: "Jamees",
+  description: "Painel de ambientes do Jamees",
 };
 
 export default function RootLayout({

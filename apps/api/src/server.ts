@@ -42,9 +42,18 @@ import { filesRoutes } from "./routes/files";
 import { databasesRoutes } from "./routes/databases";
 import { sslRoutes } from "./routes/ssl";
 import { sshRoutes } from "./routes/ssh";
+import { sftpRoutes } from "./routes/sftp";
+import { deployRoutes } from "./routes/deploy";
+import { envVarsRoutes } from "./routes/env-vars";
 import { adminRoutes } from "./routes/admin";
 import { plansRoutes } from "./routes/plans";
+import { internalRoutes } from "./routes/internal";
+import { dnsRoutes } from "./routes/dns";
+import { domainsRoutes } from "./routes/domains";
 import { startMetricsCollector } from "./metrics-collector";
+import { startBillingScheduler } from "./billing";
+import { startProvisionWorker } from "./worker";
+import { startDnsVerifier } from "./dns-verifier";
 
 const PORT = Number(process.env.PORT ?? 4000);
 // Origens do painel autorizadas no CORS. Configurável por env `VP_PANEL_ORIGINS`
@@ -67,6 +76,25 @@ async function main(): Promise<void> {
       transport: {
         target: "pino-pretty",
         options: { translateTime: "HH:MM:ss", ignore: "pid,hostname" },
+      },
+      // Rede de segurança: se algum log um dia incluir corpo/resposta, nunca
+      // vaza material de chave privada (ex.: resposta da geração de chave SSH).
+      redact: {
+        paths: [
+          "privateKey",
+          "*.privateKey",
+          "req.body.privateKey",
+          "res.privateKey",
+          "private",
+          "*.private",
+          "password",
+          "*.password",
+          "req.body.password",
+          "vars",
+          "*.value",
+          "req.body.vars",
+        ],
+        censor: "[redacted]",
       },
     },
   });
@@ -117,17 +145,29 @@ async function main(): Promise<void> {
       await v1.register(databasesRoutes);
       await v1.register(sslRoutes);
       await v1.register(sshRoutes);
+      await v1.register(sftpRoutes);
+      await v1.register(deployRoutes);
+      await v1.register(envVarsRoutes);
       await v1.register(adminRoutes);
       await v1.register(plansRoutes);
+      await v1.register(internalRoutes);
+      await v1.register(dnsRoutes);
+      await v1.register(domainsRoutes);
     },
     { prefix: "/api/v1" },
   );
 
   const stopCollector = startMetricsCollector(app.log);
+  const stopBilling = startBillingScheduler(app.log);
+  const stopWorker = startProvisionWorker(app.log);
+  const stopDnsVerifier = startDnsVerifier(app.log);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`recebido ${signal}, encerrando…`);
     stopCollector();
+    stopBilling();
+    stopWorker();
+    stopDnsVerifier();
     await app.close();
     process.exit(0);
   };

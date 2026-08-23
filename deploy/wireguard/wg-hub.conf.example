@@ -1,0 +1,25 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# WireGuard — HUB (servidor 187, plano de controle). Interface 10.77.0.1/24.
+#
+# Instale em /etc/wireguard/wg0.conf, preencha as chaves e suba com `wg-quick`.
+# Gere as chaves conforme deploy/wireguard/README.md. Este arquivo é um TEMPLATE
+# (sem chaves reais) — nunca versione o wg0.conf preenchido.
+# ─────────────────────────────────────────────────────────────────────────────
+[Interface]
+Address = 10.77.0.1/24
+ListenPort = 51820
+PrivateKey = COLE_A_PRIVATE_KEY_DO_HUB
+# Se for rotear o tráfego entre os nós pelo hub, habilite o forwarding no host:
+#   sysctl -w net.ipv4.ip_forward=1
+
+# ── Peer: node-local (10.77.0.2) ─────────────────────────────────────────────
+[Peer]
+PublicKey = COLE_A_PUBLIC_KEY_DO_NODE_LOCAL
+AllowedIPs = 10.77.0.2/32
+PersistentKeepalive = 25
+
+# ── Peer: node-remoto (10.77.0.3) ────────────────────────────────────────────
+[Peer]
+PublicKey = COLE_A_PUBLIC_KEY_DO_NODE_REMOTO
+AllowedIPs = 10.77.0.3/32
+PersistentKeepalive = 25

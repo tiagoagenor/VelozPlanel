@@ -1,0 +1,197 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Plano de controle VelozPlanel — servidor público (1 vCPU / 3.8 GB, Ubuntu 24.04).
+#
+#   Serviços: postgres (banco de controle) · mariadb (bancos dos clientes) ·
+#             api (Fastify) · painel (Next standalone) · caddy (proxy 80/443).
+#
+# As imagens api/painel são referenciadas por `image:` (buildadas num nó de
+# 6 vCPU e transferidas via `docker save | ssh … docker load`) e também têm
+# `build:` como fallback. Rode a partir DESTE diretório:
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+# ─────────────────────────────────────────────────────────────────────────────
+name: velozplanel-control
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-veloz}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-velozpanel}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-veloz} -d ${POSTGRES_DB:-velozpanel}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - vpnet
+
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    # RAM apertada no host: buffer pool pequeno (~256M).
+    command: ["--innodb-buffer-pool-size=256M"]
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?defina MARIADB_ROOT_PASSWORD no .env}
+    # Publicado SÓ na interface WireGuard (hub 10.77.0.1): os apps dos clientes,
+    # nos nós, conectam em 10.77.0.1:3306. Nunca exponha na interface pública.
+    ports:
+      - "${HUB_WG_IP:-10.77.0.1}:3306:3306"
+    volumes:
+      - mariadata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - vpnet
+
+  # ── DNS autoritativo (PowerDNS) — servidor de nomes do painel ──────────────
+  # Primário. Backend gpgsql no Postgres do control-plane (database `pdns`,
+  # criado pelo db:push quando PDNS_DB_PASSWORD está definido). A API do painel
+  # gerencia via HTTP API (porta 8081, SÓ na rede compose — nunca publicada).
+  #
+  # ATENÇÃO — a imagem powerdns/pdns-auth-49 IGNORA variáveis PDNS_* (só lê
+  # PDNS_AUTH_API_KEY). A configuração vem de um `pdns.conf` MONTADO. Gere-o a
+  # partir do template + do .env antes de subir:
+  #   ./gen-pdns-conf.sh   (ou copie pdns.conf.example -> pdns.conf e preencha)
+  #
+  # Público: apenas 53/udp+tcp. Como o systemd-resolved costuma ocupar
+  # 127.0.0.53:53, publicamos 53 SÓ nos IPs público e WireGuard (nunca 0.0.0.0),
+  # via ${DNS_BIND_PUBLIC} e ${HUB_WG_IP}. Movível: leva o database `pdns`.
+  pdns:
+    image: powerdns/pdns-auth-49:latest
+    restart: unless-stopped
+    command: ["--config-dir=/etc/powerdns"]
+    ports:
+      - "${DNS_BIND_PUBLIC:?defina DNS_BIND_PUBLIC (IP público do servidor DNS)}:53:53/udp"
+      - "${DNS_BIND_PUBLIC}:53:53/tcp"
+      - "${HUB_WG_IP:-10.100.0.1}:53:53/udp"
+      - "${HUB_WG_IP:-10.100.0.1}:53:53/tcp"
+    volumes:
+      - ./pdns.conf:/etc/powerdns/pdns.conf:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vpnet
+
+  api:
+    image: velozplanel/api:prod
+    build:
+      # Contexto = raiz do monorepo (dois níveis acima deste arquivo).
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "4000"
+      DATABASE_URL: postgres://${POSTGRES_USER:-veloz}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-velozpanel}
+      VP_JWT_SECRET: ${VP_JWT_SECRET:?defina VP_JWT_SECRET no .env}
+      VP_COOKIE_SECURE: ${VP_COOKIE_SECURE:-1}
+      VP_PANEL_ORIGINS: ${VP_PANEL_ORIGINS:-https://localhost}
+      # A API fala com UM agente (env único hoje). Aponte para o nó local via WG.
+      AGENT_URL: ${AGENT_URL:-http://10.77.0.2:4100}
+      # MariaDB dos clientes: alcançado por nome de serviço dentro da rede compose.
+      VP_MARIADB_HOST: mariadb
+      VP_MARIADB_PORT: "3306"
+      VP_MARIADB_USER: root
+      VP_MARIADB_PASSWORD: ${MARIADB_ROOT_PASSWORD:?defina MARIADB_ROOT_PASSWORD no .env}
+      # Host que a API devolve ao cliente para conectar ao banco (IP do hub WG).
+      VP_DB_PUBLIC_HOST: ${HUB_WG_IP:-10.77.0.1}
+      VP_SSH_HOST: ${VP_SSH_HOST:-${HUB_WG_IP:-10.77.0.1}}
+      # Seed do admin inicial (lido pelo push-and-seed / boot — ver .env.example).
+      VP_SEED_ADMIN_EMAIL: ${VP_SEED_ADMIN_EMAIL:?defina VP_SEED_ADMIN_EMAIL no .env}
+      VP_SEED_ADMIN_PASSWORD: ${VP_SEED_ADMIN_PASSWORD:?defina VP_SEED_ADMIN_PASSWORD no .env}
+      # ── DNS: a API gerencia o pdns pela HTTP API (rede compose) e o db:push
+      #    faz o bootstrap do database `pdns` (só quando PDNS_DB_PASSWORD existe).
+      PDNS_API_URL: http://pdns:8081
+      PDNS_API_KEY: ${PDNS_API_KEY:-}
+      PDNS_DB_NAME: ${PDNS_DB_NAME:-pdns}
+      PDNS_DB_USER: ${PDNS_DB_USER:-pdns}
+      PDNS_DB_PASSWORD: ${PDNS_DB_PASSWORD:-}
+      # Nameservers deste servidor (delegação/glue e card do painel).
+      DNS_NS1_HOST: ${DNS_NS1_HOST:-ns1.geestao.top}
+      DNS_NS1_IP: ${DNS_NS1_IP:-187.127.49.205}
+      DNS_NS2_HOST: ${DNS_NS2_HOST:-ns2.geestao.top}
+      DNS_NS2_IP: ${DNS_NS2_IP:-184.107.115.183}
+      # ns3/ns4 opcionais (ex.: apontar todos para a mesma máquina agora).
+      DNS_NS3_HOST: ${DNS_NS3_HOST:-}
+      DNS_NS3_IP: ${DNS_NS3_IP:-}
+      DNS_NS4_HOST: ${DNS_NS4_HOST:-}
+      DNS_NS4_IP: ${DNS_NS4_IP:-}
+      # Registros que apontam para a infra do painel (protegidos na edição).
+      PANEL_PROTECTED_TARGETS: ${PANEL_PROTECTED_TARGETS:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      # Sem endpoint /health dedicado: checa que a porta 4000 aceita conexão TCP.
+      test: ["CMD", "node", "-e", "require('net').connect(4000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - vpnet
+
+  painel:
+    image: velozplanel/painel:prod
+    build:
+      context: ../..
+      dockerfile: apps/painel/Dockerfile
+      args:
+        # Mesma origem, relativo — o Caddy faz o proxy de /api/*.
+        NEXT_PUBLIC_API_URL: /api/v1
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - vpnet
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Endereço do site. Default `:443` (self-signed via `tls internal`).
+      # Para domínio real: SITE_ADDRESS=meudominio.com (Let's Encrypt automático).
+      SITE_ADDRESS: ${SITE_ADDRESS:-:443}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_started
+      painel:
+        condition: service_started
+    networks:
+      - vpnet
+
+networks:
+  vpnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  mariadata:
+  caddy_data:
+  caddy_config:

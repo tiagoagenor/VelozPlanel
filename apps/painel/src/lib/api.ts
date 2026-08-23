@@ -9,13 +9,34 @@ import type {
   FileList,
   LoginInput,
   MetricSeries,
+  DiskUsage,
   Node,
   SessionUser,
   SslStatus,
   SshConfig,
   SshKey,
   AddSshKeyInput,
+  GenerateSshKeyInput,
+  GeneratedSshKey,
   UpdateSshConfigInput,
+  SftpConfig,
+  SetSftpEnabledInput,
+  GeneratedSftpPassword,
+  DeployConfig,
+  SetDeployConnectionInput,
+  DeployProbeInput,
+  DeployProbeResult,
+  GeneratedDeployKey,
+  ImportDeployKeyInput,
+  SetDeployHttpCredentialsInput,
+  SetDeployStepsInput,
+  SetDeployAutoInput,
+  DeployRun,
+  DeployBranchesResult,
+  SetDeployBranchInput,
+  SetDeployHistoryInput,
+  EnvVarsConfig,
+  SetEnvVarsInput,
   AdminOverview,
   AdminUser,
   CreateUserInput,
@@ -28,20 +49,55 @@ import type {
   Plan,
   CreatePlanInput,
   UpdatePlanInput,
+  EnvType,
+  CreateEnvTypeInput,
+  UpdateEnvTypeInput,
+  RegionOption,
+  ReservedSubdomain,
+  CreateReservedSubdomainInput,
   CreditTransaction,
   AddCreditInput,
   Balance,
   ModuleInfo,
+  BillingSettings,
+  BillingRunHour,
+  ContainerLogs,
+  UpdateBillingSettingsInput,
+  DnsZone,
+  DnsRRset,
+  DnsServerInfo,
+  CreateZoneInput,
+  CreateZoneResult,
+  UpsertRRsetInput,
+  DeleteRRsetInput,
+  VerifyResult,
+  DiscoverResult,
+  DnsZoneEffective,
+  DnsPoint,
+  PointInput,
+  PointResult,
 } from "@velozplanel/contracts";
 
 /**
  * Base da API do núcleo (ver NUCLEO-SPEC.md).
- * Configurável por env para acesso pela rede — ex.:
- *   NEXT_PUBLIC_API_URL=http://192.168.2.105:4000/api/v1
- * Default de dev: http://localhost:4000/api/v1
+ *
+ * Prioridade:
+ *  1) `NEXT_PUBLIC_API_URL` explícito (produção atrás de proxy, domínio próprio).
+ *  2) Mesma origem do navegador na porta 4000 — funciona igual acessando por
+ *     `localhost:3000` OU por `192.168.2.105:3000` na LAN, sem quebrar o cookie
+ *     de sessão (que é preso ao host). É o que resolve o laço de "volta pro login".
+ *  3) Fallback de SSR (sem `window`): localhost.
  */
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
+function resolveApiBase(): string {
+  const explicit = process.env.NEXT_PUBLIC_API_URL;
+  if (explicit) return explicit;
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:4000/api/v1`;
+  }
+  return "http://localhost:4000/api/v1";
+}
+
+export const API_BASE = resolveApiBase();
 
 /** Erro de API tipado, carrega o status HTTP para tratamento (ex.: 401). */
 export class ApiError extends Error {
@@ -140,11 +196,11 @@ export function listNodes(): Promise<Node[]> {
  */
 export function updateNode(
   id: string,
-  publicHost: string | null,
+  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null },
 ): Promise<Node> {
   return request<Node>(`/nodes/${id}`, {
     method: "PATCH",
-    body: { publicHost },
+    body: patch,
   });
 }
 
@@ -152,6 +208,16 @@ export function updateNode(
 
 export function listEnvironments(): Promise<Environment[]> {
   return request<Environment[]>("/environments");
+}
+
+/** Tipos de ambiente ativos (para o wizard de criação), com preço por tipo. */
+export function listServiceTypes(): Promise<EnvType[]> {
+  return request<EnvType[]>("/env-types");
+}
+
+/** Regiões disponíveis para criar ambiente (com aviso opcional da máquina). */
+export function listRegions(): Promise<RegionOption[]> {
+  return request<RegionOption[]>("/regions");
 }
 
 export function getEnvironment(id: string): Promise<Environment> {
@@ -172,8 +238,14 @@ export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
 }
 
-export function deleteEnvironment(id: string): Promise<void> {
-  return request<void>(`/environments/${id}`, { method: "DELETE" });
+/** Enfileira a remoção; o ambiente entra em "deleting" e some quando o worker termina. */
+export function deleteEnvironment(id: string): Promise<Environment> {
+  return request<Environment>(`/environments/${id}`, { method: "DELETE" });
+}
+
+/** Re-enfileira a última operação (provisionar/remover) de um ambiente com falha. */
+export function retryEnvironment(id: string): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/retry`, { method: "POST" });
 }
 
 /** Define (ou remove, com null) o domínio próprio do ambiente. */
@@ -185,6 +257,63 @@ export function setDomain(
     method: "POST",
     body: { domain },
   });
+}
+
+/** Personaliza o subdomínio temporário jamees.top do ambiente. */
+export function updateSubdomain(id: string, subdomain: string): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/subdomain`, {
+    method: "PATCH",
+    body: { subdomain },
+  });
+}
+
+/* ── Subdomínios reservados (super admin) ── */
+export function listReservedSubdomains(): Promise<ReservedSubdomain[]> {
+  return request<ReservedSubdomain[]>("/admin/reserved-subdomains");
+}
+export function createReservedSubdomain(input: CreateReservedSubdomainInput): Promise<ReservedSubdomain> {
+  return request<ReservedSubdomain>("/admin/reserved-subdomains", { method: "POST", body: input });
+}
+export function deleteReservedSubdomain(name: string): Promise<void> {
+  return request<void>(`/admin/reserved-subdomains/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+/** Define/limpa os comandos de inicialização (rodam 1x na criação do container). */
+export function setStartupScript(
+  id: string,
+  startupScript: string | null,
+): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/startup`, {
+    method: "POST",
+    body: { startupScript },
+  });
+}
+
+/** Define o arquivo que inicia o app Node (ex.: server.js) e reinicia o app. */
+export function setNodeStartFile(
+  id: string,
+  nodeStartFile: string | null,
+): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/node-start`, {
+    method: "POST",
+    body: { nodeStartFile },
+  });
+}
+
+/** Troca a versão de Node (via nvm) de um ambiente PHP; aplica ao vivo. */
+export function setPhpNodeVersion(
+  id: string,
+  phpNodeVersion: string,
+): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/node-version`, {
+    method: "POST",
+    body: { phpNodeVersion },
+  });
+}
+
+/** Lê a versão de Node atual no container (reflete troca feita no terminal). */
+export function getPhpNodeCurrent(id: string): Promise<{ current: string | null }> {
+  return request<{ current: string | null }>(`/environments/${id}/node-version`);
 }
 
 /** Troca a versão/linguagem do runtime — recria o container. */
@@ -249,11 +378,111 @@ export function addSshKey(id: string, input: AddSshKeyInput): Promise<SshKey> {
   });
 }
 
+/** Gera um par ed25519 no servidor; devolve a chave PRIVADA UMA vez (baixe já). */
+export function generateSshKey(
+  id: string,
+  input: GenerateSshKeyInput,
+): Promise<GeneratedSshKey> {
+  return request<GeneratedSshKey>(`/environments/${id}/ssh/keys/generate`, {
+    method: "POST",
+    body: input,
+  });
+}
+
 /** Remove uma chave pública autorizada do ambiente. */
 export function deleteSshKey(id: string, keyId: string): Promise<void> {
   return request<void>(`/environments/${id}/ssh/keys/${keyId}`, {
     method: "DELETE",
   });
+}
+
+/* ─────────────── SFTP (arquivos, só senha) ─────────────── */
+
+/** Lê a configuração de acesso SFTP do ambiente. */
+export function getSftp(id: string): Promise<SftpConfig> {
+  return request<SftpConfig>(`/environments/${id}/sftp`);
+}
+
+/** Liga/desliga o SFTP do ambiente. */
+export function setSftpEnabled(
+  id: string,
+  input: SetSftpEnabledInput,
+): Promise<SftpConfig> {
+  return request<SftpConfig>(`/environments/${id}/sftp`, {
+    method: "PUT",
+    body: input,
+  });
+}
+
+/** Gera/reseta a senha do SFTP (sempre aleatória); volta em texto UMA vez. */
+export function resetSftpPassword(id: string): Promise<GeneratedSftpPassword> {
+  return request<GeneratedSftpPassword>(`/environments/${id}/sftp/password`, {
+    method: "POST",
+  });
+}
+
+/* ─────────────── Deploy (Git) ─────────────── */
+export function getDeploy(id: string): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy`);
+}
+export function setDeployConnection(id: string, input: SetDeployConnectionInput): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/connection`, { method: "PUT", body: input });
+}
+export function deployProbe(id: string, input: DeployProbeInput): Promise<DeployProbeResult> {
+  return request<DeployProbeResult>(`/environments/${id}/deploy/probe`, { method: "POST", body: input });
+}
+export function generateDeployKey(id: string): Promise<GeneratedDeployKey> {
+  return request<GeneratedDeployKey>(`/environments/${id}/deploy/key/generate`, { method: "POST" });
+}
+export function testDeployKey(id: string): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>(`/environments/${id}/deploy/key/test`, { method: "POST" });
+}
+export function importDeployKey(id: string, input: ImportDeployKeyInput): Promise<GeneratedDeployKey> {
+  return request<GeneratedDeployKey>(`/environments/${id}/deploy/key/import`, { method: "POST", body: input });
+}
+export function setDeployHttpCredentials(id: string, input: SetDeployHttpCredentialsInput): Promise<{ ok: boolean; message: string }> {
+  return request<{ ok: boolean; message: string }>(`/environments/${id}/deploy/http-credentials`, { method: "PUT", body: input });
+}
+export function detectDeploySteps(id: string): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/steps/detect`, { method: "POST" });
+}
+export function setDeploySteps(id: string, input: SetDeployStepsInput): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/steps`, { method: "PUT", body: input });
+}
+export function setDeployAuto(id: string, input: SetDeployAutoInput): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/auto`, { method: "PUT", body: input });
+}
+export function runDeploy(id: string): Promise<DeployRun> {
+  return request<DeployRun>(`/environments/${id}/deploy/run`, { method: "POST" });
+}
+export function getDeployRuns(id: string): Promise<DeployRun[]> {
+  return request<DeployRun[]>(`/environments/${id}/deploy/runs`);
+}
+export function deleteDeploy(id: string): Promise<void> {
+  return request<void>(`/environments/${id}/deploy`, { method: "DELETE" });
+}
+export function getDeployBranches(id: string): Promise<DeployBranchesResult> {
+  return request<DeployBranchesResult>(`/environments/${id}/deploy/branches`);
+}
+export function setDeployBranch(id: string, input: SetDeployBranchInput): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/branch`, { method: "PUT", body: input });
+}
+export function setDeployHistory(id: string, input: SetDeployHistoryInput): Promise<DeployConfig> {
+  return request<DeployConfig>(`/environments/${id}/deploy/history`, { method: "PUT", body: input });
+}
+export function getDeployRunLog(id: string, runId: string): Promise<{ log: string | null; status: string }> {
+  return request<{ log: string | null; status: string }>(`/environments/${id}/deploy/runs/${runId}/log`);
+}
+
+/* ─────────────── Variáveis de ambiente ─────────────── */
+export function getEnvVars(id: string): Promise<EnvVarsConfig> {
+  return request<EnvVarsConfig>(`/environments/${id}/env-vars`);
+}
+export function setEnvVars(id: string, input: SetEnvVarsInput): Promise<EnvVarsConfig> {
+  return request<EnvVarsConfig>(`/environments/${id}/env-vars`, { method: "PUT", body: input });
+}
+export function revealEnvVars(id: string): Promise<{ vars: { key: string; value: string; buildTime: boolean }[] }> {
+  return request<{ vars: { key: string; value: string; buildTime: boolean }[] }>(`/environments/${id}/env-vars/reveal`, { method: "POST" });
 }
 
 /* ─────────────── Métricas ─────────────── */
@@ -265,6 +494,10 @@ export function getMetrics(
   return request<MetricSeries>(`/environments/${id}/metrics`, {
     query: { window },
   });
+}
+
+export function getDisk(id: string): Promise<DiskUsage> {
+  return request<DiskUsage>(`/environments/${id}/disk`);
 }
 
 /* ─────────────── Bancos de dados ─────────────── */
@@ -401,6 +634,16 @@ export async function downloadFile(id: string, path: string): Promise<Blob> {
   return res.blob();
 }
 
+/** Snapshot das últimas `tail` linhas de log do ambiente. */
+export function getEnvLogs(id: string, tail = 200): Promise<ContainerLogs> {
+  return request<ContainerLogs>(`/environments/${id}/logs?tail=${tail}`);
+}
+
+/** URL do stream ao vivo (SSE) — usada com EventSource (envia o cookie de sessão). */
+export function envLogsStreamUrl(id: string, tail = 200): string {
+  return `${API_BASE}/environments/${id}/logs/stream?tail=${tail}`;
+}
+
 /* ═══════════════ SUPER ADMIN ═══════════════ */
 
 /* ── Dashboard da operação ── */
@@ -515,10 +758,138 @@ export function deletePlan(id: string): Promise<void> {
   return request<void>(`/admin/plans/${id}`, { method: "DELETE" });
 }
 
+/* ── Tipos de ambiente / preço por tipo (admin) ── */
+
+export function listEnvTypes(): Promise<EnvType[]> {
+  return request<EnvType[]>("/admin/env-types");
+}
+
+export function createEnvType(input: CreateEnvTypeInput): Promise<EnvType> {
+  return request<EnvType>("/admin/env-types", { method: "POST", body: input });
+}
+
+export function updateEnvType(id: string, input: UpdateEnvTypeInput): Promise<EnvType> {
+  return request<EnvType>(`/admin/env-types/${id}`, { method: "PATCH", body: input });
+}
+
+export function deleteEnvType(id: string): Promise<void> {
+  return request<void>(`/admin/env-types/${id}`, { method: "DELETE" });
+}
+
 /* ── Módulos ── */
 
 export function listModules(): Promise<ModuleInfo[]> {
   return request<ModuleInfo[]>("/admin/modules");
+}
+
+/* ── DNS / Domínios (admin global) ── */
+
+export function dnsServerInfo(): Promise<DnsServerInfo> {
+  return request<DnsServerInfo>("/admin/dns/server-info");
+}
+
+export function listDnsZones(): Promise<DnsZone[]> {
+  return request<DnsZone[]>("/admin/dns/zones");
+}
+
+export function createDnsZone(input: CreateZoneInput): Promise<CreateZoneResult> {
+  return request<CreateZoneResult>("/admin/dns/zones", { method: "POST", body: input });
+}
+
+export function deleteDnsZone(zone: string): Promise<void> {
+  return request<void>(`/admin/dns/zones/${encodeURIComponent(zone)}`, { method: "DELETE" });
+}
+
+export function getDnsRRsets(zone: string): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/admin/dns/zones/${encodeURIComponent(zone)}/rrsets`);
+}
+
+export function putDnsRRset(zone: string, input: UpsertRRsetInput): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/admin/dns/zones/${encodeURIComponent(zone)}/rrset`, { method: "PUT", body: input });
+}
+
+export function deleteDnsRRset(zone: string, input: DeleteRRsetInput): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/admin/dns/zones/${encodeURIComponent(zone)}/rrset`, { method: "DELETE", body: input });
+}
+
+export function verifyDnsZone(zone: string): Promise<VerifyResult> {
+  return request<VerifyResult>(`/admin/dns/zones/${encodeURIComponent(zone)}/verify`, { method: "POST" });
+}
+
+export function discoverDnsZone(zone: string): Promise<DiscoverResult> {
+  return request<DiscoverResult>(`/admin/dns/zones/${encodeURIComponent(zone)}/discover`);
+}
+
+/* ── Faturamento / cobrança por hora (cron configurável) ── */
+
+/** Configuração e estado atual do cron de cobrança (visão admin). */
+export function getBilling(): Promise<BillingSettings> {
+  return request<BillingSettings>("/admin/billing");
+}
+
+/** Atualiza a configuração do cron de cobrança. */
+export function updateBilling(
+  input: UpdateBillingSettingsInput,
+): Promise<BillingSettings> {
+  return request<BillingSettings>("/admin/billing", {
+    method: "PATCH",
+    body: input,
+  });
+}
+
+/** Dispara a cobrança agora, fora do agendamento. */
+export function runBillingNow(): Promise<BillingSettings> {
+  return request<BillingSettings>("/admin/billing/run", { method: "POST" });
+}
+
+/** Histórico das execuções do cron, agrupado por hora (últimas ~72h). */
+export function listBillingRuns(): Promise<BillingRunHour[]> {
+  return request<BillingRunHour[]>("/admin/billing-runs");
+}
+
+/* ── Domínios (cliente) — cada usuário gerencia os próprios ── */
+
+export function domainServerInfo(): Promise<DnsServerInfo> {
+  return request<DnsServerInfo>("/domains/server-info");
+}
+export function listDomains(): Promise<DnsZone[]> {
+  return request<DnsZone[]>("/domains");
+}
+export function createDomain(input: CreateZoneInput): Promise<CreateZoneResult> {
+  return request<CreateZoneResult>("/domains", { method: "POST", body: input });
+}
+export function deleteDomain(zone: string): Promise<void> {
+  return request<void>(`/domains/${encodeURIComponent(zone)}`, { method: "DELETE" });
+}
+export function getDomainRRsets(zone: string): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/domains/${encodeURIComponent(zone)}/rrsets`);
+}
+export function putDomainRRset(zone: string, input: UpsertRRsetInput): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/domains/${encodeURIComponent(zone)}/rrset`, { method: "PUT", body: input });
+}
+export function deleteDomainRRset(zone: string, input: DeleteRRsetInput): Promise<DnsRRset[]> {
+  return request<DnsRRset[]>(`/domains/${encodeURIComponent(zone)}/rrset`, { method: "DELETE", body: input });
+}
+export function verifyDomain(zone: string): Promise<VerifyResult> {
+  return request<VerifyResult>(`/domains/${encodeURIComponent(zone)}/verify`, { method: "POST" });
+}
+export function discoverDomain(zone: string): Promise<DiscoverResult> {
+  return request<DiscoverResult>(`/domains/${encodeURIComponent(zone)}/discover`);
+}
+export function getDomainEffective(zone: string): Promise<DnsZoneEffective> {
+  return request<DnsZoneEffective>(`/domains/${encodeURIComponent(zone)}/effective`);
+}
+export function domainsForEnvironment(envId: string): Promise<DnsPoint[]> {
+  return request<DnsPoint[]>(`/domains/by-env/${encodeURIComponent(envId)}`);
+}
+export function pointDomain(zone: string, input: PointInput): Promise<PointResult> {
+  return request<PointResult>(`/domains/${encodeURIComponent(zone)}/point`, { method: "POST", body: input });
+}
+export function unpointDomain(zone: string, label: string): Promise<PointResult> {
+  return request<PointResult>(`/domains/${encodeURIComponent(zone)}/point`, { method: "DELETE", body: { label } });
+}
+export function exportDomain(zone: string): Promise<{ content: string }> {
+  return request<{ content: string }>(`/domains/${encodeURIComponent(zone)}/export`);
 }
 
 /* ═══════════════ CLIENTE ═══════════════ */

@@ -1,0 +1,33 @@
+# .dockerignore da RAIZ — aplica-se aos builds com contexto = raiz do monorepo
+# (é o caso das imagens api/painel/agent). Docker não lê .gitignore, então os
+# artefatos pesados precisam ser listados aqui explicitamente.
+
+# Dependências e caches (reinstalados dentro da imagem)
+**/node_modules
+.pnpm-store
+
+# Saídas de build (regeneradas no build)
+**/.next
+**/dist
+**/build
+**/out
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+
+# Segredos e envs (NUNCA entram na imagem)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.key
+**/*.pem
+**/secrets
+
+# Infra/deploy e docs não usados no build da app
+deploy
+infra
+Plan
+.git
+**/.DS_Store
+**/*.log
+README.md
