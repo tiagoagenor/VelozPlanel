@@ -43,6 +43,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as api from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { NavIcon, LinkPending } from "@/components/nav-pending";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
@@ -123,7 +124,15 @@ export default function EnvContextLayout({
       refresh();
       toast.show("success", "Ambiente iniciado.");
     },
-    onError: () => toast.show("error", "Não foi possível iniciar o ambiente."),
+    onError: (err) =>
+      toast.show(
+        "error",
+        err instanceof ApiError && err.code === "insufficient_balance"
+          ? err.message
+          : err instanceof ApiError && err.message
+            ? err.message
+            : "Não foi possível iniciar o ambiente.",
+      ),
   });
   const restart = useMutation({
     mutationFn: () => api.restartEnvironment(id),

@@ -435,12 +435,34 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     {
       schema: {
         params: idParams,
-        response: { 200: environmentSchema, 401: apiError, 403: apiError, 404: apiError, 502: apiError },
+        response: { 200: environmentSchema, 401: apiError, 402: apiError, 403: apiError, 404: apiError, 502: apiError },
       },
     },
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+
+      // Trava de saldo (mesma da criação): cliente sem saldo NÃO pode ligar o
+      // ambiente — senão burla a suspensão por inadimplência. Admin é isento;
+      // banco-filho de stack não é cobrado à parte (custo 0).
+      if (user.role !== "admin" && !env.parentEnvId) {
+        const plan = await getPlan(env.plan);
+        let adderMonthCents = 0;
+        if (env.typeId) {
+          const [t] = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
+          adderMonthCents = t?.priceMonthCents ?? 0;
+        }
+        const hourlyCents = plan ? Math.ceil((plan.priceMonthCents + adderMonthCents) / 720) : 0;
+        const bal = await balanceCents(user.id);
+        if (bal < hourlyCents) {
+          throw new ApiHttpError(
+            402,
+            "insufficient_balance",
+            `Saldo insuficiente: você tem ${brl(bal)} e este ambiente custa ${brl(hourlyCents)}/hora. Adicione saldo para iniciar.`,
+          );
+        }
+      }
+
       let httpPort = env.httpPort;
       if (env.containerId) {
         const res = await agent.start(await agentUrlForEnv(env), env.containerId);
