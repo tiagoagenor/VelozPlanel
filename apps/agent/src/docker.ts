@@ -864,6 +864,13 @@ export function cleanLog(s: string): string {
   return s.replace(/[^\t\n\r\x20-\x7e]/g, "");
 }
 
+/** Reinicia SÓ o processo do app (mata o pid registrado em /.vp-app-pid). O
+ *  supervisor relê o arquivo de start e sobe de novo em ~1s — mesmo container,
+ *  mesma porta publicada, /app preservado (aplica edições feitas via Arquivos). */
+export async function restartApp(containerId: string): Promise<void> {
+  await execCapture(containerId, ["sh", "-c", `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`]);
+}
+
 /** Snapshot das últimas `tail` linhas de log do container (stdout+stderr). */
 export async function logSnapshot(containerId: string, tail: number): Promise<string> {
   const buf = (await docker.getContainer(containerId).logs({

@@ -238,6 +238,11 @@ export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
 }
 
+/** Reinicia o processo do app (aplica edições de arquivo sem recriar o container). */
+export function restartEnvironment(id: string): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/restart`, { method: "POST" });
+}
+
 /** Enfileira a remoção; o ambiente entra em "deleting" e some quando o worker termina. */
 export function deleteEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}`, { method: "DELETE" });

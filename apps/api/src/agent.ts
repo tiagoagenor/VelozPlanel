@@ -136,6 +136,11 @@ export function attachNetwork(
   return call<{ attached: boolean; alreadyAttached: boolean }>(agentUrl, "POST", "/network/attach", { containerId, network, ip, ownerId });
 }
 
+/** Reinicia o processo do app (sem recriar o container). */
+export function restartApp(agentUrl: string, containerId: string): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", `/container/${containerId}/restart-app`, undefined, 15_000);
+}
+
 /* ── Logs do container ── */
 export function containerLogs(agentUrl: string, containerId: string, tail: number): Promise<{ log: string }> {
   return call<{ log: string }>(agentUrl, "GET", `/container/${containerId}/logs?tail=${tail}`, undefined, 15_000);

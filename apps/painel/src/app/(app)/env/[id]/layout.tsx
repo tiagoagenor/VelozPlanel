@@ -35,6 +35,7 @@ import {
   Archive,
   Play,
   Pause,
+  RotateCw,
   ExternalLink,
   Trash2,
   AlertTriangle,
@@ -123,6 +124,14 @@ export default function EnvContextLayout({
       toast.show("success", "Ambiente iniciado.");
     },
     onError: () => toast.show("error", "Não foi possível iniciar o ambiente."),
+  });
+  const restart = useMutation({
+    mutationFn: () => api.restartEnvironment(id),
+    onSuccess: () => {
+      refresh();
+      toast.show("success", "Reiniciando o ambiente — as alterações de arquivo serão aplicadas.");
+    },
+    onError: () => toast.show("error", "Não foi possível reiniciar o ambiente."),
   });
   const remove = useMutation({
     mutationFn: () => api.deleteEnvironment(id),
@@ -249,9 +258,14 @@ export default function EnvContextLayout({
             {env ? (
               <div className="flex items-center gap-2">
                 {env.state === "running" ? (
-                  <IconButton label="Pausar" onClick={() => pause.mutate()} disabled={busy}>
-                    <Pause size={17} aria-hidden="true" />
-                  </IconButton>
+                  <>
+                    <IconButton label="Reiniciar" onClick={() => restart.mutate()} disabled={busy || restart.isPending}>
+                      <RotateCw size={17} aria-hidden="true" className={restart.isPending ? "animate-spin" : undefined} />
+                    </IconButton>
+                    <IconButton label="Pausar" onClick={() => pause.mutate()} disabled={busy}>
+                      <Pause size={17} aria-hidden="true" />
+                    </IconButton>
+                  </>
                 ) : env.state === "paused" ? (
                   <IconButton label="Iniciar" onClick={() => start.mutate()} disabled={busy}>
                     <Play size={17} aria-hidden="true" />

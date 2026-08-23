@@ -438,6 +438,19 @@ app.get("/stats/:id", async (req, reply) => {
   }
 });
 
+// Reinicia o processo do app (aplica edições de arquivo sem recriar o container).
+app.post("/container/:id/restart-app", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await dockerDriver.restartApp(parsed.data.id);
+    return reply.send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "restart-app failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
 // Logs do container. Snapshot (JSON) + stream ao vivo (SSE).
 function clampTail(raw: unknown): number {
   const n = Number(raw);

@@ -457,6 +457,27 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     },
   );
 
+  // POST /environments/:id/restart — reinicia o processo do app (aplica edições
+  // de arquivo sem recriar o container; mesma porta, /app preservado).
+  app.post(
+    "/environments/:id/restart",
+    {
+      schema: {
+        params: idParams,
+        response: { 200: environmentSchema, 401: apiError, 403: apiError, 404: apiError, 409: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.state !== "running" || !env.containerId) {
+        throw new ApiHttpError(409, "not_running", "inicie o ambiente antes de reiniciar");
+      }
+      await agent.restartApp(await agentUrlForEnv(env), env.containerId);
+      return await toEnvironment(env);
+    },
+  );
+
   // DELETE /environments/:id
   app.delete(
     "/environments/:id",

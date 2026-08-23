@@ -17,6 +17,7 @@ import {
   Upload,
   UploadCloud,
   RefreshCw,
+  RotateCw,
   Save,
   Trash2,
   X,
@@ -798,11 +799,25 @@ export default function EnvArquivosPage() {
     qc.invalidateQueries({ queryKey: ["files", id] });
   }
 
+  // Sinaliza que arquivos foram alterados desde o último reinício (apps Node/
+  // compilados só pegam a mudança ao reiniciar o processo).
+  const [changed, setChanged] = React.useState(false);
+  const restartMutation = useMutation({
+    mutationFn: () => api.restartEnvironment(id),
+    onSuccess: () => {
+      toast.show("success", "Reiniciando — as alterações de arquivo serão aplicadas.");
+      setChanged(false);
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof ApiError && err.message ? err.message : "Não foi possível reiniciar. O ambiente precisa estar em execução."),
+  });
+
   const saveMutation = useMutation({
     mutationFn: (payload: { path: string; content: string }) =>
       api.writeFile(id, payload.path, payload.content),
     onSuccess: () => {
       toast.show("success", "Arquivo salvo.");
+      setChanged(true);
       qc.invalidateQueries({ queryKey: ["file", id, editing?.path] });
       refresh();
     },
@@ -825,6 +840,7 @@ export default function EnvArquivosPage() {
     mutationFn: (name: string) => api.writeFile(id, joinPath(currentPath, name), ""),
     onSuccess: () => {
       toast.show("success", "Arquivo criado.");
+      setChanged(true);
       closeDialog();
       refresh();
     },
@@ -836,6 +852,7 @@ export default function EnvArquivosPage() {
     mutationFn: (entry: FileEntry) => api.deleteFile(id, joinPath(currentPath, entry.name)),
     onSuccess: (_data, entry) => {
       toast.show("success", `"${entry.name}" excluído.`);
+      setChanged(true);
       if (editing && editing.name === entry.name) setEditing(null);
       setToDelete(null);
       refresh();
@@ -849,6 +866,7 @@ export default function EnvArquivosPage() {
       api.renameFile(id, joinPath(currentPath, payload.entry.name), payload.newName),
     onSuccess: (_data, payload) => {
       toast.show("success", `Renomeado para "${payload.newName}".`);
+      setChanged(true);
       if (editing && editing.name === payload.entry.name) setEditing(null);
       setToRename(null);
       refresh();
@@ -1170,6 +1188,26 @@ export default function EnvArquivosPage() {
         </div>
       </header>
 
+      {/* Aviso: arquivos alterados → reiniciar para aplicar (apps Node/compilados) */}
+      {changed ? (
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3">
+          <p className="flex items-center gap-2 text-sm text-text">
+            <AlertTriangle size={16} aria-hidden="true" className="shrink-0 text-warning" />
+            <span>
+              Você alterou arquivos. Em apps <strong>Node/compilados</strong> a mudança só vale depois de <strong>reiniciar</strong> o ambiente.
+              <span className="text-text2"> (PHP aplica na hora.)</span>
+            </span>
+          </p>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setChanged(false)}>Dispensar</Button>
+            <Button size="sm" onClick={() => restartMutation.mutate()} disabled={restartMutation.isPending}>
+              <RotateCw size={15} aria-hidden="true" className={restartMutation.isPending ? "animate-spin" : undefined} />
+              {restartMutation.isPending ? "Reiniciando…" : "Reiniciar agora"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Breadcrumb */}
       {root ? (
         <nav
@@ -1475,7 +1513,7 @@ export default function EnvArquivosPage() {
           id={id}
           root={root}
           initialDir={currentPath}
-          onUploaded={() => refresh()}
+          onUploaded={() => { setChanged(true); refresh(); }}
         />
       ) : null}
 
