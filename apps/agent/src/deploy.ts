@@ -71,11 +71,40 @@ async function execIn(containerId: string, cmd: string[]): Promise<{ code: numbe
   return { code: info.ExitCode ?? 0, out: Buffer.concat(chunks).toString("utf8") };
 }
 
+/**
+ * Escolhe a imagem do container de BUILD. Só precisa do toolchain (git + node/
+ * python/php), não da versão EXATA do app. Se a base custom pedida não existir no
+ * nó (ex.: velozplanel/node:24 num nó que só tem :22), cai em OUTRA base do mesmo
+ * tipo que exista localmente — assim o deploy funciona sem exigir todas as
+ * versões pré-buildadas em todo nó.
+ */
+async function resolveBuildImage(image: string): Promise<string> {
+  try {
+    await docker.getImage(image).inspect();
+    return image; // versão exata presente
+  } catch {
+    /* não existe local — tenta fallback do mesmo tipo */
+  }
+  const m = /^velozplanel\/([^:]+):/.exec(image);
+  if (m) {
+    const prefix = `velozplanel/${m[1]}:`;
+    try {
+      const imgs = await docker.listImages();
+      const tags = imgs.flatMap((i) => i.RepoTags ?? []).filter((t) => t.startsWith(prefix));
+      if (tags.length) return tags.sort().reverse()[0]!; // mais recente-ish
+    } catch {
+      /* ignora */
+    }
+  }
+  return image; // deixa o createContainer falhar/pull normalmente
+}
+
 /** Sobe um container efêmero (sleep) da imagem base montando o volume de build. */
 async function startBuildContainer(envId: string, image: string, env: EnvPair[], http?: HttpCreds): Promise<Docker.Container> {
   await ensureVolume(envId);
+  const buildImage = await resolveBuildImage(image);
   const c = await docker.createContainer({
-    Image: image,
+    Image: buildImage,
     Cmd: ["sh", "-c", "sleep 3600"],
     Env: [
       "GIT_TERMINAL_PROMPT=0",
