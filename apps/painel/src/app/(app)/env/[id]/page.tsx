@@ -49,7 +49,7 @@ export default function EnvOverviewPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [metricWindow, setMetricWindow] = React.useState<MetricWindow>("15m");
-  const [showLimit, setShowLimit] = React.useState(true);
+  const [showLimit, setShowLimit] = React.useState(false);
   const [cpuUnit, setCpuUnit] = React.useState<"pct" | "vcpu">("pct");
 
   const diskQuery = useQuery({
