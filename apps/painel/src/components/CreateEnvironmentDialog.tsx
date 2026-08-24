@@ -8,6 +8,7 @@ import {
   RECOMMENDED_VERSION,
   RUNTIME_LABEL,
   runtimeHasVersions,
+  slugify,
   createEnvironmentInput,
   planMeetsType,
   type RuntimeKind,
@@ -42,10 +43,10 @@ function codeRank(id: string): number {
 }
 
 function validateName(v: string): string | null {
-  if (v.length < 2) return "Use ao menos 2 caracteres.";
-  if (v.length > 40) return "Máximo de 40 caracteres.";
-  if (!/^[a-z0-9-]+$/.test(v)) return "Use só letras minúsculas, números e hífen.";
-  return null;
+  const t = v.trim();
+  if (t.length < 2) return "Use ao menos 2 caracteres.";
+  if (t.length > 40) return "Máximo de 40 caracteres.";
+  return null; // nome livre — o slug técnico é derivado
 }
 
 export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -93,6 +94,7 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
   }, [open, regions, region]);
 
   const nameError = nameTouched ? validateName(name) : null;
+  const nameSlug = slugify(name);
   const isService = mode === "service";
   const selectedPlan = byId.get(plan);
   const selectedType = isService ? serviceTypes.find((t) => t.id === serviceType) ?? null : null;
@@ -276,13 +278,17 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     onBlur={() => setNameTouched(true)}
-                    placeholder={isService ? "meu-banco" : "meu-site"}
+                    placeholder={isService ? "Meu banco" : "Meu site"}
                     autoComplete="off"
                     aria-invalid={!!nameError}
                     className={cn(fieldCls, nameError && "border-danger")}
                   />
                   <p className={cn("text-xs", nameError ? "text-danger" : "text-text3")}>
-                    {nameError ?? "2 a 40 caracteres: letras minúsculas, números e hífen."}
+                    {nameError
+                      ? nameError
+                      : nameSlug
+                        ? <>Pode usar espaços e maiúsculas. Endereço interno: <code className="rounded bg-bg px-1 font-mono text-text2">{nameSlug}</code></>
+                        : "Dê um nome — pode ter espaços e maiúsculas."}
                   </p>
                 </div>
 

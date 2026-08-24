@@ -10,7 +10,7 @@ import { agentUrlForEnv, pickNodeForNewEnv } from "./nodes";
 import { allocateAddress, releaseAddresses } from "./ipam";
 import { serviceRuntime, makeCreds, stackAppEnv } from "./services";
 import * as cpIngress from "./cp-ingress";
-import { generateSubdomain } from "./subdomain";
+import { subdomainFromName } from "./subdomain";
 
 /**
  * Handlers dos jobs da fila (provisionar/remover ambiente). São RECONCILIADORES:
@@ -168,7 +168,7 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
       if (fresh?.httpPort) {
         let sub = fresh.autoSubdomain;
         if (!sub) {
-          sub = await generateSubdomain();
+          sub = await subdomainFromName(fresh.name);
           await db.update(environments).set({ autoSubdomain: sub }).where(eq(environments.id, env.id));
         }
         const ip = cpIngress.wgIpFromAgentUrl(agentUrl);

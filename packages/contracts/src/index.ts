@@ -543,12 +543,22 @@ export type EnvVarsConfig = z.infer<typeof envVarsConfig>;
 export const changeRuntimeInput = runtimeSpec;
 export type ChangeRuntimeInput = RuntimeSpec;
 
+/** Gera um slug técnico (minúsculo, sem acento/espaço) a partir de um texto livre. */
+export function slugify(input: string): string {
+  return input
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-") // não-alfanumérico vira hífen
+    .replace(/-{2,}/g, "-") // colapsa hífens repetidos
+    .replace(/^-+|-+$/g, "") // tira hífen das pontas
+    .slice(0, 30)
+    .replace(/-+$/g, ""); // tira hífen que sobrou no corte
+}
+
 export const createEnvironmentInput = z.object({
-  name: z
-    .string()
-    .min(2)
-    .max(40)
-    .regex(/^[a-z0-9-]+$/, "use apenas letras minúsculas, números e hífen"),
+  // Nome livre (o cliente digita o que quiser); o slug técnico é derivado.
+  name: z.string().trim().min(2, "dê um nome com ao menos 2 caracteres").max(40, "no máximo 40 caracteres"),
   plan: planId,
   // App (php/node): runtime é obrigatório. Serviço (redis/mysql/…): informe `type`.
   runtime: runtimeSpec.optional(),

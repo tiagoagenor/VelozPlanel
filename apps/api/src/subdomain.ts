@@ -3,6 +3,7 @@
  * Gera um aleatório curto (base32 sem ambíguos) único e não-reservado.
  */
 import { sql } from "drizzle-orm";
+import { slugify } from "@velozplanel/contracts";
 import { db } from "./db/client";
 import { environments, reservedSubdomains } from "./db/schema";
 
@@ -33,4 +34,22 @@ export async function generateSubdomain(len = 7): Promise<string> {
     return sub;
   }
   return randStr(10); // fallback praticamente impossível de alcançar
+}
+
+/**
+ * Subdomínio a partir do NOME do ambiente (ex.: "Meu Site" → meu-site). Se o slug
+ * for curto/vazio, reservado ou já em uso, adiciona um sufixo aleatório; se ainda
+ * assim não der, cai no aleatório puro. Garante 3–30 chars válidos.
+ */
+export async function subdomainFromName(name: string): Promise<string> {
+  const base = slugify(name).slice(0, 24).replace(/-+$/g, "");
+  if (base.length < 3) return generateSubdomain();
+  if (!(await isSubReserved(base)) && !(await isSubTaken(base))) return base;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cand = `${base}-${randStr(4)}`;
+    if (await isSubReserved(cand)) continue;
+    if (await isSubTaken(cand)) continue;
+    return cand;
+  }
+  return generateSubdomain();
 }
