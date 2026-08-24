@@ -80,6 +80,18 @@ export function serviceRuntime(engine: string, creds: ServiceCreds): ServiceRunt
         readiness: "rabbitmq-diagnostics -q ping",
         store: { user: creds.user, password: creds.password },
       };
+    case "mongodb":
+      // vp_user vira o usuário root (db admin); a imagem sobe com --auth. O db `app`
+      // é criado preguiçosamente na 1ª escrita. `ping` não exige auth → readiness sem creds.
+      return {
+        env: [
+          { key: "MONGO_INITDB_ROOT_USERNAME", value: creds.user },
+          { key: "MONGO_INITDB_ROOT_PASSWORD", value: creds.password },
+          { key: "MONGO_INITDB_DATABASE", value: creds.database },
+        ],
+        readiness: 'mongosh --quiet --eval "db.adminCommand(\'ping\').ok" 2>/dev/null | grep -q 1',
+        store: { user: creds.user, password: creds.password, database: creds.database },
+      };
     default:
       return { env: [], readiness: null, store: {} };
   }
@@ -156,6 +168,15 @@ export function connectionInfo(
         user: creds.user,
         password: creds.password,
         url: `amqp://${creds.user}:${creds.password}@${host}:${port}`,
+      };
+    case "mongodb":
+      return {
+        host,
+        port: String(port),
+        database: creds.database,
+        user: creds.user,
+        password: creds.password,
+        url: `mongodb://${creds.user}:${creds.password}@${host}:${port}/${creds.database}?authSource=admin`,
       };
     default:
       return { host, port: String(port) };

@@ -515,6 +515,8 @@ async function seed(): Promise<void> {
     { id: "rabbitmq", label: "RabbitMQ", category: "service", image: "rabbitmq:3-management", port: 5672, dataPath: "/var/lib/rabbitmq", needsDb: false, childType: null, tool: "rabbitmq_mgmt", publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
     { id: "n8n", label: "n8n", category: "stack", image: "n8nio/n8n", port: 5678, dataPath: "/home/node/.n8n", needsDb: true, childType: "postgres", tool: null, publicDomain: false, price: 0, minVcpu: 1, minMemMb: 1024 },
     { id: "wordpress", label: "WordPress", category: "stack", image: "wordpress:php8.3-apache", port: 80, dataPath: "/var/www/html", needsDb: true, childType: "mariadb", tool: null, publicDomain: true, price: 0, minVcpu: 1, minMemMb: 1024 },
+    // MongoDB: mesmo preço do MySQL (0) e piso 0.5 vCPU / 512 MB. Sem ferramenta de UI própria.
+    { id: "mongodb", label: "MongoDB", category: "service", image: "mongo:7", port: 27017, dataPath: "/data/db", needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0.5, minMemMb: 512 },
   ];
   for (let i = 0; i < envTypeSeed.length; i++) {
     const t = envTypeSeed[i]!;

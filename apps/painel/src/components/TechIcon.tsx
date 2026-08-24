@@ -18,6 +18,7 @@ const TITLES: Record<string, string> = {
   rabbitmq: "RabbitMQ",
   n8n: "n8n",
   wordpress: "WordPress",
+  mongodb: "MongoDB",
 };
 
 /** Resolve a chave de tecnologia a partir do ambiente. */
@@ -27,6 +28,7 @@ function techKey(env: Environment): string | null {
     if (t.includes("maria")) return "mariadb";
     if (t.includes("postgres") || t === "pg") return "postgres";
     if (t.includes("mysql")) return "mysql";
+    if (t.includes("mongo")) return "mongodb";
     if (t.includes("redis")) return "redis";
     if (t.includes("rabbit")) return "rabbitmq";
     if (t.includes("n8n")) return "n8n";

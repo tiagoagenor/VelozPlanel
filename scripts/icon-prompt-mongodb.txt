@@ -1,0 +1,13 @@
+Você vai gerar um ícone "app-icon" para um painel de hospedagem (marca Jamees).
+
+ESTILO OBRIGATÓRIO — idêntico ao conjunto que já existe. ABRA e olhe estes arquivos para copiar EXATAMENTE o estilo (cor, tile, peso do glifo, margem): apps/painel/public/img/tech/node.png, apps/painel/public/img/tech/php.png e apps/painel/public/img/tech/postgres.png.
+Regras do estilo:
+- PNG 512x512, RGBA, fundo TRANSPARENTE fora do tile.
+- Um tile quadrado de cantos bem arredondados (raio ~110px) preenchido com a cor sólida roxa da marca #634ca8 (chapado, sem gradiente forte).
+- Um glifo BRANCO (#ffffff) limpo, minimalista e centralizado, ocupando ~55-60% do tile. Plano e nítido, legível em 34px. Sem texto, sem sombra pesada.
+
+TAREFA — usando geração de imagem (nano banana / Gemini image), gere 4 variações do ícone abaixo (4 imagens no total):
+1) "mongodb": glifo BRANCO da FOLHA do MongoDB (a silhueta da folha/leaf estilizada que é o símbolo do MongoDB), silhueta branca simplificada e sólida, centralizada. Sem texto, sem a palavra "mongo". Apenas a folha branca sobre o tile roxo.
+
+SALVAR: as 4 imagens em apps/painel/public/img/tech/_candidates/ com os nomes mongodb-1.png, mongodb-2.png, mongodb-3.png, mongodb-4.png.
+NÃO altere mais nada no repositório. Ao terminar, liste os arquivos criados.
