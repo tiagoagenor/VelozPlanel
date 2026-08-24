@@ -134,7 +134,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Pasta onde o SSH abre. App PHP → /var; App Node → /app; SERVIÇO/STACK
     // (redis/mysql/n8n/…) → "/" (não têm /app nem /var), senão o docker exec falha.
-    let workdir = env?.runtimeKind === "node" ? "/app" : "/var";
+    let workdir =
+      env?.runtimeKind === "node" || env?.runtimeKind === "python" ? "/app" : env?.runtimeKind === "static" ? "/site" : "/var";
     if (env?.typeId) {
       const et = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
       if (et[0] && et[0].category !== "app") workdir = "/";
@@ -199,7 +200,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     noteSuccess(username);
-    const workdir = env.runtimeKind === "node" ? "/app" : "/var";
+    const workdir =
+      env.runtimeKind === "node" || env.runtimeKind === "python" ? "/app" : env.runtimeKind === "static" ? "/site" : "/var";
     return reply.send({ ok: true, containerId: env.containerId, workdir });
   });
 }

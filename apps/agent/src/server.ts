@@ -74,6 +74,7 @@ const provisionBody = z.object({
   }),
   startupScript: z.string().nullable().optional(),
   startFile: z.string().nullable().optional(),
+  pythonCmd: z.string().nullable().optional(),
   phpNodeVersion: z.string().nullable().optional(),
   phpRoot: z.string().nullable().optional(),
   envVars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean().optional() })).optional(),
@@ -371,6 +372,34 @@ app.post("/node-start", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "node-start failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/python-start", async (req, reply) => {
+  const parsed = nodeStartBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await dockerDriver.applyPythonStart(parsed.data.containerId, parsed.data.startFile);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "python-start failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+const pythonCmdBody = z.object({
+  containerId: z.string().min(1),
+  cmd: z.string().nullable(), // null/"" limpa e volta ao default python3 app.py
+});
+app.post("/python-cmd", async (req, reply) => {
+  const parsed = pythonCmdBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await dockerDriver.applyPythonCmd(parsed.data.containerId, parsed.data.cmd);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "python-cmd failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
   }
 });

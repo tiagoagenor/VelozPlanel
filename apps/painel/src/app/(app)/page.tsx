@@ -22,7 +22,7 @@ import {
   ArrowDown,
   ChevronsUpDown,
 } from "lucide-react";
-import type { Environment, EnvState } from "@velozplanel/contracts";
+import { RUNTIME_LABEL, runtimeHasVersions, type Environment, type EnvState } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { CreateEnvironmentDialog } from "@/components/CreateEnvironmentDialog";
@@ -46,8 +46,8 @@ function runtimeLabel(env: Environment): string {
     const label = SERVICE_LABELS[t] ?? env.type ?? "Serviço";
     return ver ? `${label} ${ver}` : label;
   }
-  const base = env.runtime.kind === "php" ? "PHP" : "Node.js";
-  return `${base} ${ver}`;
+  const base = RUNTIME_LABEL[env.runtime.kind];
+  return runtimeHasVersions(env.runtime.kind) ? `${base} ${ver}` : base;
 }
 
 type SortKey = "name" | "state" | "region" | "ip";

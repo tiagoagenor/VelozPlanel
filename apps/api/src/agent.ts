@@ -16,6 +16,7 @@ export interface ProvisionInput {
   limits: { vcpu: number; memMb: number };
   startupScript?: string | null;
   startFile?: string | null;
+  pythonCmd?: string | null;
   phpNodeVersion?: string | null;
   phpRoot?: string | null;
   envVars?: { key: string; value: string; buildTime?: boolean }[];
@@ -159,6 +160,16 @@ export function applyNodeStart(
   startFile: string,
 ): Promise<{ ok: boolean }> {
   return call<{ ok: boolean }>(agentUrl, "POST", "/node-start", { containerId, startFile });
+}
+
+/** Troca o arquivo de start do Python e reinicia o app (sem recriar o container). */
+export function applyPythonStart(agentUrl: string, containerId: string, startFile: string): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", "/python-start", { containerId, startFile });
+}
+
+/** Define/limpa o comando avançado do Python (Django) e reinicia o app. */
+export function applyPythonCmd(agentUrl: string, containerId: string, cmd: string | null): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", "/python-cmd", { containerId, cmd });
 }
 
 /** Troca a versão de Node (via nvm) de um container PHP; devolve a versão real. */

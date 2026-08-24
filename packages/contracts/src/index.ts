@@ -8,19 +8,38 @@ import { z } from "zod";
 
 /* ─────────────── Runtimes (linguagem + versão) ─────────────── */
 
-export const runtimeKind = z.enum(["php", "node"]);
+export const runtimeKind = z.enum(["php", "node", "python", "static"]);
 export type RuntimeKind = z.infer<typeof runtimeKind>;
 
-/** Versões oferecidas no núcleo (ordem crescente, como na faixa do Hostoo). */
+/** Versões oferecidas no núcleo (ordem crescente, como na faixa do Hostoo).
+ *  `static` não tem versão real — usa um pseudovalor "1" nunca exibido na UI. */
 export const RUNTIME_VERSIONS: Record<RuntimeKind, string[]> = {
   php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"],
   node: ["18", "20", "22", "24", "25", "26"],
+  python: ["3.11", "3.12", "3.13"],
+  static: ["1"],
 };
 
 /** Versão recomendada por linguagem (destaque/def. na criação). */
 export const RECOMMENDED_VERSION: Record<RuntimeKind, string> = {
   php: "8.3",
   node: "24",
+  python: "3.12",
+  static: "1",
+};
+
+/** Runtimes SEM versão (a UI esconde o seletor e o sufixo de versão). */
+export const RUNTIME_VERSIONLESS = new Set<RuntimeKind>(["static"]);
+export function runtimeHasVersions(kind: RuntimeKind): boolean {
+  return !RUNTIME_VERSIONLESS.has(kind);
+}
+
+/** Rótulo amigável por runtime. */
+export const RUNTIME_LABEL: Record<RuntimeKind, string> = {
+  php: "PHP",
+  node: "Node.js",
+  python: "Python",
+  static: "Site estático",
 };
 
 export const runtimeSpec = z.object({
@@ -204,7 +223,8 @@ export const environment = z.object({
   autoSubdomain: z.string().nullable(), // endereço temporário <sub>.jamees.top
   runtimeVersionFull: z.string().nullable(), // versão real resolvida no container (ex.: 24.19.0)
   startupScript: z.string().nullable(), // comandos rodados 1x na criação do container
-  nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node (ex.: server.js); null = index.js
+  nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node/Python (server.js/app.py); null = default
+  pythonCmd: z.string().nullable(), // comando avançado de start (Python/Django); null = python3 app.py
   phpNodeVersion: z.string().nullable(), // versão Node escolhida (envs PHP via nvm); null = default da base
   phpNodeVersionFull: z.string().nullable(), // versão Node real resolvida no container (ex.: 22.12.0)
   accessUrl: z.string().nullable(), // URL pública p/ abrir o site (domínio https, ou IP do nó:porta)
@@ -244,6 +264,12 @@ export const setNodeStartFileInput = z.object({
     .nullable(),
 });
 export type SetNodeStartFileInput = z.infer<typeof setNodeStartFileInput>;
+
+/** Define/limpa o comando avançado de start do Python (Django/gunicorn). "" limpa. */
+export const setPythonCmdInput = z.object({
+  cmd: z.string().max(500).nullable(),
+});
+export type SetPythonCmdInput = z.infer<typeof setPythonCmdInput>;
 
 /** Define a versão do Node (via nvm) de um ambiente PHP. Aplica ao vivo. */
 export const setPhpNodeVersionInput = z.object({

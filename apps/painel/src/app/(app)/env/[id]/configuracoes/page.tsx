@@ -4,7 +4,7 @@ import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Settings, RefreshCw, Lock, AlertTriangle } from "lucide-react";
-import { RUNTIME_VERSIONS, type RuntimeKind } from "@velozplanel/contracts";
+import { RUNTIME_VERSIONS, RUNTIME_LABEL, runtimeHasVersions, type RuntimeKind, type Environment } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { usePlans } from "@/lib/usePlans";
@@ -95,10 +95,8 @@ export default function EnvSettingsPage() {
     mutationFn: () => api.setNodeStartFile(id, startFile.trim() === "" ? null : startFile.trim()),
     onSuccess: (updated) => {
       qc.setQueryData(["environment", id], updated);
-      toast.show(
-        "success",
-        `App reiniciado com ${updated.nodeStartFile ?? "index.js"}.`,
-      );
+      const def = updated.runtime.kind === "python" ? "app.py" : "index.js";
+      toast.show("success", `App reiniciado com ${updated.nodeStartFile ?? def}.`);
     },
     onError: (err) =>
       toast.show("error", err instanceof Error ? err.message : "Falha ao salvar."),
@@ -183,7 +181,8 @@ export default function EnvSettingsPage() {
         </dl>
       </Card>
 
-      {/* Trocar versão (linguagem travada) */}
+      {/* Trocar versão (linguagem travada) — estático não tem versão */}
+      {runtimeHasVersions(kind) && (
       <Card>
         <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
           Versão do {labelKind(kind)}
@@ -236,25 +235,30 @@ export default function EnvSettingsPage() {
           </div>
         </div>
       </Card>
+      )}
 
-      {/* Arquivo de inicialização do Node */}
-      {env.runtime.kind === "node" && (
+      {/* Arquivo de inicialização do Node/Python */}
+      {(env.runtime.kind === "node" || env.runtime.kind === "python") && (
         <Card>
           <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
             Arquivo de inicialização
           </h2>
           <p className="mb-4 text-sm text-text2">
-            Qual arquivo o Node executa ao iniciar (dentro de <code>/app</code>) — ex.:{" "}
-            <code>server.js</code>, <code>index.js</code> ou <code>dist/main.js</code>.
-            Ao salvar, o app <strong>reinicia</strong> com esse arquivo (seus arquivos
-            são mantidos). Vazio = <code>index.js</code>.
+            Qual arquivo o {labelKind(env.runtime.kind)} executa ao iniciar (dentro de <code>/app</code>) — ex.:{" "}
+            {env.runtime.kind === "python" ? (
+              <><code>app.py</code>, <code>main.py</code> ou <code>src/app.py</code></>
+            ) : (
+              <><code>server.js</code>, <code>index.js</code> ou <code>dist/main.js</code></>
+            )}
+            . Ao salvar, o app <strong>reinicia</strong> com esse arquivo (seus arquivos
+            são mantidos). Vazio = <code>{env.runtime.kind === "python" ? "app.py" : "index.js"}</code>.
           </p>
           <input
             value={startFile}
             onChange={(e) => setStartFile(e.target.value)}
             spellCheck={false}
-            aria-label="Arquivo de inicialização do Node"
-            placeholder="index.js"
+            aria-label="Arquivo de inicialização"
+            placeholder={env.runtime.kind === "python" ? "app.py" : "index.js"}
             className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
           />
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -269,6 +273,11 @@ export default function EnvSettingsPage() {
             </span>
           </div>
         </Card>
+      )}
+
+      {/* Comando de start avançado — só Python (Django/gunicorn) */}
+      {env.runtime.kind === "python" && (
+        <PythonCmdCard id={id} current={env.pythonCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
       )}
 
       {/* Node.js via nvm — só ambientes PHP */}
@@ -376,5 +385,49 @@ export default function EnvSettingsPage() {
 }
 
 function labelKind(kind: RuntimeKind): string {
-  return kind === "php" ? "PHP" : "Node.js";
+  return RUNTIME_LABEL[kind];
+}
+
+/** Comando de start avançado (Python/Django). Vazio = python3 app.py. */
+function PythonCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
+  const toast = useToast();
+  const [cmd, setCmd] = React.useState<string>(current ?? "");
+  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
+  const dirty = cmd !== (current ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setPythonCmd(id, cmd.trim() === "" ? null : cmd.trim()),
+    onSuccess: (u) => {
+      onSaved(u);
+      toast.show("success", u.pythonCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou ao padrão python3 app.py.");
+    },
+    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
+  });
+  return (
+    <Card>
+      <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
+      <p className="mb-3 text-sm text-text2">
+        Para frameworks como <strong>Django</strong>: informe o comando que sobe o servidor na porta 80.
+        Deixe vazio para rodar o padrão <code>python3 {"{arquivo de start}"}</code>.
+      </p>
+      <input
+        value={cmd}
+        onChange={(e) => setCmd(e.target.value)}
+        spellCheck={false}
+        aria-label="Comando de start avançado do Python"
+        placeholder="python manage.py runserver 0.0.0.0:80 --insecure --noreload"
+        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+      />
+      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
+        <li>Django: no <code>settings.py</code>, use <code>ALLOWED_HOSTS = [&quot;*&quot;]</code>.</li>
+        <li>Instale as dependências no <strong>Terminal</strong>: <code>pip install -r requirements.txt</code> (Postgres: <code>psycopg2-binary</code>).</li>
+        <li>Rode as migrações: <code>python manage.py migrate</code>.</li>
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
+        </Button>
+        <span className="text-sm text-text3">Reinicia na hora, sem recriar o container.</span>
+      </div>
+    </Card>
+  );
 }

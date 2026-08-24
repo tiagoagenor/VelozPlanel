@@ -41,11 +41,11 @@ const pathQuery = z.object({ path: z.string().optional() });
  *    (a pasta web servida): PHP → `/var/www`, Node → `/app`.
  */
 function confineRootFor(kind: RuntimeKind): string {
-  return kind === "php" ? "/var" : "/app";
+  return kind === "php" ? "/var" : kind === "static" ? "/site" : "/app";
 }
 
 function defaultPathFor(kind: RuntimeKind): string {
-  return kind === "php" ? "/var/www" : "/app";
+  return kind === "php" ? "/var/www" : kind === "static" ? "/site" : "/app";
 }
 
 /**

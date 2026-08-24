@@ -185,7 +185,12 @@ export default function EnvContextLayout({
               "lg:overflow-x-visible lg:overflow-y-auto lg:px-3 lg:pb-4",
             )}
           >
-              {SECTIONS.map((s) => {
+              {SECTIONS.filter((s) => {
+                // "Deploy" (git) só se aplica a Node/PHP na Fase 1. Enquanto o
+                // runtime ainda carrega (undefined), esconde para não piscar.
+                if (s.seg === "deploy") return env?.runtime.kind === "node" || env?.runtime.kind === "php";
+                return true;
+              }).map((s) => {
                 const active = s.seg === currentSeg;
                 const brevePill = (
                   <span className="ml-auto shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.04em] text-text3">

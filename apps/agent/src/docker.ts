@@ -33,7 +33,8 @@ export interface ProvisionArgs {
   runtime: RuntimeSpec;
   limits: Limits;
   startupScript?: string | null;
-  startFile?: string | null; // arquivo que inicia o app Node (ex.: server.js)
+  startFile?: string | null; // arquivo que inicia o app Node/Python (ex.: server.js, app.py)
+  pythonCmd?: string | null; // comando de start avançado (Python/Django)
   phpNodeVersion?: string | null; // versão Node (via nvm) para ambientes PHP
   envVars?: EnvVarPair[]; // variáveis de ambiente gerenciadas (Env real do Docker)
   phpRoot?: string | null; // docroot do php -S (Laravel = /var/www/public)
@@ -57,8 +58,13 @@ async function readRuntimeVersion(
   container: Docker.Container,
   kind: string,
 ): Promise<string | null> {
+  if (kind === "static") return null; // sem versão real
   const cmd =
-    kind === "php" ? ["php", "-r", "echo PHP_VERSION;"] : ["node", "-v"];
+    kind === "php"
+      ? ["php", "-r", "echo PHP_VERSION;"]
+      : kind === "python"
+        ? ["python3", "-c", "import platform;print(platform.python_version())"]
+        : ["node", "-v"];
   try {
     const ex = await container.exec({
       Cmd: cmd,
@@ -114,6 +120,48 @@ http.createServer((req, res) => {
 console.log("VelozPlanel node server on :80");
 `;
 
+/** Python: HTTP server da stdlib (sem framework) que serve a página de exemplo
+ *  na :80 — garante que o env "nasce vivo" mesmo sem código do usuário.
+ *  NUNCA usar aspas simples (o conteúdo vai entre aspas simples no shell). */
+const PYTHON_SERVER = `import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+name = os.environ.get("VP_ENV_NAME", "app")
+ver = os.environ.get("VP_RUNTIME_VERSION", "")
+html = ("<!doctype html><meta charset=utf-8><title>" + name + "</title>"
+  "<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}"
+  "code{background:#eee;padding:.1em .3em;border-radius:4px}</style>"
+  "<h1>" + name + "</h1><p>Runtime Python " + ver + " ativo.</p>"
+  "<p>Envie seu codigo para <code>/app</code>. Start padrao <code>app.py</code>, escutando <code>0.0.0.0:80</code>.</p>")
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+    def log_message(self, *a):
+        pass
+print("VelozPlanel python server on :80")
+HTTPServer(("0.0.0.0", 80), H).serve_forever()
+`;
+
+/** Estático: Caddyfile com fallback SPA (try_files → index.html) e arquivos
+ *  ocultos escondidos. Sem aspas simples. */
+const CADDYFILE = `:80 {
+	root * /site
+	encode gzip
+	try_files {path} {path}/ /index.html
+	file_server {
+		hide .*
+	}
+}
+`;
+
+/** Estático: index.html de exemplo (site vazio). Sem aspas simples. */
+const STATIC_INDEX = `<!doctype html><meta charset=utf-8><title>Site estatico</title>
+<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}</style>
+<h1>Seu site esta no ar</h1><p>Envie index.html, CSS, JS ou o build da sua SPA (dist/build) para /site.</p>
+`;
+
 /** Puxa a imagem se ela não existir localmente. */
 async function ensureImage(image: string): Promise<void> {
   try {
@@ -139,9 +187,16 @@ function customImage(runtime: RuntimeSpec): string {
 
 /** Imagem oficial crua — usada como fallback quando não há base própria local. */
 function officialImage(runtime: RuntimeSpec): string {
-  return runtime.kind === "php"
-    ? `php:${runtime.version}-cli`
-    : `node:${runtime.version}-alpine`;
+  switch (runtime.kind) {
+    case "php":
+      return `php:${runtime.version}-cli`;
+    case "python":
+      return `python:${runtime.version}-slim`;
+    case "static":
+      return `caddy:2-alpine`;
+    default:
+      return `node:${runtime.version}-alpine`;
+  }
 }
 
 /**
@@ -207,6 +262,42 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
       `sleep 1; ` +
       `done`;
     return ["sh", "-c", script];
+  }
+  if (runtime.kind === "python") {
+    // PYTHON: supervisor. Se houver comando avançado (/.vp-python-cmd, restaurado
+    // de VP_PY_CMD base64 — Django/gunicorn), roda ele; senão roda `python3 <START>`
+    // (de /.vp-python-start, senão VP_PY_START, senão app.py), gravando o servidor
+    // de exemplo se o arquivo ainda não existir → :80 sempre sobe no caminho comum.
+    const script =
+      setup +
+      `touch /.veloz-env-capable; mkdir -p /app; ` +
+      `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
+      `[ -f /.vp-python-cmd ] || { [ -n "\$VP_PY_CMD" ] && printf '%s' "\$VP_PY_CMD" | base64 -d > /.vp-python-cmd; }; ` +
+      `while :; do ` +
+      LOAD_ENV +
+      `CMD="\$(cat /.vp-python-cmd 2>/dev/null)"; ` +
+      `START="\$(cat /.vp-python-start 2>/dev/null || printf '%s' "\${VP_PY_START:-app.py}")"; ` +
+      `if [ -z "\$CMD" ] && [ ! -f "/app/\$START" ]; then printf '%s' '${PYTHON_SERVER}' > "/app/\$START"; fi; ` +
+      `cd /app; if [ -n "\$CMD" ]; then sh -c "\$CMD" & else python3 "\$START" & fi; ` +
+      `VPPID=\$!; echo "\$VPPID" > /.vp-python-pid; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
+      `sleep 1; ` +
+      `done`;
+    return ["sh", "-c", script];
+  }
+  if (runtime.kind === "static") {
+    // ESTÁTICO: Caddy file-server na :80 com fallback SPA. docroot /site.
+    // O container usa Entrypoint=/bin/sh (ver createContainer) → Cmd = ["-c", …].
+    const script =
+      setup +
+      `mkdir -p /site; ` +
+      `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
+      `[ -f /.vp-caddyfile ] || printf '%s' '${CADDYFILE}' > /.vp-caddyfile; ` +
+      `[ -f /site/index.html ] || printf '%s' '${STATIC_INDEX}' > /site/index.html; ` +
+      `while :; do ` +
+      `caddy run --config /.vp-caddyfile --adapter caddyfile & VPPID=\$!; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
+      `sleep 1; ` +
+      `done`;
+    return ["-c", script];
   }
   // NODE: supervisor. Roda `node <arquivo>` (de /.vp-node-start, senão VP_NODE_START,
   // senão index.js), relendo /veloz/env a cada subida. Loop = auto-restart.
@@ -314,6 +405,41 @@ export async function applyNodeStart(
   await kill.start({});
 }
 
+/** Igual ao applyNodeStart, mas para Python: grava /.vp-python-start e mata o pid. */
+export async function applyPythonStart(containerId: string, startFile: string): Promise<void> {
+  const c = docker.getContainer(containerId);
+  const write = await c.exec({
+    Cmd: ["sh", "-c", `printf '%s' '${startFile}' > /.vp-python-start`],
+    AttachStdout: false,
+    AttachStderr: false,
+  });
+  await write.start({});
+  const kill = await c.exec({
+    Cmd: ["sh", "-c", `kill "$(cat /.vp-python-pid 2>/dev/null)" 2>/dev/null || true`],
+    AttachStdout: false,
+    AttachStderr: false,
+  });
+  await kill.start({});
+}
+
+/** Define/limpa o comando avançado do Python (Django/gunicorn) SEM recriar o
+ *  container: grava /.vp-python-cmd (base64→decode) ou o remove, e mata o pid. */
+export async function applyPythonCmd(containerId: string, cmd: string | null): Promise<void> {
+  const c = docker.getContainer(containerId);
+  const trimmed = (cmd ?? "").trim();
+  const write = trimmed
+    ? `printf '%s' '${Buffer.from(trimmed, "utf8").toString("base64")}' | base64 -d > /.vp-python-cmd`
+    : `rm -f /.vp-python-cmd`;
+  const w = await c.exec({ Cmd: ["sh", "-c", write], AttachStdout: false, AttachStderr: false });
+  await w.start({});
+  const kill = await c.exec({
+    Cmd: ["sh", "-c", `kill "$(cat /.vp-python-pid 2>/dev/null)" 2>/dev/null || true`],
+    AttachStdout: false,
+    AttachStderr: false,
+  });
+  await kill.start({});
+}
+
 /**
  * Bind mounts do LXCFS: apresentam um /proc "consciente do cgroup" dentro do
  * container, então `htop`/`top`/`free`/`nproc` mostram os recursos DO PLANO
@@ -390,6 +516,14 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
 
   await removeExistingByEnv(envId); // idempotência: retry não deixa container duplicado
   const binds = lxcfsBinds();
+  // Python/Estático guardam o CÓDIGO num volume nomeado → sobrevive à troca de
+  // versão (recreate). Node/PHP seguem sem volume (deploy por git). O delete
+  // job remove veloz-code-* junto.
+  const codeDir = runtime.kind === "python" ? "/app" : runtime.kind === "static" ? "/site" : null;
+  if (codeDir) {
+    await ensureNamedVolume(`veloz-code-${envId}`, envId);
+    binds.push(`veloz-code-${envId}:${codeDir}`);
+  }
   const cpuset = await pickCpuset(limits.vcpu);
   const attachNet = !!(args.network && args.ip && args.ownerId);
   if (attachNet) {
@@ -397,6 +531,8 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
   }
   const container = await docker.createContainer({
     Image: image,
+    // Estático usa caddy:2-alpine (ENTRYPOINT=caddy) → força /bin/sh p/ rodar o script.
+    ...(runtime.kind === "static" ? { Entrypoint: ["/bin/sh"] } : {}),
     Cmd: cmdFor(runtime, args.startupScript),
     Env: [
       `VP_ENV_NAME=${name}`,
@@ -404,6 +540,11 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       `VP_RUNTIME_VERSION=${runtime.version}`,
       // arquivo de start do Node na 1ª subida; depois /.vp-node-start manda.
       `VP_NODE_START=${(args.startFile && args.startFile.trim()) || "index.js"}`,
+      // arquivo de start do Python na 1ª subida; depois /.vp-python-start manda.
+      `VP_PY_START=${(args.startFile && args.startFile.trim()) || "app.py"}`,
+      // comando avançado do Python (Django/gunicorn) transportado em base64 e
+      // restaurado no boot em /.vp-python-cmd (durável a recreate).
+      `VP_PY_CMD=${args.pythonCmd && args.pythonCmd.trim() ? Buffer.from(args.pythonCmd, "utf8").toString("base64") : ""}`,
       // docroot do PHP na 1ª subida; depois /.vp-php-root manda.
       `VP_PHP_ROOT=${(args.phpRoot && args.phpRoot.trim()) || "/var/www"}`,
       // variáveis gerenciadas como Env REAL (Docker não faz parsing de shell).
@@ -447,7 +588,7 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       /* ignore */
     }
     await container.remove({ force: true }).catch(() => {});
-    throw new Error(`Docker não publicou a porta 80 do container. log: ${logTail}`);
+    throw new Error(`Docker não publicou a porta 80 (seu app precisa escutar em 0.0.0.0:80). log: ${logTail}`);
   }
 
   const versionFull = await readRuntimeVersion(container, runtime.kind);

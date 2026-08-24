@@ -245,6 +245,22 @@ export default function DeployPage() {
     : isHTTP ? <span className="flex items-center gap-1.5 text-sm text-warning"><AlertTriangle size={14} /> Credenciais não testadas</span>
     : null;
 
+  // Deploy por git é só Node/PHP na Fase 1. Python/Estático publicam pela aba Arquivos.
+  const kind = envQ.data?.runtime.kind;
+  if (envQ.data && kind !== "node" && kind !== "php") {
+    return (
+      <Card className="flex items-start gap-3">
+        <AlertTriangle size={20} aria-hidden="true" className="mt-0.5 shrink-0 text-text3" />
+        <div>
+          <p className="font-medium text-text">Deploy por Git não se aplica a este ambiente</p>
+          <p className="mt-1 text-sm text-text2">
+            Publique enviando seus arquivos pela aba <strong>Arquivos</strong> (ou SFTP). Depois use <strong>Reiniciar</strong> para aplicar.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {/* STATUS */}

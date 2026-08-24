@@ -305,6 +305,14 @@ export function setNodeStartFile(
   });
 }
 
+/** Define/limpa o comando de start avançado do Python (Django); aplica ao vivo. */
+export function setPythonCmd(id: string, cmd: string | null): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/python-cmd`, {
+    method: "POST",
+    body: { cmd },
+  });
+}
+
 /** Troca a versão de Node (via nvm) de um ambiente PHP; aplica ao vivo. */
 export function setPhpNodeVersion(
   id: string,

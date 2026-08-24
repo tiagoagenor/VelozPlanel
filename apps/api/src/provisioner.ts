@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import type { RuntimeKind } from "@velozplanel/contracts";
 import { db } from "./db/client";
 import { environments, envAddresses, serviceCredentials, envTypes, envVars } from "./db/schema";
 import type { EnvironmentRow, JobRow } from "./db/schema";
@@ -32,10 +33,11 @@ async function provisionApp(env: EnvironmentRow, nodeId: string, agentUrl: strin
   const result = await agent.provision(agentUrl, {
     envId: env.id,
     name: env.name,
-    runtime: { kind: env.runtimeKind as "php" | "node", version: env.runtimeVersion },
+    runtime: { kind: env.runtimeKind as RuntimeKind, version: env.runtimeVersion },
     limits: { vcpu: planSpec.vcpu, memMb: planSpec.memMb },
     startupScript: env.startupScript,
     startFile: env.nodeStartFile,
+    pythonCmd: env.pythonCmd,
     phpNodeVersion: env.phpNodeVersion,
     phpRoot: env.phpWebRoot,
     envVars: await envVarsFor(env.id),
@@ -204,6 +206,7 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
     if (agentUrl) {
       await agent.removeVolume(agentUrl, `veloz-data-${target.id}`).catch(() => {});
       await agent.removeVolume(agentUrl, `veloz-deploy-${target.id}`).catch(() => {});
+      await agent.removeVolume(agentUrl, `veloz-code-${target.id}`).catch(() => {}); // python/static
     }
     await releaseAddresses(target.id).catch(() => {});
   }

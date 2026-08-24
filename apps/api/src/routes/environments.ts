@@ -8,6 +8,7 @@ import {
   setDomainInput,
   setStartupScriptInput,
   setNodeStartFileInput,
+  setPythonCmdInput,
   setPhpNodeVersionInput,
   phpNodeCurrent as phpNodeCurrentSchema,
   changeRuntimeInput,
@@ -112,6 +113,7 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     runtimeVersionFull: r.runtimeVersionFull,
     startupScript: r.startupScript,
     nodeStartFile: r.nodeStartFile,
+    pythonCmd: r.pythonCmd,
     phpNodeVersion: r.phpNodeVersion,
     phpNodeVersionFull: r.phpNodeVersionFull,
     accessUrl,
@@ -637,11 +639,12 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
-      if (env.runtimeKind !== "node") {
+      const isPython = env.runtimeKind === "python";
+      if (env.runtimeKind !== "node" && !isPython) {
         throw new ApiHttpError(
           400,
           "not_node",
-          "o arquivo de inicialização só se aplica a ambientes Node",
+          "o arquivo de inicialização só se aplica a ambientes Node ou Python",
         );
       }
       const startFile = req.body.nodeStartFile?.trim() || null;
@@ -652,13 +655,50 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         .returning();
       const row = updated[0] ?? env;
 
-      // aplica ao vivo: reinicia o processo node com o novo arquivo (mantém arquivos/porta).
+      // aplica ao vivo: reinicia o processo com o novo arquivo (mantém arquivos/porta).
       if (row.containerId && row.state === "running") {
         const agentUrl = await agentUrlForEnv(row);
         try {
-          await agent.applyNodeStart(agentUrl, row.containerId, startFile || "index.js");
+          if (isPython) await agent.applyPythonStart(agentUrl, row.containerId, startFile || "app.py");
+          else await agent.applyNodeStart(agentUrl, row.containerId, startFile || "index.js");
         } catch (err) {
-          req.log.warn({ err, envId: env.id }, "falha ao aplicar arquivo de start do Node");
+          req.log.warn({ err, envId: env.id }, "falha ao aplicar arquivo de start");
+        }
+      }
+      return await toEnvironment(row);
+    },
+  );
+
+  // POST /environments/:id/python-cmd — define/limpa o comando avançado do Python
+  // (Django/gunicorn) e reinicia o app. "" ou null volta ao default python3 app.py.
+  app.post(
+    "/environments/:id/python-cmd",
+    {
+      schema: {
+        params: idParams,
+        body: setPythonCmdInput,
+        response: { 200: environmentSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.runtimeKind !== "python") {
+        throw new ApiHttpError(400, "not_python", "o comando de start avançado só se aplica a ambientes Python");
+      }
+      const cmd = req.body.cmd?.trim() || null;
+      const updated = await db
+        .update(environments)
+        .set({ pythonCmd: cmd })
+        .where(eq(environments.id, env.id))
+        .returning();
+      const row = updated[0] ?? env;
+      if (row.containerId && row.state === "running") {
+        const agentUrl = await agentUrlForEnv(row);
+        try {
+          await agent.applyPythonCmd(agentUrl, row.containerId, cmd);
+        } catch (err) {
+          req.log.warn({ err, envId: env.id }, "falha ao aplicar comando de start do Python");
         }
       }
       return await toEnvironment(row);
@@ -783,6 +823,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         limits: { vcpu: planSpec.vcpu, memMb: planSpec.memMb },
         startupScript: env.startupScript,
         startFile: env.nodeStartFile,
+        pythonCmd: env.pythonCmd,
         phpNodeVersion: env.phpNodeVersion,
         phpRoot: env.phpWebRoot,
         envVars: await envVarsForProvision(env.id),

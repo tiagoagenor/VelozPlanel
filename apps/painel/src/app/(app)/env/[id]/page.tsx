@@ -18,7 +18,7 @@ import {
   Copy,
   CircleCheck,
 } from "lucide-react";
-import type { MetricSample, Environment } from "@velozplanel/contracts";
+import { RUNTIME_LABEL, runtimeHasVersions, type MetricSample, type Environment } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { usePlans } from "@/lib/usePlans";
 import { TimeSeries } from "@/components/TimeSeries";
@@ -40,7 +40,9 @@ function fmtCpu(v: number | null): string {
 
 function runtimeText(env: Environment): string {
   if (env.category === "service") return `${env.type ?? "serviço"} ${env.runtime.version}`;
-  return `${env.runtime.kind === "php" ? "PHP" : "Node.js"} ${env.runtimeVersionFull ?? env.runtime.version}`;
+  const label = RUNTIME_LABEL[env.runtime.kind];
+  // Estático não tem versão real — mostra só o rótulo.
+  return runtimeHasVersions(env.runtime.kind) ? `${label} ${env.runtimeVersionFull ?? env.runtime.version}` : label;
 }
 
 export default function EnvOverviewPage() {

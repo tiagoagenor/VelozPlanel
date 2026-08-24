@@ -9,6 +9,8 @@ import type { Environment } from "@velozplanel/contracts";
 const TITLES: Record<string, string> = {
   php: "PHP",
   node: "Node.js",
+  python: "Python",
+  static: "Site estático",
   redis: "Redis",
   mysql: "MySQL",
   mariadb: "MariaDB",
@@ -31,7 +33,7 @@ function techKey(env: Environment): string | null {
     if (t.includes("word")) return "wordpress";
     return TITLES[t] ? t : null;
   }
-  return env.runtime.kind === "php" ? "php" : "node";
+  return TITLES[env.runtime.kind] ? env.runtime.kind : "node";
 }
 
 /** Tile PNG da tecnologia. */

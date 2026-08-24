@@ -6,6 +6,8 @@ import { AlertTriangle } from "lucide-react";
 import {
   RUNTIME_VERSIONS,
   RECOMMENDED_VERSION,
+  RUNTIME_LABEL,
+  runtimeHasVersions,
   createEnvironmentInput,
   planMeetsType,
   type RuntimeKind,
@@ -24,6 +26,20 @@ import { formatCents } from "@/lib/format";
 type Mode = "code" | "service";
 type Step = 1 | 2;
 type Filter = "all" | "code" | "service";
+
+/** Subtítulo por tipo de "código" (ajuda o usuário a entender o modo). */
+const CARD_SUBTITLE: Record<string, string> = {
+  static: "Só HTML, CSS e JS — ou o build pronto do seu React/Vite. Sem servidor.",
+  python: "Rode Python como site: Flask, FastAPI, Django ou o que trouxer.",
+  node: "Apps e APIs em JavaScript/TypeScript.",
+  php: "Sites e apps em PHP.",
+};
+/** Ordem fixa dos cards de código (client-side; não renumera o banco). */
+const CODE_ORDER = ["static", "node", "php", "python"];
+function codeRank(id: string): number {
+  const i = CODE_ORDER.indexOf(id);
+  return i === -1 ? CODE_ORDER.length : i;
+}
 
 function validateName(v: string): string | null {
   if (v.length < 2) return "Use ao menos 2 caracteres.";
@@ -100,7 +116,7 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
   // só com ativos). Sem isso, um tipo cujo único plano ficou inativo apareceria
   // "sem plano compatível" e não daria pra contratar.
   const typeHasPlan = React.useCallback((t: EnvType) => plans.some((p) => planMeets(p, t)), [plans, planMeets]);
-  const availableCode = codeTypes.filter(typeHasPlan);
+  const availableCode = codeTypes.filter(typeHasPlan).sort((a, b) => codeRank(a.id) - codeRank(b.id));
   const availableService = serviceTypes.filter(typeHasPlan);
   const shownTypes = filter === "code" ? availableCode : filter === "service" ? availableService : [...availableCode, ...availableService];
 
@@ -238,6 +254,7 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                         typeId={t.id}
                         label={t.label}
                         category={code ? "Código" : t.category === "stack" ? "App + banco" : "Serviço"}
+                        subtitle={code ? CARD_SUBTITLE[t.id] : undefined}
                         fromCents={fromPriceOf(t)}
                         selected={currentKey === key}
                         onPick={pick}
@@ -269,12 +286,12 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                   </p>
                 </div>
 
-                {mode === "code" ? (
+                {mode === "code" && runtimeHasVersions(kind) ? (
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="env-version" className="text-[13px] font-medium text-text2">Versão</label>
                     <select id="env-version" value={version} onChange={(e) => setVersion(e.target.value)} className={fieldCls}>
                       {versions.map((v) => (
-                        <option key={v} value={v}>{kind === "php" ? "PHP" : "Node.js"} {v}</option>
+                        <option key={v} value={v}>{RUNTIME_LABEL[kind]} {v}</option>
                       ))}
                     </select>
                   </div>
@@ -383,6 +400,7 @@ function TypeCard({
   typeId,
   label,
   category,
+  subtitle,
   fromCents,
   selected,
   onPick,
@@ -391,6 +409,7 @@ function TypeCard({
   typeId: string;
   label: string;
   category: string;
+  subtitle?: string;
   fromCents: number | null;
   selected: boolean;
   onPick: (id: string) => void;
@@ -406,9 +425,9 @@ function TypeCard({
       <TechIconById id={typeId} size={34} />
       <div className="mt-0.5">
         <p className="text-[15px] font-semibold text-text">{label}</p>
-        <p className="text-[12px] text-text3">{category}</p>
+        {subtitle ? <p className="text-[11.5px] leading-snug text-text3">{subtitle}</p> : <p className="text-[12px] text-text3">{category}</p>}
       </div>
-      <p className="text-[12.5px] font-medium tabular-nums text-text2">
+      <p className="mt-auto text-[12.5px] font-medium tabular-nums text-text2">
         {fromCents == null ? "sem plano compatível" : `a partir de ${formatCents(fromCents)}/mês`}
       </p>
     </label>
