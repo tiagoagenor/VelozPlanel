@@ -63,6 +63,8 @@ export default function DeployPage() {
   const [framework, setFramework] = React.useState<Fw>("none");
   const [wRepo, setWRepo] = React.useState("");
   const [wType, setWType] = React.useState<"ssh" | "http">("ssh");
+  const [wUser, setWUser] = React.useState("");
+  const [wPass, setWPass] = React.useState("");
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["deploy", id] });
 
@@ -232,17 +234,29 @@ export default function DeployPage() {
           <Card><div className="flex flex-col gap-4">
             <h3 className="font-semibold text-text">Qual o repositório?</h3>
             <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-text3">Tipo de conexão</span>
-              <div className="flex gap-2">{(["ssh", "http"] as const).map((tp) => (<button key={tp} type="button" onClick={() => { setWType(tp); setWRepo(""); }} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${wType === tp ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{tp === "ssh" ? "SSH (chave)" : "HTTPS (usuário e senha)"}</button>))}</div>
+              <div className="flex gap-2">{(["ssh", "http"] as const).map((tp) => (<button key={tp} type="button" onClick={() => { setWType(tp); setWRepo(""); setWUser(""); setWPass(""); }} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${wType === tp ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{tp === "ssh" ? "SSH (chave)" : "HTTPS (usuário e senha)"}</button>))}</div>
             </div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="wrepo">URL do repositório</Label>
               <Input id="wrepo" className="font-mono" placeholder={wType === "ssh" ? "git@github.com:usuario/projeto.git" : "https://github.com/usuario/projeto.git"} value={wRepo} onChange={(e) => setWRepo(e.target.value)} />
               <p className="text-xs text-text3">Não precisa informar a branch — a gente detecta.</p>
             </div>
+            {wType === "http" ? (
+              <div className="flex flex-col gap-2 rounded-xl border border-border-subtle bg-bg/60 p-3">
+                <span className="text-xs font-medium text-text3">Usuário e senha (só para repositório privado)</span>
+                <Input placeholder="usuário" autoComplete="off" value={wUser} onChange={(e) => setWUser(e.target.value)} />
+                <Input type="password" placeholder="senha ou token de acesso" autoComplete="off" value={wPass} onChange={(e) => setWPass(e.target.value)} />
+                <p className="text-xs text-text3">Dica: no GitHub use um <strong>token</strong> como senha (Settings → Developer settings → Personal access tokens). Repositório público? Pode deixar em branco.</p>
+              </div>
+            ) : null}
             <div className="flex justify-between"><Button variant="ghost" onClick={() => setWStep(1)}><ArrowLeft size={16} /> Voltar</Button>
               <Button disabled={!wRepo.trim() || saveConn.isPending || probe.isPending} onClick={async () => {
                 let mode: "ssh" | "http" | "public" = wType;
-                if (wType === "http") { try { const r = await probe.mutateAsync(wRepo); if (!r.isPrivate) mode = "public"; } catch { /* segue http */ } }
+                if (wType === "http" && !wUser.trim() && !wPass.trim()) { try { const r = await probe.mutateAsync(wRepo); if (!r.isPrivate) mode = "public"; } catch { /* segue http */ } }
                 await saveConn.mutateAsync({ connectionMode: mode, repoUrl: wRepo, framework });
+                if (mode === "http" && wUser.trim() && wPass.trim()) {
+                  try { await api.setDeployHttpCredentials(id, { username: wUser.trim(), password: wPass.trim() }); } catch { /* mostra no card de credenciais */ }
+                }
+                setWUser(""); setWPass("");
                 setWizard(false);
               }}>{saveConn.isPending || probe.isPending ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />} Continuar</Button></div>
           </div></Card>
