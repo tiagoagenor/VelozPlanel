@@ -8,6 +8,7 @@ import type {
   DbResult,
   DbRunSqlInput,
   DbRunMongoInput,
+  DbRunRedisInput,
   Environment,
   FileContent,
   FileList,
@@ -254,7 +255,7 @@ export function unlockStudio(id: string, password: string): Promise<{ ok: boolea
 export function studioExec(id: string, body: DbStudioExecBody): Promise<DbResult> {
   return request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body });
 }
-export type DbStudioExecBody = { sql: DbRunSqlInput } | { mongo: DbRunMongoInput };
+export type DbStudioExecBody = { sql: DbRunSqlInput } | { mongo: DbRunMongoInput } | { redis: DbRunRedisInput };
 
 export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
@@ -937,4 +938,10 @@ export function listPlans(): Promise<Plan[]> {
 /** Saldo do próprio usuário + extrato (painel do cliente). */
 export function getBalance(): Promise<Balance> {
   return request<Balance>("/balance");
+}
+
+/** Jamees Studio: URL do stream SSE de pub/sub do Redis (mesma origem, cookie via fetch). */
+export function redisSubscribeUrl(id: string, mode: "channel" | "pattern", target: string, db: number): string {
+  const qs = new URLSearchParams({ mode, target, db: String(db) });
+  return `${API_BASE}/environments/${id}/studio/redis/subscribe?${qs.toString()}`;
 }

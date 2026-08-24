@@ -211,6 +211,60 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
     );
     return reply.code(200).send(result);
   });
+
+  // GET redis/subscribe — proxy do stream SSE de pub/sub (gate posse/running/senha/engine=redis).
+  const subQuery = z.object({
+    mode: z.enum(["channel", "pattern"]).optional().default("channel"),
+    target: z.string().min(1).max(512),
+    db: z.coerce.number().int().min(0).max(15).optional().default(0),
+  });
+  app.get(
+    "/environments/:id/studio/redis/subscribe",
+    { schema: { params: idParams, querystring: subQuery } },
+    async (req, reply) => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (engineForEnv(env) !== "redis") throw new ApiHttpError(400, "nao_e_redis", "pub/sub só está disponível para Redis");
+      const row = await loadStudioRow(env.id);
+      if (!row?.enabled) throw new ApiHttpError(403, "studio_desligado", "ative o Data Studio para usá-lo");
+      if (row.passwordHash && user.role !== "admin" && !verifyStudioUnlock(req.cookies[studioCookie(env.id)], env.id)) {
+        throw new ApiHttpError(401, "studio_bloqueado", "desbloqueie o Data Studio com a senha");
+      }
+      if (env.state !== "running" || !env.containerId) throw new ApiHttpError(409, "ambiente_parado", "inicie o ambiente");
+      const { url, headers } = agent.redisSubscribeStream(await agentUrlForEnv(env), env.containerId, req.query);
+      let upstream: Response;
+      try {
+        upstream = await fetch(url, { headers });
+      } catch {
+        return reply.code(502).send({ error: "agent_unreachable", message: "não foi possível falar com o Agente" });
+      }
+      if (!upstream.ok || !upstream.body) return reply.code(502).send({ error: "agent_error", message: `Agente respondeu ${upstream.status}` });
+      reply.hijack();
+      const raw = reply.raw;
+      raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      const reader = upstream.body.getReader();
+      const pump = async (): Promise<void> => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) raw.write(Buffer.from(value));
+          }
+        } catch {
+          /* encerrado */
+        } finally {
+          raw.end();
+        }
+      };
+      void pump();
+      req.raw.on("close", () => void reader.cancel().catch(() => {}));
+    },
+  );
 }
 
 /** Cookie de desbloqueio do Studio (httpOnly, curto). */

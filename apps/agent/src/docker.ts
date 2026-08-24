@@ -1150,3 +1150,70 @@ export async function runDbConsole(args: RunDbConsoleArgs): Promise<DbResult> {
     dbConsoleLocks.delete(args.envId);
   }
 }
+
+/* ─────────────── Redis Pub/Sub (stream SSE — molde dos logs) ─────────────── */
+
+export interface RedisSubStream {
+  stream: NodeJS.ReadableStream;
+  kill: () => void;
+}
+
+/** Abre um SUBSCRIBE/PSUBSCRIBE via redis-cli --csv e devolve o stdout (linhas CSV). */
+export async function redisSubscribeStream(
+  containerId: string,
+  mode: "channel" | "pattern",
+  target: string,
+  db: number,
+): Promise<RedisSubStream> {
+  const { PassThrough } = await import("node:stream");
+  const verb = mode === "pattern" ? "psubscribe" : "subscribe";
+  const dbn = Number.isInteger(db) ? Math.max(0, Math.min(15, db)) : 0;
+  // `timeout 3600` reap um assinante abandonado (docker exec não expõe kill do processo).
+  const cmd = ["timeout", "3600", "redis-cli", "-n", String(dbn), "--csv", verb, target];
+  const ex = await docker.getContainer(containerId).exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true, Tty: false });
+  const raw = await ex.start({ hijack: true, stdin: false });
+  const out = new PassThrough();
+  docker.modem.demuxStream(raw, out, out);
+  const kill = (): void => {
+    try {
+      (raw as unknown as { destroy?: () => void }).destroy?.();
+    } catch {
+      /* noop */
+    }
+    out.end();
+  };
+  raw.on("end", () => out.end());
+  raw.on("close", () => out.end());
+  return { stream: out, kill };
+}
+
+/** Split de uma linha CSV do redis-cli (`"a","b",c`) respeitando aspas. */
+export function splitRedisCsv(line: string): string[] {
+  const fields: string[] = [];
+  let f = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (q) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') { f += '"'; i++; } else q = false;
+      } else f += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") { fields.push(f); f = ""; }
+    else f += ch;
+  }
+  fields.push(f);
+  return fields;
+}
+
+/** Normaliza uma linha do subscribe/psubscribe num objeto de mensagem. */
+export function redisPubSubMessage(line: string): { type: string; channel?: string; pattern?: string; payload?: string } | null {
+  if (!line.trim()) return null;
+  const f = splitRedisCsv(line);
+  const type = f[0] ?? "";
+  if (type === "message") return { type, channel: f[1], payload: f[2] };
+  if (type === "pmessage") return { type, pattern: f[1], channel: f[2], payload: f[3] };
+  if (type === "subscribe" || type === "psubscribe" || type === "unsubscribe" || type === "punsubscribe")
+    return { type, channel: f[1] };
+  return { type: type || "raw", payload: line };
+}

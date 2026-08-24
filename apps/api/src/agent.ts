@@ -412,3 +412,15 @@ export function dbExec(
 ): Promise<DbResult> {
   return call<DbResult>(agentUrl, "POST", "/db/exec", body, 40_000);
 }
+
+/** Jamees Studio: URL+headers do stream SSE de pub/sub do Redis (a API proxia). */
+export function redisSubscribeStream(
+  agentUrl: string,
+  containerId: string,
+  params: { mode: "channel" | "pattern"; target: string; db: number },
+): { url: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = {};
+  if (process.env.VP_INTERNAL_TOKEN) headers["x-agent-token"] = process.env.VP_INTERNAL_TOKEN;
+  const qs = new URLSearchParams({ mode: params.mode, target: params.target, db: String(params.db) });
+  return { url: `${agentUrl}/db/redis/subscribe/${containerId}?${qs.toString()}`, headers };
+}

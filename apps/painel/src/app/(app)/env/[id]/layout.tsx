@@ -63,7 +63,7 @@ interface Section {
   appOnly?: boolean; // não faz sentido em ambientes-serviço (só apps/stacks)
 }
 
-const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb"]);
+const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb", "redis"]);
 function isDbServiceEnv(env: { category?: string | null; type?: string | null } | undefined): boolean {
   return !!env && env.category === "service" && !!env.type && STUDIO_ENGINES.has(env.type);
 }

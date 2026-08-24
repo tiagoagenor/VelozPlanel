@@ -575,6 +575,53 @@ app.get("/container/:id/logs/stream", async (req, reply) => {
   req.raw.on("close", cleanup);
 });
 
+// Jamees Studio — Pub/Sub do Redis (stream SSE). A API valida posse/running/senha.
+app.get("/db/redis/subscribe/:id", async (req, reply) => {
+  const p = containerIdParams.safeParse(req.params);
+  if (!p.success) return reply.code(400).send({ error: "bad_request" });
+  const q = z
+    .object({
+      mode: z.enum(["channel", "pattern"]).optional().default("channel"),
+      target: z.string().min(1).max(512),
+      db: z.coerce.number().int().min(0).max(15).optional().default(0),
+    })
+    .safeParse(req.query);
+  if (!q.success) return reply.code(400).send({ error: "bad_request", message: q.error.message });
+  let sub: dockerDriver.RedisSubStream;
+  try {
+    sub = await dockerDriver.redisSubscribeStream(p.data.id, q.data.mode, q.data.target, q.data.db);
+  } catch (err) {
+    req.log.error({ err }, "redis subscribe failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+  reply.hijack();
+  const raw = reply.raw;
+  raw.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  raw.write("retry: 3000\n\n");
+  let buf = "";
+  sub.stream.on("data", (chunk: Buffer) => {
+    buf += chunk.toString("utf8");
+    const parts = buf.split("\n");
+    buf = parts.pop() ?? "";
+    for (const line of parts) {
+      const msg = dockerDriver.redisPubSubMessage(line);
+      if (msg) raw.write(`data: ${JSON.stringify(msg)}\n\n`);
+    }
+  });
+  sub.stream.on("end", () => raw.end());
+  sub.stream.on("error", () => raw.end());
+  const hb = setInterval(() => raw.write(": ping\n\n"), 25_000);
+  req.raw.on("close", () => {
+    clearInterval(hb);
+    sub.kill();
+  });
+});
+
 const attachNetworkBody = z.object({
   containerId: z.string().min(1),
   network: z.object({
