@@ -34,6 +34,7 @@ import {
   Braces,
   ScrollText,
   Archive,
+  Table2,
   Play,
   Pause,
   RotateCw,
@@ -58,6 +59,12 @@ interface Section {
   label: string;
   icon: LucideIcon;
   soon?: boolean;
+  dbOnly?: boolean; // só aparece em ambientes-serviço de banco (Jamees Studio)
+}
+
+const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb"]);
+function isDbServiceEnv(env: { category?: string | null; type?: string | null } | undefined): boolean {
+  return !!env && env.category === "service" && !!env.type && STUDIO_ENGINES.has(env.type);
 }
 
 // Todas as seções são telas REAIS e funcionais — só "Backups" é placeholder
@@ -75,6 +82,7 @@ const SECTIONS: Section[] = [
   { seg: "sftp", label: "SFTP", icon: FolderSync },
   { seg: "deploy", label: "Deploy", icon: Rocket },
   { seg: "variaveis", label: "Variáveis", icon: Braces },
+  { seg: "studio", label: "Data Studio", icon: Table2, dbOnly: true },
   { seg: "logs", label: "Logs", icon: ScrollText },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
@@ -187,7 +195,7 @@ export default function EnvContextLayout({
               "lg:overflow-x-visible lg:overflow-y-auto lg:px-3 lg:pb-4",
             )}
           >
-              {SECTIONS.map((s) => {
+              {SECTIONS.filter((s) => !s.dbOnly || isDbServiceEnv(env)).map((s) => {
                 const active = s.seg === currentSeg;
                 const brevePill = (
                   <span className="ml-auto shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.04em] text-text3">

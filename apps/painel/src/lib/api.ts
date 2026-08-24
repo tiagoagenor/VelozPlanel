@@ -4,6 +4,10 @@ import type {
   CreateEnvironmentInput,
   Database,
   DatabaseWithSecret,
+  DbStudioConfig,
+  DbResult,
+  DbRunSqlInput,
+  DbRunMongoInput,
   Environment,
   FileContent,
   FileList,
@@ -233,6 +237,24 @@ export function createEnvironment(
 export function pauseEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/pause`, { method: "POST" });
 }
+
+/* ── Jamees Studio (console de banco) ── */
+export function getStudioConfig(id: string): Promise<DbStudioConfig> {
+  return request<DbStudioConfig>(`/environments/${id}/studio`);
+}
+export function setStudioEnabled(id: string, enabled: boolean): Promise<DbStudioConfig> {
+  return request<DbStudioConfig>(`/environments/${id}/studio/enable`, { method: "POST", body: { enabled } });
+}
+export function setStudioPassword(id: string, password: string | null): Promise<DbStudioConfig> {
+  return request<DbStudioConfig>(`/environments/${id}/studio/password`, { method: "POST", body: { password } });
+}
+export function unlockStudio(id: string, password: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/environments/${id}/studio/unlock`, { method: "POST", body: { password } });
+}
+export function studioExec(id: string, body: DbStudioExecBody): Promise<DbResult> {
+  return request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body });
+}
+export type DbStudioExecBody = { sql: DbRunSqlInput } | { mongo: DbRunMongoInput };
 
 export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
