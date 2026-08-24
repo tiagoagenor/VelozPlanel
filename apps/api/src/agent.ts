@@ -1,4 +1,4 @@
-import type { RuntimeSpec } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbResult } from "@velozplanel/contracts";
 import { ApiHttpError } from "./auth";
 
 /**
@@ -403,4 +403,12 @@ export function downloadFile(
     "GET",
     `/files/${encodeURIComponent(containerId)}/download?path=${encodeURIComponent(path)}`,
   );
+}
+
+/** Jamees Studio: executa uma consulta/comando de banco no container (timeout 40s > 25s do engine). */
+export function dbExec(
+  agentUrl: string,
+  body: { containerId: string; envId: string; engine: StudioEngine; sql?: DbRunSqlInput; mongo?: DbRunMongoInput },
+): Promise<DbResult> {
+  return call<DbResult>(agentUrl, "POST", "/db/exec", body, 40_000);
 }

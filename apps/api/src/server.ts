@@ -50,6 +50,7 @@ import { plansRoutes } from "./routes/plans";
 import { internalRoutes } from "./routes/internal";
 import { dnsRoutes } from "./routes/dns";
 import { domainsRoutes } from "./routes/domains";
+import { dbConsoleRoutes } from "./routes/db-console";
 import { startMetricsCollector } from "./metrics-collector";
 import { startBillingScheduler } from "./billing";
 import { startProvisionWorker } from "./worker";
@@ -153,6 +154,7 @@ async function main(): Promise<void> {
       await v1.register(internalRoutes);
       await v1.register(dnsRoutes);
       await v1.register(domainsRoutes);
+      await v1.register(dbConsoleRoutes);
     },
     { prefix: "/api/v1" },
   );

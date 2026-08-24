@@ -107,3 +107,17 @@ export async function requireAdmin(req: FastifyRequest): Promise<SessionUser> {
   }
   return user;
 }
+
+/** Jamees Studio: token curto de "desbloqueio" da senha opcional (por ambiente). */
+export function signStudioUnlock(envId: string): string {
+  return jwt.sign({ purpose: "jstudio", envId }, JWT_SECRET, { expiresIn: "30m" });
+}
+export function verifyStudioUnlock(token: string | undefined, envId: string): boolean {
+  if (!token) return false;
+  try {
+    const d = jwt.verify(token, JWT_SECRET) as { purpose?: string; envId?: string };
+    return d.purpose === "jstudio" && d.envId === envId;
+  } catch {
+    return false;
+  }
+}
