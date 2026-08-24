@@ -15,39 +15,23 @@ import {
   LifeBuoy,
   AlertTriangle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Info,
+  ArrowDownCircle,
+  ArrowUpCircle,
 } from "lucide-react";
-import {
-  hourlyActiveCents,
-  hourlyPausedCents,
-  type Environment,
-  type EnvType,
-  type Plan,
-  type Balance,
-  type CreditTransaction,
-} from "@velozplanel/contracts";
+import { type Environment, type Balance, type CreditTransaction } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
-import { usePlans } from "@/lib/usePlans";
 import { cn } from "@/lib/cn";
 import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { SegmentedControl } from "@/components/ui/segmented";
-import { EnvStateBadge } from "@/components/EnvStateBadge";
 import { CenterLoader } from "@/components/Skeletons";
-import {
-  formatCents,
-  formatCentsFine,
-  formatSignedCents,
-  formatDateTime,
-  formatEstimate,
-} from "@/lib/format";
+import { formatCents, formatSignedCents, formatCentsFine, formatDateTime, formatEstimate } from "@/lib/format";
 
 export default function FinanceiroPage() {
   const balanceQ = useQuery({ queryKey: ["balance"], queryFn: api.getBalance, staleTime: 30_000 });
   const envsQ = useQuery({ queryKey: ["environments"], queryFn: api.listEnvironments });
-  const typesQ = useQuery({ queryKey: ["env-types-public"], queryFn: api.listServiceTypes });
-  const { byId: plansById } = usePlans();
 
   return (
     <div className="flex flex-col gap-6">
@@ -57,7 +41,7 @@ export default function FinanceiroPage() {
           Financeiro
         </h1>
         <p className="mt-1 text-sm text-text2">
-          Saldo pré-pago, consumo de cada ambiente e histórico de lançamentos.
+          Saldo pré-pago e o fechamento de cada mês (consumo e recargas).
         </p>
       </header>
 
@@ -72,8 +56,7 @@ export default function FinanceiroPage() {
         <>
           <StatusBanner balance={balanceQ.data} envs={envsQ.data ?? []} />
           <BalanceSummary balance={balanceQ.data} />
-          <PerEnvUsage envs={envsQ.data ?? []} types={typesQ.data ?? []} plansById={plansById} loading={envsQ.isPending} />
-          <TransactionList transactions={balanceQ.data.transactions} />
+          <MonthlyStatement transactions={balanceQ.data.transactions} />
           <AddBalanceCard />
         </>
       )}
@@ -81,7 +64,7 @@ export default function FinanceiroPage() {
   );
 }
 
-/* ─────────────── Faixa de estado ─────────────── */
+/* ─────────────── Faixa de estado (situação atual) ─────────────── */
 
 function StatusBanner({ balance, envs }: { balance: Balance; envs: Environment[] }) {
   const hasActive = envs.some((e) => e.state === "running");
@@ -101,18 +84,10 @@ function StatusBanner({ balance, envs }: { balance: Balance; envs: Environment[]
   }
   if (balance.estimateMonths != null && balance.estimateMonths < 0.5) {
     const days = Math.max(1, Math.round(balance.estimateMonths * 30));
-    return (
-      <Banner tone="warning">
-        <span>Saldo baixo: no ritmo atual, dura <strong>~{days} {days === 1 ? "dia" : "dias"}</strong>.</span>
-      </Banner>
-    );
+    return <Banner tone="warning">Saldo baixo: no ritmo atual, dura <strong>~{days} {days === 1 ? "dia" : "dias"}</strong>.</Banner>;
   }
   if (balance.estimateMonths == null && balance.balanceCents > 0) {
-    return (
-      <Banner tone="info">
-        <span>Você não tem ambientes ativos — nada está sendo cobrado no momento.</span>
-      </Banner>
-    );
+    return <Banner tone="info">Você não tem ambientes ativos — nada está sendo cobrado no momento.</Banner>;
   }
   return null;
 }
@@ -135,7 +110,7 @@ function Banner({ tone, children, action }: { tone: "danger" | "warning" | "info
   );
 }
 
-/* ─────────────── Resumo do saldo ─────────────── */
+/* ─────────────── Situação atual (saldo ao vivo) ─────────────── */
 
 function BalanceSummary({ balance }: { balance: Balance }) {
   const negative = balance.balanceCents < 0;
@@ -143,229 +118,221 @@ function BalanceSummary({ balance }: { balance: Balance }) {
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <Card>
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text3">
-          <Wallet size={14} aria-hidden="true" /> Saldo total
+          <Wallet size={14} aria-hidden="true" /> Saldo atual
         </div>
-        <p className={cn("mt-1 text-[26px] font-bold tabular-nums", negative ? "text-danger" : "text-text")}>
-          {formatCents(balance.balanceCents)}
-        </p>
+        <p className={cn("mt-1 text-[26px] font-bold tabular-nums", negative ? "text-danger" : "text-text")}>{formatCents(balance.balanceCents)}</p>
         <p className="mt-1 text-xs text-text2">
           Dinheiro <span className="font-medium text-text">{formatCents(balance.moneyCents)}</span>
           {" · "}Bônus <span className="font-medium text-text">{formatCents(balance.bonusCents)}</span>
         </p>
       </Card>
-
       <Card>
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text3">
           <TrendingDown size={14} aria-hidden="true" /> Gasto mensal estimado
         </div>
         <p className="mt-1 text-[26px] font-bold tabular-nums text-text">{formatCents(balance.monthlyBurnCents)}</p>
-        <p className="mt-1 text-xs text-text2">
-          ≈ {formatCents(Math.round(balance.monthlyBurnCents / 30))}/dia · {formatCentsFine(balance.monthlyBurnCents / 720)}/hora
-        </p>
+        <p className="mt-1 text-xs text-text2">≈ {formatCents(Math.round(balance.monthlyBurnCents / 30))}/dia · {formatCentsFine(balance.monthlyBurnCents / 720)}/hora</p>
       </Card>
-
       <Card>
         <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text3">
           <Clock size={14} aria-hidden="true" /> Duração estimada
         </div>
         <p className="mt-1 text-[26px] font-bold text-text">{formatEstimate(balance.estimateMonths)}</p>
-        <p className="mt-1 text-xs text-text2">
-          {balance.estimateMonths == null ? "sem ambiente ativo" : "no ritmo de consumo atual"}
-        </p>
+        <p className="mt-1 text-xs text-text2">{balance.estimateMonths == null ? "sem ambiente ativo" : "no ritmo de consumo atual"}</p>
       </Card>
     </div>
   );
 }
 
-/* ─────────────── Consumo por ambiente ─────────────── */
+/* ─────────────── Fechamento mês a mês ─────────────── */
 
-type EnvCost = { monthCents: number | null; hourCents: number | null; note?: string };
-
-function computeEnvCost(env: Environment, plansById: Map<string, Plan>, typeById: Map<string, EnvType>): EnvCost {
-  const plan = plansById.get(env.plan);
-  if (!plan) return { monthCents: null, hourCents: null };
-  if (env.state === "running") {
-    const adder = env.type ? typeById.get(env.type)?.priceMonthCents ?? 0 : 0;
-    return { monthCents: plan.priceMonthCents + adder, hourCents: hourlyActiveCents(plan, adder) };
-  }
-  if (env.state === "paused") {
-    const hour = hourlyPausedCents(plan);
-    return { monthCents: Math.round(hour * 720), hourCents: hour, note: "pausado · só disco" };
-  }
-  return { monthCents: null, hourCents: null };
+function monthKeyOf(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthKey(year: number, month0: number): string {
+  return `${year}-${String(month0 + 1).padStart(2, "0")}`;
+}
+function isEntry(kind: string): boolean {
+  return kind === "admin_money" || kind === "admin_bonus" || kind === "admin_credit";
 }
 
-function PerEnvUsage({
-  envs,
-  types,
-  plansById,
-  loading,
-}: {
-  envs: Environment[];
-  types: EnvType[];
-  plansById: Map<string, Plan>;
-  loading: boolean;
-}) {
-  const typeById = React.useMemo(() => new Map(types.map((t) => [t.id, t])), [types]);
-  const rows = envs.map((env) => ({ env, cost: computeEnvCost(env, plansById, typeById) }));
-  const totalMonth = rows.reduce((s, r) => s + (r.cost.monthCents ?? 0), 0);
+function MonthlyStatement({ transactions }: { transactions: CreditTransaction[] }) {
+  const now = new Date();
+  const [sel, setSel] = React.useState<{ year: number; month0: number }>({ year: now.getFullYear(), month0: now.getMonth() });
+
+  // Mês mais antigo com lançamento (limite do "voltar").
+  const earliest = React.useMemo(() => {
+    if (transactions.length === 0) return { year: now.getFullYear(), month0: now.getMonth() };
+    let min = Infinity;
+    for (const t of transactions) { const ms = new Date(t.createdAt).getTime(); if (ms < min) min = ms; }
+    const d = new Date(min);
+    return { year: d.getFullYear(), month0: d.getMonth() };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions]);
+
+  const selKey = monthKey(sel.year, sel.month0);
+  const isCurrent = sel.year === now.getFullYear() && sel.month0 === now.getMonth();
+  const atEarliest = sel.year === earliest.year && sel.month0 === earliest.month0;
+
+  function shift(delta: number) {
+    const d = new Date(sel.year, sel.month0 + delta, 1);
+    setSel({ year: d.getFullYear(), month0: d.getMonth() });
+  }
+
+  // Lançamentos do mês selecionado.
+  const monthTxs = React.useMemo(
+    () => transactions.filter((t) => monthKeyOf(t.createdAt) === selKey),
+    [transactions, selKey],
+  );
+
+  // Totais do mês.
+  const consumedCents = monthTxs.filter((t) => t.kind === "usage").reduce((s, t) => s + Math.abs(t.amountCents), 0);
+  const addedCents = monthTxs.filter((t) => isEntry(t.kind)).reduce((s, t) => s + t.amountCents, 0);
+  // Saldo ao fim do mês = soma de tudo até o fim do mês selecionado.
+  const endOfMonth = new Date(sel.year, sel.month0 + 1, 1).getTime();
+  const endBalanceCents = transactions.reduce((s, t) => (new Date(t.createdAt).getTime() < endOfMonth ? s + t.amountCents : s), 0);
+
+  // Consumo por ambiente no mês (estimado a partir do texto do lançamento).
+  const byEnv = React.useMemo(() => {
+    const m = new Map<string, { cents: number; domain: boolean }>();
+    for (const t of monthTxs) {
+      if (t.kind !== "usage") continue;
+      const raw = (t.reason ?? "consumo").split(" · ")[0]!.trim();
+      const domain = raw.toLowerCase().startsWith("domínio");
+      const label = domain ? raw.replace(/^dom[íi]nio\s+/i, "") : raw;
+      const prev = m.get(label) ?? { cents: 0, domain };
+      prev.cents += Math.abs(t.amountCents);
+      m.set(label, prev);
+    }
+    return [...m.entries()].map(([label, v]) => ({ label, ...v })).sort((a, b) => b.cents - a.cents);
+  }, [monthTxs]);
+
+  const monthLabel = new Date(sel.year, sel.month0, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
 
   return (
     <Card className="p-0">
-      <div className="flex items-center gap-2 px-5 pt-5">
-        <Server size={18} aria-hidden="true" className="text-text3" />
-        <h2 className="text-sm font-semibold text-text">Consumo por ambiente</h2>
-      </div>
-      <p className="px-5 pb-3 pt-1 text-xs text-text3">
-        Ativo cobra o plano (+ adicional do tipo); pausado cobra só o disco. Valores estimados.
-      </p>
-      {loading ? (
-        <div className="m-5 mt-0 h-24 animate-pulse rounded-lg bg-bg" />
-      ) : rows.length === 0 ? (
-        <p className="px-5 pb-5 text-sm text-text2">Você ainda não tem ambientes.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[38rem] border-collapse text-sm">
-            <caption className="sr-only">Custo estimado de cada ambiente por mês e por hora.</caption>
-            <thead>
-              <tr className="border-y border-border-subtle bg-bg text-left text-text3">
-                <th scope="col" className="px-5 py-2.5 font-semibold">Ambiente</th>
-                <th scope="col" className="px-3 py-2.5 font-semibold">Plano</th>
-                <th scope="col" className="px-3 py-2.5 font-semibold">Estado</th>
-                <th scope="col" className="px-3 py-2.5 text-right font-semibold">R$/mês</th>
-                <th scope="col" className="px-5 py-2.5 text-right font-semibold">R$/hora</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ env, cost }) => (
-                <tr key={env.id} className="border-b border-border-subtle last:border-0 hover:bg-bg">
-                  <td className="px-5 py-3">
-                    <Link href={`/env/${env.id}`} className="font-medium text-link hover:underline">{env.name}</Link>
-                    {cost.note ? <span className="ml-2 text-xs text-text3">{cost.note}</span> : null}
-                  </td>
-                  <td className="px-3 py-3 text-text2">{plansById.get(env.plan)?.label ?? env.plan}</td>
-                  <td className="px-3 py-3"><EnvStateBadge state={env.state} /></td>
-                  <td className="px-3 py-3 text-right tabular-nums text-text">{cost.monthCents == null ? "—" : formatCents(cost.monthCents)}</td>
-                  <td className="px-5 py-3 text-right tabular-nums text-text2">{cost.hourCents == null ? "—" : formatCentsFine(cost.hourCents)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-border-subtle bg-bg font-semibold">
-                <td className="px-5 py-3 text-text" colSpan={3}>Total das máquinas</td>
-                <td className="px-3 py-3 text-right tabular-nums text-text">{formatCents(totalMonth)}</td>
-                <td className="px-5 py-3 text-right tabular-nums text-text2">{formatCentsFine(totalMonth / 720)}</td>
-              </tr>
-            </tfoot>
-          </table>
+      {/* Seletor de mês */}
+      <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-5 py-4">
+        <h2 className="text-sm font-semibold text-text">Fechamento mensal</h2>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => shift(-1)} disabled={atEarliest} aria-label="Mês anterior" className="grid h-8 w-8 place-items-center rounded-lg border border-border text-text2 hover:text-text disabled:opacity-40">
+            <ChevronLeft size={16} aria-hidden="true" />
+          </button>
+          <span className="min-w-[9.5rem] text-center text-sm font-medium capitalize text-text">{monthLabel}</span>
+          <button type="button" onClick={() => shift(1)} disabled={isCurrent} aria-label="Próximo mês" className="grid h-8 w-8 place-items-center rounded-lg border border-border text-text2 hover:text-text disabled:opacity-40">
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
         </div>
+      </div>
+
+      {/* Resumo do mês */}
+      <div className="grid grid-cols-1 gap-px bg-border-subtle sm:grid-cols-3">
+        <MonthStat icon={ArrowUpCircle} label="Consumido no mês" value={formatCents(consumedCents)} tone="danger" />
+        <MonthStat icon={ArrowDownCircle} label="Adicionado no mês" value={formatCents(addedCents)} tone="success" />
+        <MonthStat icon={Wallet} label="Saldo no fim do mês" value={formatCents(endBalanceCents)} tone={endBalanceCents < 0 ? "danger" : "neutral"} />
+      </div>
+
+      {monthTxs.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-text2">Nenhum lançamento em {monthLabel}.</p>
+      ) : (
+        <>
+          {/* Consumo por ambiente no mês */}
+          {byEnv.length > 0 ? (
+            <section className="border-t border-border-subtle px-5 py-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-text3">Consumo por ambiente</h3>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {byEnv.map((e) => (
+                  <li key={e.label} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="flex min-w-0 items-center gap-2 text-text">
+                      {e.domain ? <Globe size={14} aria-hidden="true" className="shrink-0 text-text3" /> : <Server size={14} aria-hidden="true" className="shrink-0 text-text3" />}
+                      <span className="truncate">{e.label}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums text-text2">{formatCents(e.cents)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11px] text-text3">Estimativa a partir do histórico de cobrança do mês.</p>
+            </section>
+          ) : null}
+
+          {/* Lançamentos do mês */}
+          <section className="border-t border-border-subtle">
+            <h3 className="px-5 pt-4 text-xs font-semibold uppercase tracking-wide text-text3">Lançamentos</h3>
+            <MonthEntries txs={monthTxs} />
+          </section>
+        </>
       )}
     </Card>
   );
 }
 
-/* ─────────────── Extrato ─────────────── */
-
-type Filter = "recargas" | "consumo" | "tudo";
-
-function isEntry(kind: string): boolean {
-  return kind === "admin_money" || kind === "admin_bonus" || kind === "admin_credit";
+function MonthStat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ size?: number; className?: string; "aria-hidden"?: boolean }>; label: string; value: string; tone: "danger" | "success" | "neutral" }) {
+  const color = tone === "danger" ? "text-danger" : tone === "success" ? "text-success" : "text-text";
+  return (
+    <div className="bg-surface px-5 py-4">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-text3">
+        <Icon size={14} aria-hidden={true} /> {label}
+      </div>
+      <p className={cn("mt-1 text-xl font-bold tabular-nums", color)}>{value}</p>
+    </div>
+  );
 }
+
+/* Lançamentos do mês: recargas individuais + consumo agrupado por dia. */
+type DayGroup = { day: string; iso: string; totalCents: number; items: CreditTransaction[] };
+
 function localDayKey(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 }
 
-type DayGroup = { day: string; iso: string; totalCents: number; items: CreditTransaction[] };
-
-function TransactionList({ transactions }: { transactions: CreditTransaction[] }) {
-  const [filter, setFilter] = React.useState<Filter>("recargas");
-  const [limit, setLimit] = React.useState(20);
+function MonthEntries({ txs }: { txs: CreditTransaction[] }) {
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
-
-  React.useEffect(() => setLimit(20), [filter]);
-
-  // Constrói as "linhas" conforme o filtro. `usage` sempre agrupado por dia.
   const rows = React.useMemo(() => {
-    const nonUsage = transactions.filter((t) => t.kind !== "usage");
-    const usage = transactions.filter((t) => t.kind === "usage");
+    const nonUsage = txs.filter((t) => t.kind !== "usage");
     const byDay = new Map<string, DayGroup>();
-    for (const t of usage) {
+    for (const t of txs) {
+      if (t.kind !== "usage") continue;
       const key = localDayKey(t.createdAt);
       const g = byDay.get(key) ?? { day: key, iso: t.createdAt, totalCents: 0, items: [] };
       g.totalCents += t.amountCents;
       g.items.push(t);
-      if (t.createdAt > g.iso) g.iso = t.createdAt; // mais recente do dia = ordena
+      if (t.createdAt > g.iso) g.iso = t.createdAt;
       byDay.set(key, g);
     }
-    const groups = [...byDay.values()];
-    let list: Array<{ kind: "tx"; tx: CreditTransaction } | { kind: "day"; group: DayGroup }> = [];
-    if (filter === "recargas") list = nonUsage.map((tx) => ({ kind: "tx", tx }));
-    else if (filter === "consumo") list = groups.map((group) => ({ kind: "day", group }));
-    else
-      list = [
-        ...nonUsage.map((tx) => ({ kind: "tx" as const, tx })),
-        ...groups.map((group) => ({ kind: "day" as const, group })),
-      ];
-    // ordena desc pela data (tx.createdAt ou o mais recente do dia)
+    const list: Array<{ kind: "tx"; tx: CreditTransaction } | { kind: "day"; group: DayGroup }> = [
+      ...nonUsage.map((tx) => ({ kind: "tx" as const, tx })),
+      ...[...byDay.values()].map((group) => ({ kind: "day" as const, group })),
+    ];
     return list.sort((a, b) => {
       const da = a.kind === "tx" ? a.tx.createdAt : a.group.iso;
       const db = b.kind === "tx" ? b.tx.createdAt : b.group.iso;
       return db.localeCompare(da);
     });
-  }, [transactions, filter]);
-
-  const shown = rows.slice(0, limit);
+  }, [txs]);
 
   function toggle(day: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(day)) next.delete(day);
-      else next.add(day);
+      if (next.has(day)) next.delete(day); else next.add(day);
       return next;
     });
   }
 
   return (
-    <Card className="p-0">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5">
-        <h2 className="text-sm font-semibold text-text">Extrato</h2>
-        <SegmentedControl
-          label="Filtrar lançamentos"
-          value={filter}
-          onChange={(v) => setFilter(v as Filter)}
-          options={[
-            { value: "recargas", label: "Recargas" },
-            { value: "consumo", label: "Consumo" },
-            { value: "tudo", label: "Tudo" },
-          ]}
-        />
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="px-5 py-6 text-sm text-text2">Nenhum lançamento nesta visão.</p>
-      ) : (
-        <ul className="mt-3 divide-y divide-border-subtle">
-          {shown.map((row) =>
-            row.kind === "tx" ? (
-              <TxRow key={row.tx.id} tx={row.tx} />
-            ) : (
-              <DayRow key={row.group.day} group={row.group} open={expanded.has(row.group.day)} onToggle={() => toggle(row.group.day)} />
-            ),
-          )}
-        </ul>
+    <ul className="mt-2 divide-y divide-border-subtle">
+      {rows.map((row) =>
+        row.kind === "tx" ? (
+          <TxRow key={row.tx.id} tx={row.tx} />
+        ) : (
+          <DayRow key={row.group.day} group={row.group} open={expanded.has(row.group.day)} onToggle={() => toggle(row.group.day)} />
+        ),
       )}
-
-      {rows.length > limit ? (
-        <div className="border-t border-border-subtle p-4 text-center">
-          <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + 20)}>Ver mais</Button>
-        </div>
-      ) : null}
-    </Card>
+    </ul>
   );
 }
 
@@ -379,17 +346,11 @@ function kindMeta(kind: string): { label: string; icon: React.ReactNode; bonus?:
 function TxRow({ tx }: { tx: CreditTransaction }) {
   const meta = kindMeta(tx.kind);
   const positive = tx.amountCents > 0;
-  const isDomain = tx.kind === "usage" && (tx.reason ?? "").toLowerCase().startsWith("domínio");
   return (
     <li className="flex items-center gap-3 px-5 py-3">
-      <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full", positive ? "bg-success/12 text-success" : "bg-danger/10 text-danger")}>
-        {isDomain ? <Globe size={16} aria-hidden="true" /> : meta.icon}
-      </span>
+      <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full", positive ? "bg-success/12 text-success" : "bg-danger/10 text-danger")}>{meta.icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-2 text-sm font-medium text-text">
-          {meta.label}
-          {meta.bonus ? <Badge tone="success">bônus</Badge> : null}
-        </p>
+        <p className="flex items-center gap-2 text-sm font-medium text-text">{meta.label}{meta.bonus ? <Badge tone="success">bônus</Badge> : null}</p>
         {tx.reason ? <p className="truncate text-xs text-text3">{tx.reason}</p> : null}
       </div>
       <div className="shrink-0 text-right">
@@ -404,9 +365,7 @@ function DayRow({ group, open, onToggle }: { group: DayGroup; open: boolean; onT
   return (
     <li>
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-bg">
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-danger/10 text-danger">
-          <Server size={16} aria-hidden="true" />
-        </span>
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-danger/10 text-danger"><Server size={16} aria-hidden="true" /></span>
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-text">Consumo · {dayLabel(group.iso)}</p>
           <p className="text-xs text-text3">{group.items.length} lançamento(s) no dia</p>
@@ -435,20 +394,13 @@ function AddBalanceCard() {
   return (
     <Card className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent">
-          <Info size={18} aria-hidden="true" />
-        </span>
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent"><Info size={18} aria-hidden="true" /></span>
         <div>
           <p className="font-semibold text-text">Adicionar saldo</p>
-          <p className="mt-0.5 text-sm text-text2">
-            As recargas são feitas pela nossa equipe. Fale com o suporte para adicionar saldo à sua conta.
-          </p>
+          <p className="mt-0.5 text-sm text-text2">As recargas são feitas pela nossa equipe. Fale com o suporte para adicionar saldo à sua conta.</p>
         </div>
       </div>
-      <Link
-        href="/suporte"
-        className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-strong"
-      >
+      <Link href="/suporte" className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-strong">
         <LifeBuoy size={16} aria-hidden="true" /> Falar com suporte
       </Link>
     </Card>
