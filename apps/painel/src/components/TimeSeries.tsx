@@ -18,6 +18,10 @@ export interface TimeSeriesProps {
   height?: number;
   /** Mostra o cabeçalho interno (valor atual + horário). Padrão: true. */
   showHeader?: boolean;
+  /** Valor do LIMITE: desenha uma linha tracejada e trava o topo do eixo Y nele. */
+  limit?: number | null;
+  /** Rótulo mostrado na linha do limite (ex.: "limite 100%"). */
+  limitLabel?: string;
 }
 
 const TONE_VAR: Record<NonNullable<TimeSeriesProps["tone"]>, string> = {
@@ -51,6 +55,8 @@ export function TimeSeries({
   format = (v) => (v == null ? "—" : String(v)),
   height = 200,
   showHeader = true,
+  limit = null,
+  limitLabel,
 }: TimeSeriesProps) {
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const plotRef = React.useRef<uPlot | null>(null);
@@ -80,6 +86,19 @@ export function TimeSeries({
     const stroke = readVar(wrap, TONE_VAR[tone], "#6d28d9");
     const axisColor = readVar(wrap, "--vp-text-3", "#46505f");
     const gridColor = readVar(wrap, "--vp-border-subtle", "#dde3ea");
+    const limitColor = readVar(wrap, "--vp-danger", "#dc2626");
+
+    // Com limite: o topo do eixo Y é fixado no limite (com 8% de folga) para a
+    // linha caber e o usuário ver o quanto o uso está perto dela.
+    const yScale: uPlot.Scale =
+      limit != null && limit > 0
+        ? {
+            range: (_u, _min, dmax) => {
+              const top = Math.max(limit, dmax ?? 0);
+              return [0, top > 0 ? top * 1.08 : 1];
+            },
+          }
+        : {};
 
     const opts: uPlot.Options = {
       width: wrap.clientWidth || 600,
@@ -87,7 +106,36 @@ export function TimeSeries({
       // Legenda crua desligada: o cabeçalho React mostra o valor atual.
       legend: { show: false },
       cursor: { drag: { x: true, y: false }, points: { size: 6 } },
-      scales: { x: { time: true } },
+      scales: { x: { time: true }, y: yScale },
+      hooks:
+        limit != null && limit > 0
+          ? {
+              draw: [
+                (u) => {
+                  const ctx = u.ctx;
+                  const dpr = (uPlot as unknown as { pxRatio?: number }).pxRatio || window.devicePixelRatio || 1;
+                  const y = u.valToPos(limit, "y", true);
+                  const x0 = u.bbox.left;
+                  const x1 = u.bbox.left + u.bbox.width;
+                  ctx.save();
+                  ctx.strokeStyle = limitColor;
+                  ctx.lineWidth = 1.5 * dpr;
+                  ctx.setLineDash([6 * dpr, 4 * dpr]);
+                  ctx.beginPath();
+                  ctx.moveTo(x0, y);
+                  ctx.lineTo(x1, y);
+                  ctx.stroke();
+                  ctx.setLineDash([]);
+                  ctx.fillStyle = limitColor;
+                  ctx.font = `${11 * dpr}px ui-sans-serif, system-ui, sans-serif`;
+                  ctx.textBaseline = "bottom";
+                  ctx.textAlign = "left";
+                  ctx.fillText(limitLabel ?? "limite", x0 + 6 * dpr, y - 3 * dpr);
+                  ctx.restore();
+                },
+              ],
+            }
+          : {},
       axes: [
         {
           stroke: axisColor,
@@ -135,9 +183,9 @@ export function TimeSeries({
       plot.destroy();
       plotRef.current = null;
     };
-    // Recria o gráfico quando muda tom/altura; dados são tratados abaixo.
+    // Recria o gráfico quando muda tom/altura/limite; dados são tratados abaixo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tone, height]);
+  }, [tone, height, limit, limitLabel]);
 
   // Atualiza os dados sem recriar a instância.
   React.useEffect(() => {

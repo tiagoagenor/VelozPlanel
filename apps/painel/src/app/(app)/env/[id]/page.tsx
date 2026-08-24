@@ -197,10 +197,12 @@ export default function EnvOverviewPage() {
               timestamps={timestamps}
               values={cpu}
               format={fmtCpu}
+              limit={100}
+              limitLabel="limite 100%"
               stats={[
                 { label: "Média", value: fmtCpu(cpuAvg) },
                 { label: "Pico", value: fmtCpu(cpuPeak) },
-                { label: "Limite", value: `${CPU_LIMIT}%` },
+                { label: "Limite", value: "100%" },
               ]}
             />
             <MetricCard
@@ -212,6 +214,8 @@ export default function EnvOverviewPage() {
               timestamps={timestamps}
               values={mem}
               format={(v) => (v == null ? "—" : formatBytes(v))}
+              limit={memLimit > 0 ? memLimit : null}
+              limitLabel={`limite ${formatBytes(memLimit)}`}
               stats={[
                 { label: "Média", value: memAvg == null ? "—" : formatBytes(memAvg) },
                 { label: "Pico", value: memPeak == null ? "—" : formatBytes(memPeak) },
@@ -295,6 +299,8 @@ function MetricCard({
   values,
   format,
   stats,
+  limit,
+  limitLabel,
 }: {
   title: string;
   subtitle: string;
@@ -305,6 +311,8 @@ function MetricCard({
   values: number[];
   format: (v: number | null) => string;
   stats: { label: string; value: string }[];
+  limit?: number | null;
+  limitLabel?: string;
 }) {
   return (
     <Card>
@@ -326,7 +334,7 @@ function MetricCard({
           {ok ? "dentro do normal" : "atenção"}
         </span>
       </div>
-      <TimeSeries timestamps={timestamps} values={values} label={title} tone={tone} format={format} height={170} showHeader={false} />
+      <TimeSeries timestamps={timestamps} values={values} label={title} tone={tone} format={format} height={170} showHeader={false} limit={limit} limitLabel={limitLabel} />
       <dl className="mt-3 grid grid-cols-3 gap-2 border-t border-border/70 pt-3">
         {stats.map((s) => (
           <div key={s.label}>
