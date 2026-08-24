@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import {
   dbRunSqlInput,
   dbRunMongoInput,
+  dbRunRedisInput,
   dbStudioConfig as dbStudioConfigSchema,
   setStudioPasswordInput,
   unlockStudioInput,
@@ -28,7 +29,7 @@ import * as agent from "../agent";
 
 const idParams = z.object({ id: z.string().uuid() });
 const STUDIO_KIND = "jstudio";
-const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb"]);
+const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb", "redis"]);
 const DEFAULT_DB = "app";
 
 type EnvRow = Awaited<ReturnType<typeof loadEnvironmentForUser>>;
@@ -138,6 +139,7 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
   const execBody = z.union([
     z.object({ sql: dbRunSqlInput }),
     z.object({ mongo: dbRunMongoInput }),
+    z.object({ redis: dbRunRedisInput }),
   ]);
   app.post("/environments/:id/studio/exec", { schema: { params: idParams } }, async (req, reply) => {
     const user = await requireUser(req);
@@ -161,8 +163,9 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
 
     const parsed = execBody.safeParse(req.body);
     if (!parsed.success) throw new ApiHttpError(400, "bad_request", parsed.error.message);
-    const isSql = "sql" in parsed.data;
-    if (isSql !== isSqlEngine(engine)) {
+    const expected = engine === "redis" ? "redis" : engine === "mongodb" ? "mongo" : "sql";
+    const got = "sql" in parsed.data ? "sql" : "mongo" in parsed.data ? "mongo" : "redis";
+    if (got !== expected) {
       throw new ApiHttpError(400, "engine_incompativel", "tipo de comando não corresponde ao engine");
     }
 
@@ -176,6 +179,7 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
         engine,
         sql: "sql" in parsed.data ? parsed.data.sql : undefined,
         mongo: "mongo" in parsed.data ? parsed.data.mongo : undefined,
+        redis: "redis" in parsed.data ? parsed.data.redis : undefined,
       });
     } catch (err) {
       // erros de validação/engine do agente voltam como 502 agent_error; repassa 422 amigável.
@@ -194,7 +198,12 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
         envId: env.id,
         engine,
         admin: user.role === "admin",
-        write: "sql" in parsed.data ? parsed.data.sql.write === true : parsed.data.mongo.write === true,
+        write:
+          "sql" in parsed.data
+            ? parsed.data.sql.write === true
+            : "mongo" in parsed.data
+              ? parsed.data.mongo.write === true
+              : parsed.data.redis.write === true,
         kind: result.kind,
         ms: Date.now() - started,
       },

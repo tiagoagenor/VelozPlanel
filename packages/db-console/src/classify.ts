@@ -162,3 +162,46 @@ export function classifyMongo(op: DbMongoOp, args: Record<string, unknown> | und
   }
   return { isWrite };
 }
+
+/* ─────────────── Redis ─────────────── */
+
+const REDIS_READ = new Set([
+  "GET","MGET","STRLEN","GETRANGE","SUBSTR","EXISTS","TYPE","TTL","PTTL","SCAN","RANDOMKEY",
+  "HGET","HMGET","HGETALL","HKEYS","HVALS","HLEN","HSCAN","HEXISTS","HSTRLEN",
+  "LRANGE","LLEN","LINDEX","LPOS","SMEMBERS","SSCAN","SCARD","SISMEMBER","SMISMEMBER","SINTERCARD",
+  "ZRANGE","ZREVRANGE","ZRANGEBYSCORE","ZREVRANGEBYSCORE","ZSCORE","ZMSCORE","ZCARD","ZCOUNT","ZRANK","ZREVRANK","ZSCAN",
+  "XRANGE","XREVRANGE","XLEN","XINFO","GETBIT","BITCOUNT","BITPOS","PFCOUNT",
+  "GEOPOS","GEODIST","GEOSEARCH","GEOHASH","OBJECT","MEMORY","DBSIZE","PING","ECHO","DUMP","TOUCH","EXPIRETIME","PEXPIRETIME",
+]);
+const REDIS_WRITE = new Set([
+  "SET","SETNX","SETEX","PSETEX","APPEND","SETRANGE","GETSET","GETDEL","GETEX",
+  "INCR","DECR","INCRBY","DECRBY","INCRBYFLOAT","MSET","MSETNX","SETBIT",
+  "DEL","UNLINK","EXPIRE","PEXPIRE","EXPIREAT","PEXPIREAT","PERSIST","RENAME","RENAMENX","MOVE","COPY","RESTORE",
+  "HSET","HSETNX","HMSET","HDEL","HINCRBY","HINCRBYFLOAT",
+  "LPUSH","RPUSH","LPUSHX","RPUSHX","LPOP","RPOP","LSET","LINSERT","LREM","LTRIM","RPOPLPUSH","LMOVE","LMPOP",
+  "SADD","SREM","SPOP","SMOVE","SINTERSTORE","SUNIONSTORE","SDIFFSTORE",
+  "ZADD","ZREM","ZINCRBY","ZPOPMIN","ZPOPMAX","ZREMRANGEBYRANK","ZREMRANGEBYSCORE","ZREMRANGEBYLEX","ZRANGESTORE","ZDIFFSTORE","ZINTERSTORE","ZUNIONSTORE",
+  "XADD","XDEL","XTRIM","XSETID",
+  "GEOADD","PFADD","PFMERGE","SETBIT","BITOP",
+  "PUBLISH","SPUBLISH",
+]);
+const REDIS_BLOCKED = new Set([
+  "FLUSHALL","FLUSHDB","SWAPDB","KEYS","CONFIG","SHUTDOWN","DEBUG","SAVE","BGSAVE","BGREWRITEAOF",
+  "REPLICAOF","SLAVEOF","CLUSTER","FAILOVER","CLIENT","ACL","MODULE","SCRIPT","EVAL","EVALSHA","EVAL_RO","FCALL","FUNCTION",
+  "MONITOR","RESET","SELECT","MULTI","EXEC","DISCARD","WATCH","UNWATCH","LOLWUT","LATENCY","SLOWLOG","LASTSAVE",
+  "XGROUP","XCLAIM","XAUTOCLAIM","XACK","XREADGROUP","SORT_RO","SORT","MIGRATE","RESTORE-ASKING","PSYNC","SYNC","REPLCONF",
+]);
+const REDIS_BLOCKING = new Set([
+  "BLPOP","BRPOP","BLMOVE","BLMPOP","BRPOPLPUSH","BZPOPMIN","BZPOPMAX","BZMPOP","WAIT","WAITAOF",
+  "SUBSCRIBE","PSUBSCRIBE","SSUBSCRIBE","UNSUBSCRIBE","PUNSUBSCRIBE","SUNSUBSCRIBE","XREAD",
+]);
+
+/** Classifica um comando Redis (já tokenizado). Fail-closed: verbo desconhecido = escrita. */
+export function classifyRedis(command: string[]): { isWrite: boolean; verb: string } {
+  const verb = (command[0] ?? "").toUpperCase();
+  if (!verb) throw new DbConsoleError("comando_vazio", "informe um comando");
+  if (REDIS_BLOCKED.has(verb)) throw new DbConsoleError("comando_bloqueado", `${verb} não é permitido no Studio`);
+  if (REDIS_BLOCKING.has(verb)) throw new DbConsoleError("comando_bloqueante", `${verb} bloqueia a conexão; use a aba Pub/Sub`);
+  const isRead = REDIS_READ.has(verb);
+  return { isWrite: !isRead, verb }; // não-leitura (write conhecido OU desconhecido) => exige modo escrita
+}

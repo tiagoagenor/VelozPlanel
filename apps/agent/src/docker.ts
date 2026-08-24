@@ -1,8 +1,8 @@
 import os from "node:os";
 import Docker from "dockerode";
-import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbResult } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult } from "@velozplanel/contracts";
 import { isSqlEngine } from "@velozplanel/contracts";
-import { buildSqlExec, buildMongoExec, parseExec, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
+import { buildSqlExec, buildMongoExec, buildRedisExec, parseExec, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
 
 /**
  * Wrapper dockerode do Agente VelozPlanel.
@@ -1121,6 +1121,7 @@ export interface RunDbConsoleArgs {
   engine: StudioEngine;
   sql?: DbRunSqlInput;
   mongo?: DbRunMongoInput;
+  redis?: DbRunRedisInput;
 }
 
 /** Ponto de entrada do agente: classifica+monta (via db-console), executa e parseia. */
@@ -1133,6 +1134,9 @@ export async function runDbConsole(args: RunDbConsoleArgs): Promise<DbResult> {
       plan = buildSqlExec(args.engine, args.sql);
     } else if (args.engine === "mongodb" && args.mongo) {
       plan = buildMongoExec(args.mongo);
+
+    } else if (args.engine === "redis" && args.redis) {
+      plan = buildRedisExec(args.redis);
     } else {
       const e = new Error("requisição inválida para o engine") as Error & { code: string };
       e.code = "bad_request";

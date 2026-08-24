@@ -27,7 +27,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput } from "@velozplanel/contracts";
+import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput, dbRunRedisInput } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
 import * as ingress from "./ingress.js";
 import * as files from "./files.js";
@@ -265,6 +265,7 @@ const dbExecBody = z.object({
   engine: studioEngine,
   sql: dbRunSqlInput.optional(),
   mongo: dbRunMongoInput.optional(),
+  redis: dbRunRedisInput.optional(),
 });
 const DB_BAD_REQUEST = new Set([
   "bad_request",
@@ -274,6 +275,9 @@ const DB_BAD_REQUEST = new Set([
   "estagio_proibido",
   "pipeline_invalido",
   "op_nao_permitida",
+  "comando_bloqueado",
+  "comando_bloqueante",
+  "comando_vazio",
 ]);
 app.post("/db/exec", async (req, reply) => {
   const parsed = dbExecBody.safeParse(req.body);

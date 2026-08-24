@@ -1,4 +1,4 @@
-import type { DbCell, DbResult } from "@velozplanel/contracts";
+import type { DbCell, DbResult, RedisValue } from "@velozplanel/contracts";
 import type { ExecPlan } from "./build";
 import { DbConsoleError } from "./classify";
 
@@ -165,6 +165,11 @@ export function parseExec(plan: ExecPlan, out: ExecOutput): DbResult {
     return { kind: "mongo", op: "mongo", ejson: out.stdout.toString("utf8").trim(), truncated: out.truncated };
   }
 
+  if (plan.outputKind === "redis-noraw") {
+    const r = parseRedisNoRaw(out.stdout);
+    return { kind: "redis", replyType: r.replyType, value: r.value, truncated: out.truncated };
+  }
+
   if (plan.outputKind === "sql-tsv") {
     const parsed = parseTsv(out.stdout, out.truncated);
     if (plan.isWrite) {
@@ -196,4 +201,81 @@ export function parseExec(plan: ExecPlan, out: ExecOutput): DbResult {
   }
   const parsed = parseCsv(text);
   return { kind: "rows", columns: parsed.columns, rows: parsed.rows, truncated: out.truncated };
+}
+
+/* ─────────────── Redis (redis-cli --no-raw) ─────────────── */
+
+/** Des-escapa a C-string do redis-cli (\xNN, \n\r\t..., preservando binário). */
+function unescapeRedis(s: string): string | { b: true; hex: string } {
+  const bytes: number[] = [];
+  const simple: Record<string, number> = { n: 10, r: 13, t: 9, b: 8, a: 7, "\\": 92, '"': 34, "'": 39 };
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\" && i + 1 < s.length) {
+      const n = s[i + 1]!;
+      if (n === "x" && i + 3 < s.length) { bytes.push(parseInt(s.slice(i + 2, i + 4), 16)); i += 3; continue; }
+      if (n in simple) { bytes.push(simple[n]!); i++; continue; }
+      bytes.push(s.charCodeAt(i + 1)); i++; continue;
+    }
+    for (const b of Buffer.from(s[i]!, "utf8")) bytes.push(b);
+  }
+  const buf = Buffer.from(bytes);
+  try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); } catch { return { b: true, hex: buf.toString("hex") }; }
+}
+
+function redisMarker(line: string): { indent: number; num: number; rest: string } | null {
+  const m = /^(\s*)(\d+)\)\s(.*)$/.exec(line);
+  return m ? { indent: m[1]!.length, num: Number(m[2]), rest: m[3]! } : null;
+}
+
+function redisScalar(text: string): RedisValue {
+  if (text === "(nil)") return null;
+  let m: RegExpExecArray | null;
+  if ((m = /^\(integer\) (-?\d+)$/.exec(text))) return Number(m[1]);
+  if ((m = /^\(double\) (-?[\d.eE+]+)$/.exec(text))) return Number(m[1]);
+  if (text === "(true)") return true;
+  if (text === "(false)") return false;
+  if (/^\(empty (array|set|hash)\)$/.test(text)) return [];
+  if ((m = /^\(error\) ([\s\S]*)$/.exec(text))) return m[1]!;
+  if (text.startsWith('"')) return unescapeRedis(text.replace(/^"/, "").replace(/"$/, ""));
+  return text; // status simples (OK, PONG…)
+}
+
+function parseRedisArray(lines: string[], start: number, indent: number, depth: number): { items: RedisValue[]; next: number } {
+  const items: RedisValue[] = [];
+  let i = start;
+  while (i < lines.length && items.length < 10000) {
+    const mk = redisMarker(lines[i]!);
+    if (!mk || mk.indent !== indent) break;
+    if (/^\d+\)\s/.test(mk.rest) && depth < 8) {
+      const nestedIndent = mk.indent + String(mk.num).length + 2; // largura de "N) "
+      lines[i] = " ".repeat(nestedIndent) + mk.rest;
+      const sub = parseRedisArray(lines, i, nestedIndent, depth + 1);
+      items.push(sub.items);
+      i = sub.next;
+    } else {
+      items.push(redisScalar(mk.rest));
+      i++;
+    }
+  }
+  return { items, next: i };
+}
+
+export type RedisReplyType = "string" | "integer" | "status" | "nil" | "error" | "array";
+
+export function parseRedisNoRaw(stdout: Buffer): { replyType: RedisReplyType; value: RedisValue } {
+  const text = stdout.toString("utf8").replace(/\n+$/, "");
+  if (text === "") return { replyType: "status", value: "" };
+  const lines = text.split("\n");
+  const first = lines[0]!;
+  if (!redisMarker(first)) {
+    if (first === "(nil)") return { replyType: "nil", value: null };
+    let m: RegExpExecArray | null;
+    if ((m = /^\(integer\) (-?\d+)$/.exec(first))) return { replyType: "integer", value: Number(m[1]) };
+    if ((m = /^\(error\) ([\s\S]*)$/.exec(text))) return { replyType: "error", value: m[1]! };
+    if (/^\(empty (array|set|hash)\)$/.test(first)) return { replyType: "array", value: [] };
+    if (first.startsWith('"')) return { replyType: "string", value: redisScalar(first) };
+    return { replyType: "status", value: first };
+  }
+  const { items } = parseRedisArray(lines, 0, redisMarker(first)!.indent, 0);
+  return { replyType: "array", value: items };
 }

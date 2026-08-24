@@ -1,5 +1,5 @@
 import type { StudioEngine, DbRunMongoInput } from "@velozplanel/contracts";
-import { classifySql, classifyMongo, DbConsoleError } from "./classify";
+import { classifySql, classifyMongo, classifyRedis, DbConsoleError } from "./classify";
 import { MONGO_WRAPPER_JS } from "./mongoWrapper";
 
 const DEFAULT_DB = "app";
@@ -12,7 +12,7 @@ export interface ExecPlan {
   /** Env do exec (NUNCA contém a senha — ela é referenciada por nome, vinda da env do container). */
   env: string[];
   /** Como parsear o stdout. */
-  outputKind: "sql-tsv" | "pg-csv" | "mongo-ejson";
+  outputKind: "sql-tsv" | "pg-csv" | "mongo-ejson" | "redis-noraw";
   isWrite: boolean;
   timeoutMs: number;
 }
@@ -103,5 +103,23 @@ export function buildMongoExec(input: DbRunMongoInput): ExecPlan {
     outputKind: "mongo-ejson",
     isWrite: cls.isWrite,
     timeoutMs: 35_000,
+  };
+}
+
+/** Monta o plano para um comando Redis (argv puro, sem shell, sem senha). */
+export function buildRedisExec(input: { command: string[]; db?: number; write?: boolean }): ExecPlan {
+  const cls = classifyRedis(input.command);
+  const write = input.write === true;
+  if (cls.isWrite && !write) {
+    throw new DbConsoleError("escrita_requer_modo_escrita", "este comando altera dados — habilite o modo escrita");
+  }
+  const db = Number.isInteger(input.db) ? Math.max(0, Math.min(15, input.db as number)) : 0;
+  return {
+    engine: "redis",
+    cmd: ["redis-cli", "-n", String(db), "--no-raw", ...input.command],
+    env: [],
+    outputKind: "redis-noraw",
+    isWrite: cls.isWrite,
+    timeoutMs: 10_000,
   };
 }

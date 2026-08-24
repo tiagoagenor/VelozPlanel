@@ -8,7 +8,7 @@ import { z } from "zod";
 
 // NB: já existe um `studioEngine`/`DbEngine` (= só "mysql") em index.ts para a feature
 // legada de bancos gerenciados. Aqui usamos nome próprio para não colidir.
-export const studioEngine = z.enum(["mysql", "mariadb", "postgres", "mongodb"]);
+export const studioEngine = z.enum(["mysql", "mariadb", "postgres", "mongodb", "redis"]);
 export type StudioEngine = z.infer<typeof studioEngine>;
 
 /** Engines relacionais (SQL) — Mongo é tratado à parte. */
@@ -43,11 +43,33 @@ export const dbMongoResult = z.object({
   tookMs: z.number().int().nonnegative().optional(),
 });
 
-export const dbResult = z.discriminatedUnion("kind", [dbRowsResult, dbCommandResult, dbMongoResult]);
+/** Valor de resposta do Redis: recursivo (nil, texto, número, bool, binário, array). */
+export type RedisValue = null | string | number | boolean | { b: true; hex: string } | RedisValue[];
+export const redisValue: z.ZodType<RedisValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.object({ b: z.literal(true), hex: z.string() }),
+    z.array(redisValue),
+  ]),
+);
+
+export const dbRedisResult = z.object({
+  kind: z.literal("redis"),
+  replyType: z.enum(["string", "integer", "status", "nil", "error", "array"]),
+  value: redisValue,
+  truncated: z.boolean(),
+  tookMs: z.number().int().nonnegative().optional(),
+});
+
+export const dbResult = z.discriminatedUnion("kind", [dbRowsResult, dbCommandResult, dbMongoResult, dbRedisResult]);
 export type DbResult = z.infer<typeof dbResult>;
 export type DbRowsResult = z.infer<typeof dbRowsResult>;
 export type DbCommandResult = z.infer<typeof dbCommandResult>;
 export type DbMongoResult = z.infer<typeof dbMongoResult>;
+export type DbRedisResult = z.infer<typeof dbRedisResult>;
 
 /** Operações Mongo permitidas (whitelist fechada). */
 export const dbMongoOp = z.enum([
@@ -94,6 +116,14 @@ export const dbRunMongoInput = z.object({
     .optional(),
 });
 export type DbRunMongoInput = z.infer<typeof dbRunMongoInput>;
+
+/** Entrada de execução Redis (comando já tokenizado; DB numérico 0-15). */
+export const dbRunRedisInput = z.object({
+  command: z.array(z.string().max(512_000)).min(1).max(64),
+  db: z.number().int().min(0).max(15).optional().default(0),
+  write: z.boolean().optional().default(false),
+});
+export type DbRunRedisInput = z.infer<typeof dbRunRedisInput>;
 
 /** Configuração do Studio por ambiente (liga/desliga + senha opcional). */
 export const dbStudioConfig = z.object({
