@@ -16,7 +16,7 @@ export type RuntimeKind = z.infer<typeof runtimeKind>;
 export const RUNTIME_VERSIONS: Record<RuntimeKind, string[]> = {
   php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"],
   node: ["18", "20", "22", "24", "25", "26"],
-  python: ["3.11", "3.12", "3.13"],
+  python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"],
   static: ["1"],
 };
 

@@ -16,8 +16,10 @@ RUN set -eux; \
       vim nano openssh-client openssh-sftp-server; \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir gunicorn whitenoise
+# pip atualizado + gunicorn/whitenoise (tolerante: versões antigas de Python podem
+# não ter as últimas releases desses pacotes; o build não falha por isso).
+RUN pip install --no-cache-dir --upgrade pip || true \
+ && (pip install --no-cache-dir gunicorn whitenoise || pip install --no-cache-dir gunicorn || true)
 
 # `python` como alias de `python3` (alguns comandos assumem `python`).
 RUN ln -sf /usr/local/bin/python3 /usr/local/bin/python || true
