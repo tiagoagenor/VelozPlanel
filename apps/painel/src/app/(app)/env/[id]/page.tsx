@@ -130,8 +130,8 @@ export default function EnvOverviewPage() {
         <div className="flex flex-wrap gap-2">
           {env.state === "running" ? <Chip tone="success" icon={CircleCheck}>Ativo</Chip> : null}
           {https ? <Chip tone="success" icon={Lock}>HTTPS ativo</Chip> : null}
-          <Chip tone="neutral" icon={FileCode2}>{runtimeText(env)}</Chip>
-          {env.region ? <Chip tone="neutral" icon={MapPin}>{env.region}</Chip> : null}
+          <Chip tone="surface" icon={FileCode2}>{runtimeText(env)}</Chip>
+          {env.region ? <Chip tone="surface" icon={MapPin}>{env.region}</Chip> : null}
         </div>
 
         {/* Dados do ambiente */}
@@ -277,12 +277,13 @@ export default function EnvOverviewPage() {
 
 /* ─────────────── UI helpers ─────────────── */
 
-type ChipTone = "success" | "neutral" | "accent" | "warning";
+type ChipTone = "success" | "neutral" | "accent" | "warning" | "surface";
 const CHIP_TONE: Record<ChipTone, string> = {
   success: "vp-pill vp-pill-success",
   neutral: "vp-pill vp-pill-neutral",
   accent: "vp-pill vp-pill-accent",
   warning: "vp-pill vp-pill-warning",
+  surface: "border-border bg-surface text-text2", // fundo branco (linguagem/região)
 };
 function Chip({ tone, icon: Icon, children }: { tone: ChipTone; icon: React.ComponentType<{ size?: number; className?: string }>; children: React.ReactNode }) {
   return (
