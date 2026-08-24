@@ -238,8 +238,13 @@ function setupPrefix(startupScript: string | null | undefined): string {
 // valor malicioso executaria) — o valor vem base64, sem metacaractere de shell.
 const RESERVED_ENV = new Set(["PATH","LD_PRELOAD","LD_LIBRARY_PATH","NVM_DIR","HOME","PWD","SHELL","IFS","ENV","BASH_ENV","PS4"]);
 
+// Corta a linha SÓ no primeiro '=' (k=${line%%=*}, v=${line#*=}). NÃO usar
+// IFS='=' read k v: o base64 costuma terminar em '=' (padding) e o read trata
+// esse '=' do fim como delimitador e o descarta → base64 -d recebe entrada
+// truncada e perde os últimos bytes do valor.
 const LOAD_ENV =
-  `if [ -f /veloz/env ]; then while IFS='=' read -r k v; do ` +
+  `if [ -f /veloz/env ]; then while IFS= read -r line; do ` +
+  `k=\${line%%=*}; v=\${line#*=}; ` +
   `[ -n "\$k" ] && export "\$k=\$(printf %s "\$v" | base64 -d)"; done < /veloz/env; fi; `;
 
 function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {

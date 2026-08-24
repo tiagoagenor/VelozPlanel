@@ -414,8 +414,11 @@ function buildScript(args: RunDeployArgs): string {
 function appStepCommand(kind: string): string | null {
   // Artisan roda via `docker exec` e NÃO herda o /veloz/env do supervisor; então
   // carregamos as variáveis gerenciadas (KEY=base64(value)) antes de chamar o artisan.
+  // Corta só no primeiro '=' (ver LOAD_ENV em docker.ts): IFS='=' comeria o
+  // padding '=' final do base64 e truncaria os valores.
   const LOAD =
-    `if [ -f /veloz/env ]; then while IFS='=' read -r k v; do ` +
+    `if [ -f /veloz/env ]; then while IFS= read -r line; do ` +
+    `k=\${line%%=*}; v=\${line#*=}; ` +
     `[ -n "$k" ] && export "$k=$(printf %s "$v" | base64 -d 2>/dev/null)"; done < /veloz/env; fi; `;
   switch (kind) {
     case "laravel_fix_index":
