@@ -60,11 +60,16 @@ interface Section {
   icon: LucideIcon;
   soon?: boolean;
   dbOnly?: boolean; // só aparece em ambientes-serviço de banco (Jamees Studio)
+  appOnly?: boolean; // não faz sentido em ambientes-serviço (só apps/stacks)
 }
 
 const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb"]);
 function isDbServiceEnv(env: { category?: string | null; type?: string | null } | undefined): boolean {
   return !!env && env.category === "service" && !!env.type && STUDIO_ENGINES.has(env.type);
+}
+/** Ambiente-serviço (redis/mysql/…): esconde as abas de app (Domínio/Arquivos/Deploy/…). */
+function isServiceEnv(env: { category?: string | null } | undefined): boolean {
+  return env?.category === "service";
 }
 
 // Todas as seções são telas REAIS e funcionais — só "Backups" é placeholder
@@ -73,15 +78,15 @@ function isDbServiceEnv(env: { category?: string | null; type?: string | null } 
 // Deploy, Variáveis).
 const SECTIONS: Section[] = [
   { seg: "", label: "Visão geral", icon: LayoutDashboard },
-  { seg: "dominio", label: "Domínio & DNS", icon: Globe },
+  { seg: "dominio", label: "Domínio & DNS", icon: Globe, appOnly: true },
   { seg: "configuracoes", label: "Configurações", icon: Settings },
-  { seg: "arquivos", label: "Arquivos", icon: FolderOpen },
-  { seg: "banco", label: "Banco de dados", icon: Database },
-  { seg: "ssl", label: "SSL", icon: ShieldCheck },
-  { seg: "ssh", label: "SSH", icon: TerminalSquare },
-  { seg: "sftp", label: "SFTP", icon: FolderSync },
-  { seg: "deploy", label: "Deploy", icon: Rocket },
-  { seg: "variaveis", label: "Variáveis", icon: Braces },
+  { seg: "arquivos", label: "Arquivos", icon: FolderOpen, appOnly: true },
+  { seg: "banco", label: "Banco de dados", icon: Database, appOnly: true },
+  { seg: "ssl", label: "SSL", icon: ShieldCheck, appOnly: true },
+  { seg: "ssh", label: "SSH", icon: TerminalSquare, appOnly: true },
+  { seg: "sftp", label: "SFTP", icon: FolderSync, appOnly: true },
+  { seg: "deploy", label: "Deploy", icon: Rocket, appOnly: true },
+  { seg: "variaveis", label: "Variáveis", icon: Braces, appOnly: true },
   { seg: "studio", label: "Data Studio", icon: Table2, dbOnly: true },
   { seg: "logs", label: "Logs", icon: ScrollText },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
@@ -195,7 +200,9 @@ export default function EnvContextLayout({
               "lg:overflow-x-visible lg:overflow-y-auto lg:px-3 lg:pb-4",
             )}
           >
-              {SECTIONS.filter((s) => !s.dbOnly || isDbServiceEnv(env)).map((s) => {
+              {SECTIONS.filter(
+                (s) => (!s.dbOnly || isDbServiceEnv(env)) && (!s.appOnly || !isServiceEnv(env)),
+              ).map((s) => {
                 const active = s.seg === currentSeg;
                 const brevePill = (
                   <span className="ml-auto shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-[0.04em] text-text3">

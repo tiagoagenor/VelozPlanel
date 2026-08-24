@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw} from "lucide-react";
+import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw, Maximize2, Minimize2 } from "lucide-react";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type { DbResult, DbMongoOp } from "@velozplanel/contracts";
@@ -131,17 +131,28 @@ function Console({ id, engine, engineLabel, hasPassword }: { id: string; engine:
   const [write, setWrite] = React.useState(false);
   const [confirmWrite, setConfirmWrite] = React.useState(false);
   const [showSettings, setShowSettings] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={cn("flex flex-col gap-3", fullscreen && "fixed inset-0 z-50 overflow-auto bg-bg p-4 lg:p-6")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Table2 size={18} className="text-text3" />
-          <h2 className="text-base font-semibold text-text">Data Studio</h2>
+          <h2 className="text-base font-semibold text-text">Jamees Studio</h2>
           <span className="rounded-full bg-bg px-2 py-0.5 text-xs font-medium text-text2">{engineLabel}</span>
         </div>
         <div className="flex items-center gap-2">
           <WriteToggle write={write} onToggle={(v) => (v ? setConfirmWrite(true) : setWrite(false))} />
+          <Button variant="ghost" size="sm" onClick={() => setFullscreen((f) => !f)}>
+            {fullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />} {fullscreen ? "Sair" : "Tela cheia"}
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setShowSettings(true)}>Configurações</Button>
         </div>
       </div>
