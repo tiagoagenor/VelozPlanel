@@ -184,6 +184,19 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/db-console:
+    dependencies:
+      '@velozplanel/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

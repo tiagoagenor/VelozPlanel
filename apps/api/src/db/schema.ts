@@ -365,6 +365,7 @@ export const envTools = pgTable("env_tools", {
   ip: text("ip"), // IP do sidecar na bridge do dono
   targetIp: text("target_ip"), // IP interno que o proxy alcança (a própria ferramenta)
   targetPort: integer("target_port"),
+  passwordHash: text("password_hash"), // Jamees Studio: senha opcional (bcrypt); null = sem senha
 });
 export type EnvToolRow = typeof envTools.$inferSelect;
 

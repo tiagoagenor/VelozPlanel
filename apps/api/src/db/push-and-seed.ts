@@ -410,6 +410,10 @@ async function createSchema(): Promise<void> {
       target_port  integer
     )
   `;
+  // Jamees Studio: senha opcional do painel (hash bcrypt; null = sem senha).
+  await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS password_hash text`;
+  // 1 linha por (env, ferramenta) — idempotência do flag liga/desliga.
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_tools_env_kind_uq ON env_tools(env_id, kind)`;
 
   // Credenciais de serviço cifradas (persistem — necessárias p/ injetar e autenticar a UI).
   await sql`

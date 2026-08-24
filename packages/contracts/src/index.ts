@@ -6,6 +6,9 @@ import { z } from "zod";
  * Dinheiro sempre em centavos (bigint-safe: usamos number inteiro de centavos no núcleo).
  */
 
+/* ─────────────── Jamees Studio (console de banco) ─────────────── */
+export * from "./dbConsole";
+
 /* ─────────────── Runtimes (linguagem + versão) ─────────────── */
 
 export const runtimeKind = z.enum(["php", "node", "python", "static"]);
