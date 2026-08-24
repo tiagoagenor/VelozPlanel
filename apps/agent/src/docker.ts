@@ -278,6 +278,8 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
       `CMD="\$(cat /.vp-python-cmd 2>/dev/null)"; ` +
       `START="\$(cat /.vp-python-start 2>/dev/null || printf '%s' "\${VP_PY_START:-app.py}")"; ` +
       `if [ -z "\$CMD" ] && [ ! -f "/app/\$START" ]; then printf '%s' '${PYTHON_SERVER}' > "/app/\$START"; fi; ` +
+      // deps vendorizadas pelo deploy (pip --target=.vp-vendor) sempre no path.
+      `export PYTHONPATH="/app/.vp-vendor\${PYTHONPATH:+:\$PYTHONPATH}"; ` +
       `cd /app; if [ -n "\$CMD" ]; then sh -c "\$CMD" & else python3 "\$START" & fi; ` +
       `VPPID=\$!; echo "\$VPPID" > /.vp-python-pid; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
