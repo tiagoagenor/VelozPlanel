@@ -282,16 +282,9 @@ export default function EnvContextLayout({
                 ) : null}
 
                 {env.state === "running" && env.accessUrl ? (
-                  <a
-                    href={env.accessUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Abrir site"
-                    title="Abrir site"
-                    className="grid h-9 w-9 place-items-center rounded-[8px] bg-brand text-white transition-colors hover:bg-brand-strong"
-                  >
+                  <IconButton label="Abrir site" href={env.accessUrl} external brand>
                     <ExternalLink size={17} aria-hidden="true" />
-                  </a>
+                  </IconButton>
                 ) : null}
 
                 <IconButton label="Excluir" danger onClick={() => setConfirmDelete(true)} disabled={busy}>
@@ -363,27 +356,51 @@ function IconButton({
   onClick,
   disabled,
   danger,
+  brand,
+  href,
+  external,
 }: {
   label: string;
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   disabled?: boolean;
   danger?: boolean;
+  brand?: boolean; // estilo destacado (roxo preenchido), ex.: "Abrir site"
+  href?: string; // renderiza como link
+  external?: boolean; // abre em nova aba
 }) {
+  const cls = cn(
+    "grid h-9 w-9 place-items-center rounded-[8px] border transition-colors disabled:opacity-50",
+    brand
+      ? "border-transparent bg-brand text-white hover:bg-brand-strong"
+      : danger
+        ? "border-border bg-surface text-text2 hover:border-danger hover:bg-danger/10 hover:text-danger"
+        : "border-border bg-surface text-text2 hover:border-brand-strong hover:text-brand-strong",
+  );
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "grid h-9 w-9 place-items-center rounded-[8px] border border-border bg-surface text-text2 transition-colors disabled:opacity-50",
-        danger ? "hover:border-danger hover:bg-danger/10 hover:text-danger" : "hover:border-brand-strong hover:text-brand-strong",
+    <span className="group relative inline-flex">
+      {href ? (
+        <a
+          href={href}
+          target={external ? "_blank" : undefined}
+          rel={external ? "noopener noreferrer" : undefined}
+          aria-label={label}
+          className={cls}
+        >
+          {children}
+        </a>
+      ) : (
+        <button type="button" onClick={onClick} disabled={disabled} aria-label={label} className={cls}>
+          {children}
+        </button>
       )}
-    >
-      {children}
-    </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 top-full z-50 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#2f2354] px-2 py-1 text-[11px] font-medium text-white opacity-0 shadow-[0_6px_20px_rgba(0,0,0,0.22)] transition-opacity duration-100 group-hover:opacity-100"
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 
