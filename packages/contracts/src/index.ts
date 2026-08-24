@@ -303,6 +303,9 @@ export const deployStepKind = z.enum([
   "artisan_optimize",
   "artisan_storage_link",
   "node_restart",
+  "pip_install",
+  "python_restart",
+  "static_reload",
   "shell",
 ]);
 export type DeployStepKind = z.infer<typeof deployStepKind>;
@@ -316,7 +319,7 @@ export type DeployRunTrigger = z.infer<typeof deployRunTrigger>;
 export const deployStrategy = z.enum(["place", "recreate"]);
 export type DeployStrategy = z.infer<typeof deployStrategy>;
 
-export const deployFramework = z.enum(["none", "nextjs", "laravel"]);
+export const deployFramework = z.enum(["none", "nextjs", "laravel", "python", "django", "spa", "static"]);
 export type DeployFramework = z.infer<typeof deployFramework>;
 
 export const deployRunModel = z.enum(["standalone", "next_start"]);

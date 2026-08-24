@@ -233,7 +233,7 @@ const deployProbeBody = z.object({
   envId: z.string().min(1), image: z.string().min(1), repoUrl: z.string().min(1), http: httpCredsSchema,
 });
 const deployImportBody = z.object({ envId: z.string().min(1), image: z.string().min(1), privateKey: z.string().min(1) });
-const deployDetectBody = z.object({ envId: z.string().min(1), image: z.string().min(1), repoUrl: z.string().min(1), branch: z.string().min(1), http: httpCredsSchema });
+const deployDetectBody = z.object({ envId: z.string().min(1), image: z.string().min(1), repoUrl: z.string().min(1), branch: z.string().min(1), kind: z.string().optional(), http: httpCredsSchema });
 const deployRunBody = z.object({
   envId: z.string().min(1), image: z.string().min(1),
   appContainerId: z.string().min(1), workdir: z.string().min(1),
@@ -242,6 +242,7 @@ const deployRunBody = z.object({
   buildEnv: z.array(z.object({ key: z.string(), value: z.string() })),
   framework: z.string(), runModel: z.string(), http: httpCredsSchema, subdir: z.string().nullable().optional(),
   runId: z.string().min(1), nodeStartFile: z.string().nullable().optional(), historyLimit: z.number().int().optional(),
+  runtimeKind: z.string().optional(), pythonCmd: z.string().nullable().optional(),
 });
 
 app.post("/env-vars", async (req, reply) => {
@@ -304,7 +305,7 @@ app.post("/deploy/test", async (req, reply) => {
 app.post("/deploy/detect", async (req, reply) => {
   const parsed = deployDetectBody.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
-  try { return reply.code(200).send(await deploy.detectStack(parsed.data.envId, parsed.data.image, parsed.data.repoUrl, parsed.data.branch, parsed.data.http)); }
+  try { return reply.code(200).send(await deploy.detectStack(parsed.data.envId, parsed.data.image, parsed.data.repoUrl, parsed.data.branch, parsed.data.kind ?? "", parsed.data.http)); }
   catch (err) { req.log.error({ err }, "deploy/detect failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
 });
 

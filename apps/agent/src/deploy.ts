@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import ssh2 from "ssh2";
 import { createHash } from "node:crypto";
-import { applyNodeStart, applyPhpRoot } from "./docker.js";
+import { applyNodeStart, applyPhpRoot, applyPythonStart, applyPythonCmd, restartApp } from "./docker.js";
 
 const { utils } = ssh2;
 const docker = new Docker();
@@ -31,8 +31,10 @@ export interface RunDeployArgs {
   http?: HttpCreds;
   subdir?: string | null; // pasta do projeto no repo (monorepo)
   runId: string; // id da execução (deploy_run) para streaming do log
-  nodeStartFile?: string | null; // arquivo de start do Node (restart pós-deploy)
+  nodeStartFile?: string | null; // arquivo de start do Node/Python (restart pós-deploy)
   historyLimit?: number; // quantos logs manter em /veloz/deploys (0 = todos)
+  runtimeKind?: string; // php|node|python|static — distingue node de python no place/restart
+  pythonCmd?: string | null; // comando avançado do Python (Django) — restart pós-deploy
 }
 export interface RunDeployResult {
   status: "success" | "failed";
@@ -225,14 +227,15 @@ export async function listBranches(
   }
 }
 
-/** Detecta o stack (php/node/nextjs) a partir do checkout no volume. */
+/** Detecta o stack a partir do checkout no volume. `kind` = runtime do ambiente. */
 export async function detectStack(
   envId: string,
   image: string,
   repoUrl: string,
   branch: string,
+  kind: string,
   http?: HttpCreds,
-): Promise<{ framework: string; runModel: string; serverEntry: string; hasComposer: boolean; hasPackageJson: boolean }> {
+): Promise<{ framework: string; runModel: string; serverEntry: string; hasComposer: boolean; hasPackageJson: boolean; hasRequirements: boolean; suggestedStartFile: string | null; suggestedPythonCmd: string | null }> {
   const c = await startBuildContainer(envId, image, [], http);
   try {
     // clona (shallow) se ainda não houver checkout — o detect precisa do código.
@@ -244,15 +247,37 @@ export async function detectStack(
     const artisan = await execIn(c.id, ["sh", "-c", "test -f /workspace/repo/artisan && echo YES || echo NO"]);
     const hasPackageJson = pkg.out.trim().startsWith("{");
     const hasComposer = composer.out.includes("YES");
+    const hasBuildScript = /"scripts"\s*:\s*{[^}]*"build"\s*:/.test(pkg.out);
+
     let framework = "none";
     let runModel = "standalone";
-    if (hasPackageJson && /"next"\s*:/.test(pkg.out)) {
+    let hasRequirements = false;
+    let suggestedStartFile: string | null = null;
+    let suggestedPythonCmd: string | null = null;
+
+    if (kind === "python") {
+      const reqs = await execIn(c.id, ["sh", "-c", "cat /workspace/repo/requirements.txt 2>/dev/null || echo ''"]);
+      const managePy = await execIn(c.id, ["sh", "-c", "test -f /workspace/repo/manage.py && echo YES || echo NO"]);
+      const pyproj = await execIn(c.id, ["sh", "-c", "cat /workspace/repo/pyproject.toml 2>/dev/null || echo ''"]);
+      const pyEntry = await execIn(c.id, ["sh", "-c", "for f in app.py main.py wsgi.py server.py; do [ -f /workspace/repo/$f ] && { echo $f; break; }; done"]);
+      hasRequirements = reqs.out.trim().length > 0;
+      const isDjango = managePy.out.includes("YES") && (/django/i.test(reqs.out) || /django/i.test(pyproj.out) || true);
+      if (managePy.out.includes("YES") && isDjango) {
+        framework = "django";
+        suggestedPythonCmd = "python manage.py runserver 0.0.0.0:80 --insecure --noreload";
+      } else {
+        framework = "python";
+        suggestedStartFile = pyEntry.out.trim() || "app.py";
+      }
+    } else if (kind === "static") {
+      framework = hasPackageJson && hasBuildScript ? "spa" : "static";
+    } else if (hasPackageJson && /"next"\s*:/.test(pkg.out)) {
       framework = "nextjs";
       runModel = "standalone";
     } else if (hasComposer && artisan.out.includes("YES") && /laravel\/framework/.test(composerJson.out)) {
       framework = "laravel";
     }
-    return { framework, runModel, serverEntry: "server.js", hasComposer, hasPackageJson };
+    return { framework, runModel, serverEntry: "server.js", hasComposer, hasPackageJson, hasRequirements, suggestedStartFile, suggestedPythonCmd };
   } finally {
     await killContainer(c);
   }
@@ -290,6 +315,13 @@ function buildScript(args: RunDeployArgs): string {
       case "npm_build":
         cmd = args.framework === "nextjs" ? "NEXT_PRIVATE_STANDALONE=true npm run build" : "npm run build --if-present";
         break;
+      case "pip_install":
+        // Vendoriza as deps em .vp-vendor (dentro de /app) → sobrevivem ao recreate.
+        cmd = "if [ -f requirements.txt ]; then pip install --no-cache-dir --target=.vp-vendor -r requirements.txt; else echo 'sem requirements.txt — pulei'; fi";
+        break;
+      case "python_restart":
+      case "static_reload":
+        continue; // pós-place (rodam no container do app)
       case "php_migrate":
       case "artisan_migrate":
       case "artisan_optimize":
@@ -327,6 +359,19 @@ function buildScript(args: RunDeployArgs): string {
         "cp -a . /workspace/out/framework/ && rm -rf /workspace/out/framework/.git && " +
         "cp -a /workspace/out/framework/public/. /workspace/out/www/",
     );
+  } else if (args.framework === "spa") {
+    // SPA: só o artefato de build vai para /site. Auto-detecta dist|build|out;
+    // Angular gera dist/<proj>/ — desce para a subpasta que tem index.html.
+    lines.push(
+      "OUT=''; for d in dist build out; do [ -d \"$d\" ] && { OUT=\"$d\"; break; }; done; " +
+        "if [ -n \"$OUT\" ]; then " +
+        "if [ ! -f \"$OUT/index.html\" ]; then SUB=$(find \"$OUT\" -maxdepth 2 -name index.html | head -1); [ -n \"$SUB\" ] && OUT=$(dirname \"$SUB\"); fi; " +
+        "cp -a \"$OUT\"/. /workspace/out/; " +
+        "else echo 'AVISO: nao achei dist/build/out — publicando a raiz'; cp -a . /workspace/out/ && rm -rf /workspace/out/.git; fi",
+    );
+  } else if (args.framework === "static" || args.framework === "python" || args.framework === "django") {
+    // static "site pronto" → /site inteiro; python → /app inteiro (com .vp-vendor).
+    lines.push("cp -a . /workspace/out/ && rm -rf /workspace/out/.git");
   } else {
     // genérico: copia o repo inteiro (menos .git)
     lines.push("cp -a . /workspace/out/ && rm -rf /workspace/out/.git");
@@ -439,6 +484,7 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
 
     appendLog(runId, "\n::vp:phase:place\ncolocando os arquivos no ambiente…\n");
     if (args.framework === "laravel") await placeLaravel(c, args.appContainerId);
+    else if (args.framework === "spa" || args.framework === "static") await placeStatic(c, args.appContainerId, args.workdir);
     else await placeIntoApp(c, args.appContainerId, args.workdir);
     appendLog(runId, "::vp:placed\n");
 
@@ -457,8 +503,16 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
     // Pós-deploy: reinicia o app com o novo código / aponta docroot.
     appendLog(runId, "\n::vp:phase:restart\n");
     try {
-      if (args.framework === "nextjs") await applyNodeStart(args.appContainerId, "server.js");
-      else if (args.workdir === "/app") await applyNodeStart(args.appContainerId, args.nodeStartFile || "index.js");
+      if (args.framework === "nextjs") {
+        await applyNodeStart(args.appContainerId, "server.js");
+      } else if (args.runtimeKind === "python") {
+        if (args.framework === "django") await applyPythonCmd(args.appContainerId, args.pythonCmd || "python manage.py runserver 0.0.0.0:80 --insecure --noreload");
+        else await applyPythonStart(args.appContainerId, args.nodeStartFile || "app.py");
+      } else if (args.framework === "spa" || args.framework === "static") {
+        await restartApp(args.appContainerId); // caddy relê /site
+      } else if (args.workdir === "/app") {
+        await applyNodeStart(args.appContainerId, args.nodeStartFile || "index.js"); // node
+      }
       if (args.framework === "laravel") await applyPhpRoot(args.appContainerId, "/var/www", true);
     } catch (e) { appendLog(runId, "aviso: " + String(e) + "\n"); }
 
@@ -487,6 +541,24 @@ async function placeIntoApp(buildC: Docker.Container, appContainerId: string, wo
     "sh",
     "-c",
     `if [ -d /.veloz-incoming/out ]; then cp -a /.veloz-incoming/out/. '${workdir}'/ ; fi; rm -rf /.veloz-incoming`,
+  ]);
+}
+
+/**
+ * Estático (SPA/site pronto): deploy LIMPO — apaga o docroot (/site) preservando
+ * só os arquivos internos /.vp-* (Caddyfile) e copia o artefato novo.
+ */
+async function placeStatic(buildC: Docker.Container, appContainerId: string, docroot: string): Promise<void> {
+  const app = docker.getContainer(appContainerId);
+  await execIn(appContainerId, ["sh", "-c", "rm -rf /.veloz-incoming && mkdir -p /.veloz-incoming"]);
+  const tar = await buildC.getArchive({ path: "/workspace/out" });
+  await app.putArchive(tar as unknown as NodeJS.ReadableStream, { path: "/.veloz-incoming" });
+  await execIn(appContainerId, [
+    "sh",
+    "-c",
+    `if [ -d /.veloz-incoming/out ]; then ` +
+      `find '${docroot}' -mindepth 1 -maxdepth 1 ! -name '.vp-*' -exec rm -rf {} + ; ` +
+      `cp -a /.veloz-incoming/out/. '${docroot}'/ ; fi; rm -rf /.veloz-incoming`,
   ]);
 }
 

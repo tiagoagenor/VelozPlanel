@@ -31,13 +31,35 @@ import { decryptSecret, encryptSecret } from "../crypto";
 const idParams = z.object({ id: z.string().uuid() });
 const runParams = z.object({ id: z.string().uuid(), runId: z.string().uuid() });
 
-/** Imagem base do runtime do ambiente (tem git/toolchain para o build). */
+/** Imagem do container EFÊMERO de build (precisa de git + toolchain do stack).
+ *  NÃO é a imagem do app (que já roda). Estático builda SPA em Node (o app é
+ *  caddy, sem node); Python builda na base própria (python-slim não tem git). */
+const STATIC_BUILD_NODE = "22"; // Node LTS fixo para buildar SPA de estáticos
 function baseImage(env: EnvironmentRow): string {
-  return `velozplanel/${env.runtimeKind}:${env.runtimeVersion}`;
+  switch (env.runtimeKind) {
+    case "php":
+      return `velozplanel/php:${env.runtimeVersion}`;
+    case "node":
+      return `velozplanel/node:${env.runtimeVersion}`;
+    case "python":
+      return `velozplanel/python:${env.runtimeVersion}`;
+    case "static":
+      return `velozplanel/node:${STATIC_BUILD_NODE}`;
+    default:
+      return `velozplanel/node:${STATIC_BUILD_NODE}`;
+  }
 }
 /** Pasta do app onde os arquivos são colocados (document root). */
 function appWorkdir(env: EnvironmentRow): string {
-  return env.runtimeKind === "node" ? "/app" : "/var/www";
+  switch (env.runtimeKind) {
+    case "node":
+    case "python":
+      return "/app";
+    case "static":
+      return "/site";
+    default:
+      return "/var/www"; // php
+  }
 }
 
 /** Credenciais HTTPS decifradas, se o modo for http. */
@@ -96,7 +118,7 @@ async function toConfig(cfg: DeployConfigRow): Promise<DeployConfig> {
 
 /** Passos padrão a partir da detecção do stack. */
 type StepSeed = { kind: string; label: string; command: string | null; enabled: boolean; mutatesData?: boolean };
-function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackageJson: boolean }, kind: string): StepSeed[] {
+function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackageJson: boolean; hasRequirements?: boolean }, kind: string): StepSeed[] {
   const s: StepSeed[] = [];
   s.push({ kind: "git_sync", label: "Baixar código (git)", command: null, enabled: true });
   if (det.framework === "laravel") {
@@ -110,6 +132,19 @@ function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackage
     s.push({ kind: "artisan_clear", label: "Limpar caches (optimize:clear)", command: null, enabled: true });
     s.push({ kind: "artisan_optimize", label: "Cache de config/rotas/views", command: null, enabled: true });
     s.push({ kind: "artisan_migrate", label: "Migrações do banco (migrate) — altera dados", command: null, enabled: false, mutatesData: true });
+    return s;
+  }
+  if (kind === "python") {
+    if (det.hasRequirements) s.push({ kind: "pip_install", label: "Instalar dependências (pip)", command: null, enabled: true });
+    s.push({ kind: "python_restart", label: "Reiniciar o app", command: null, enabled: true });
+    return s;
+  }
+  if (kind === "static") {
+    if (det.framework === "spa") {
+      s.push({ kind: "npm_ci", label: "Instalar dependências (npm)", command: null, enabled: true });
+      s.push({ kind: "npm_build", label: "Build do site (npm run build)", command: null, enabled: true });
+    }
+    // "site pronto": só baixar o código; o place copia direto para /site.
     return s;
   }
   if (det.hasComposer) s.push({ kind: "composer_install", label: "Instalar dependências (composer)", command: null, enabled: true });
@@ -289,7 +324,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       const cfg = await loadOrCreateConfig(env);
       if (!cfg.repoUrl) throw new ApiHttpError(400, "no_repo", "conecte um repositório antes de detectar");
       const agentUrl = await agentUrlForEnv(env);
-      const det = await agent.deployDetect(agentUrl, env.id, baseImage(env), cfg.repoUrl, cfg.branch, httpCredsFor(cfg));
+      const det = await agent.deployDetect(agentUrl, env.id, baseImage(env), cfg.repoUrl, cfg.branch, env.runtimeKind, httpCredsFor(cfg));
       const steps = defaultSteps(det, env.runtimeKind);
       await db.delete(deploySteps).where(eq(deploySteps.envId, env.id));
       if (steps.length) await db.insert(deploySteps).values(steps.map((s, i) => ({ envId: env.id, ord: i, kind: s.kind, command: s.command, label: s.label, enabled: s.enabled, mutatesData: s.mutatesData ?? false })));
@@ -300,6 +335,20 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       // Next.js: pré-configura PORT/HOSTNAME/NODE_ENV + arquivo de start (muito simples).
       if (det.framework === "nextjs" && env.runtimeKind === "node") {
         for (const [k, v] of [["PORT", "80"], ["HOSTNAME", "0.0.0.0"], ["NODE_ENV", "production"]] as const) {
+          const ex = await db.select().from(envVars).where(eq(envVars.envId, env.id));
+          if (!ex.some((r) => r.key === k)) {
+            await db.insert(envVars).values({ envId: env.id, key: k, valueEncrypted: encryptSecret(v), buildTime: false }).onConflictDoNothing();
+          }
+        }
+      }
+      // Python/Django: define arquivo de start (ou comando avançado) + PYTHONPATH
+      // do diretório vendorizado (deps do pip sobrevivem ao recreate no volume).
+      if (env.runtimeKind === "python") {
+        const patch: Partial<{ nodeStartFile: string | null; pythonCmd: string | null }> = {};
+        if (det.framework === "django" && det.suggestedPythonCmd) patch.pythonCmd = det.suggestedPythonCmd;
+        else patch.nodeStartFile = det.suggestedStartFile || "app.py";
+        if (Object.keys(patch).length) await db.update(environments).set(patch).where(eq(environments.id, env.id));
+        for (const [k, v] of [["PYTHONPATH", "/app/.vp-vendor"], ["PYTHONUNBUFFERED", "1"]] as const) {
           const ex = await db.select().from(envVars).where(eq(envVars.envId, env.id));
           if (!ex.some((r) => r.key === k)) {
             await db.insert(envVars).values({ envId: env.id, key: k, valueEncrypted: encryptSecret(v), buildTime: false }).onConflictDoNothing();
@@ -360,6 +409,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
           steps: steps.map((s) => ({ kind: s.kind, command: s.command, cwd: s.cwd, enabled: s.enabled })),
           buildEnv, framework: cfg.framework, runModel: cfg.runModel, http: httpCredsFor(cfg), subdir: cfg.subdir,
           runId: run.id, nodeStartFile: env.nodeStartFile, historyLimit: cfg.historyLimit,
+          runtimeKind: env.runtimeKind, pythonCmd: env.pythonCmd,
         });
       } catch (err) {
         await db.update(deployRuns).set({ status: "failed", log: String(err), finishedAt: new Date() }).where(eq(deployRuns.id, run.id));

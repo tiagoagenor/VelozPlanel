@@ -226,8 +226,12 @@ export function deployBranches(agentUrl: string, envId: string, image: string, r
 export function deployTest(agentUrl: string, envId: string, image: string, repoUrl: string, http?: HttpCreds): Promise<{ ok: boolean; message: string; defaultBranch: string | null }> {
   return call(agentUrl, "POST", "/deploy/test", { envId, image, repoUrl, http });
 }
-export function deployDetect(agentUrl: string, envId: string, image: string, repoUrl: string, branch: string, http?: HttpCreds): Promise<{ framework: string; runModel: string; serverEntry: string; hasComposer: boolean; hasPackageJson: boolean }> {
-  return call(agentUrl, "POST", "/deploy/detect", { envId, image, repoUrl, branch, http });
+export interface DeployDetectResult {
+  framework: string; runModel: string; serverEntry: string; hasComposer: boolean; hasPackageJson: boolean;
+  hasRequirements?: boolean; suggestedStartFile?: string | null; suggestedPythonCmd?: string | null;
+}
+export function deployDetect(agentUrl: string, envId: string, image: string, repoUrl: string, branch: string, kind: string, http?: HttpCreds): Promise<DeployDetectResult> {
+  return call(agentUrl, "POST", "/deploy/detect", { envId, image, repoUrl, branch, kind, http });
 }
 export interface DeployRunInput {
   envId: string; image: string; appContainerId: string; workdir: string;
@@ -235,6 +239,7 @@ export interface DeployRunInput {
   steps: { kind: string; command?: string | null; cwd?: string | null; enabled: boolean }[];
   buildEnv: { key: string; value: string }[]; framework: string; runModel: string; http?: HttpCreds; subdir?: string | null;
   runId: string; nodeStartFile?: string | null; historyLimit?: number;
+  runtimeKind?: string; pythonCmd?: string | null;
 }
 export function startDeploy(agentUrl: string, input: DeployRunInput): Promise<{ started: boolean }> {
   return call(agentUrl, "POST", "/deploy/run", input);

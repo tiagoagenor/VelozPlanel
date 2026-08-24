@@ -8,6 +8,7 @@ import {
   Rocket, GitBranch, KeyRound, Copy, Check, Loader2, Play, ExternalLink,
   CheckCircle2, XCircle, Info, ArrowRight, ArrowLeft, Sparkles, Boxes, Pencil, RefreshCw, AlertTriangle, Trash2,
 } from "lucide-react";
+import { RUNTIME_LABEL } from "@velozplanel/contracts";
 import type { DeployConfig, DeployFramework } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
@@ -18,7 +19,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 
 type Fw = DeployFramework;
-const FRAMEWORKS: Record<"node" | "php", { id: Fw; label: string; hint: string }[]> = {
+type DeployLang = "node" | "php" | "python" | "static";
+const FRAMEWORKS: Record<DeployLang, { id: Fw; label: string; hint: string }[]> = {
   node: [
     { id: "nextjs", label: "Next.js", hint: "Detecta e roda standalone automaticamente" },
     { id: "none", label: "Node genérico", hint: "Express, Fastify, qualquer app Node" },
@@ -26,6 +28,14 @@ const FRAMEWORKS: Record<"node" | "php", { id: Fw; label: string; hint: string }
   php: [
     { id: "laravel", label: "Laravel", hint: "Serve public/, roda artisan e migrações" },
     { id: "none", label: "Padrão", hint: "WordPress, PHP puro, qualquer app" },
+  ],
+  python: [
+    { id: "django", label: "Django", hint: "Detecta manage.py, instala requirements e sobe o runserver" },
+    { id: "python", label: "Python genérico", hint: "Flask, FastAPI ou script próprio (app.py)" },
+  ],
+  static: [
+    { id: "spa", label: "Site com build (React, Vue, Angular)", hint: "Roda npm install + build e publica o dist/build" },
+    { id: "static", label: "Site pronto (HTML/CSS/JS)", hint: "Publica os arquivos como estão, sem build" },
   ],
 };
 
@@ -46,7 +56,7 @@ export default function DeployPage() {
   const q = useQuery({ queryKey: ["deploy", id], queryFn: () => api.getDeploy(id) });
   const runsQ = useQuery({ queryKey: ["deploy-runs", id], queryFn: () => api.getDeployRuns(id) });
   const cfg = q.data;
-  const lang = (envQ.data?.runtime.kind ?? "node") as "node" | "php";
+  const lang = (envQ.data?.runtime.kind ?? "node") as DeployLang;
 
   const [wizard, setWizard] = React.useState(false);
   const [wStep, setWStep] = React.useState(1);
@@ -118,10 +128,13 @@ export default function DeployPage() {
     { v: "composer_install", label: "Instalar dependências PHP (composer)" },
     { v: "npm_ci", label: "Instalar dependências JS (npm)" },
     { v: "npm_build", label: "Build de assets" },
+    { v: "pip_install", label: "Instalar dependências (pip)" },
     { v: "artisan_migrate", label: "Migrações (artisan migrate) — altera dados" },
     { v: "artisan_optimize", label: "Cache config/rotas/views (artisan)" },
     { v: "artisan_storage_link", label: "Link de storage (storage:link)" },
     { v: "node_restart", label: "Reiniciar o app" },
+    { v: "python_restart", label: "Reiniciar o app" },
+    { v: "static_reload", label: "Recarregar o site" },
     { v: "shell", label: "Comando personalizado" },
   ];
   type Row = { enabled: boolean; kind: string; command: string | null; label: string; cwd: string | null; mutatesData: boolean };
@@ -131,7 +144,7 @@ export default function DeployPage() {
   const [stepMode, setStepMode] = React.useState<"simple" | "advanced">("simple");
   const [subdir, setSubdir] = React.useState("");
   React.useEffect(() => { if (cfg) { setStepMode((cfg.mode as "simple" | "advanced") ?? "simple"); setSubdir(cfg.subdir ?? ""); } }, [cfg?.mode, cfg?.subdir]);
-  const APP_KINDS = ["php_migrate", "artisan_migrate", "artisan_optimize", "artisan_storage_link", "node_restart"];
+  const APP_KINDS = ["php_migrate", "artisan_migrate", "artisan_optimize", "artisan_storage_link", "node_restart", "python_restart", "static_reload"];
   const isAppKind = (k: string) => APP_KINDS.includes(k);
   const buildFolder = (rowCwd: string | null) => {
     const b = subdir.trim() || "raiz";
@@ -204,7 +217,7 @@ export default function DeployPage() {
           <Card><div className="flex flex-col gap-4">
             <h3 className="font-semibold text-text">Que tipo de projeto?</h3>
             <div><span className="text-xs font-medium text-text3">Linguagem</span>
-              <div className="mt-1.5 flex gap-2">{(["node", "php"] as const).map((l) => (<span key={l} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${l === lang ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text3"}`}>{l === "node" ? "Node.js" : "PHP"}</span>))}</div>
+              <div className="mt-1.5 flex gap-2"><span className="rounded-lg border border-brand-strong bg-brand-soft px-3 py-1.5 text-sm font-medium text-brand-strong">{RUNTIME_LABEL[lang]}</span></div>
               <p className="mt-1 text-xs text-text3">A linguagem é a do ambiente.</p>
             </div>
             <div><span className="text-xs font-medium text-text3">Framework</span>
@@ -244,22 +257,6 @@ export default function DeployPage() {
     : isSSH ? <span className="flex items-center gap-1.5 text-sm text-text3">● Falta criar a chave</span>
     : isHTTP ? <span className="flex items-center gap-1.5 text-sm text-warning"><AlertTriangle size={14} /> Credenciais não testadas</span>
     : null;
-
-  // Deploy por git é só Node/PHP na Fase 1. Python/Estático publicam pela aba Arquivos.
-  const kind = envQ.data?.runtime.kind;
-  if (envQ.data && kind !== "node" && kind !== "php") {
-    return (
-      <Card className="flex items-start gap-3">
-        <AlertTriangle size={20} aria-hidden="true" className="mt-0.5 shrink-0 text-text3" />
-        <div>
-          <p className="font-medium text-text">Deploy por Git não se aplica a este ambiente</p>
-          <p className="mt-1 text-sm text-text2">
-            Publique enviando seus arquivos pela aba <strong>Arquivos</strong> (ou SFTP). Depois use <strong>Reiniciar</strong> para aplicar.
-          </p>
-        </div>
-      </Card>
-    );
-  }
 
   return (
     <div className="flex flex-col gap-5">
