@@ -27,7 +27,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { runtimeSpec } from "@velozplanel/contracts";
+import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
 import * as ingress from "./ingress.js";
 import * as files from "./files.js";
@@ -254,6 +254,39 @@ app.post("/env-vars", async (req, reply) => {
   } catch (err) {
     req.log.error({ err }, "env-vars failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// Jamees Studio: executa uma consulta/comando de banco via docker exec no container.
+// A API já validou posse (dono/admin), estado running e o gate de senha antes de chamar.
+const dbExecBody = z.object({
+  containerId: z.string().min(1),
+  envId: z.string().min(1),
+  engine: studioEngine,
+  sql: dbRunSqlInput.optional(),
+  mongo: dbRunMongoInput.optional(),
+});
+const DB_BAD_REQUEST = new Set([
+  "bad_request",
+  "sql_vazio",
+  "multi_statement_nao_suportado",
+  "escrita_requer_modo_escrita",
+  "estagio_proibido",
+  "pipeline_invalido",
+  "op_nao_permitida",
+]);
+app.post("/db/exec", async (req, reply) => {
+  const parsed = dbExecBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const result = await dockerDriver.runDbConsole(parsed.data);
+    return reply.code(200).send(result);
+  } catch (err) {
+    const code = (err as { code?: string })?.code ?? "engine_error";
+    const message = (err as Error)?.message ?? "erro ao executar";
+    const status = code === "db_busy" ? 429 : DB_BAD_REQUEST.has(code) ? 400 : 422;
+    req.log.warn({ code }, "db exec failed");
+    return reply.code(status).send({ error: code, message });
   }
 });
 

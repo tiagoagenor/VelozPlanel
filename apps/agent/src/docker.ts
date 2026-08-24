@@ -1,6 +1,8 @@
 import os from "node:os";
 import Docker from "dockerode";
-import type { RuntimeSpec } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbResult } from "@velozplanel/contracts";
+import { isSqlEngine } from "@velozplanel/contracts";
+import { buildSqlExec, buildMongoExec, parseExec, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
 
 /**
  * Wrapper dockerode do Agente VelozPlanel.
@@ -1043,4 +1045,104 @@ export async function logStream(containerId: string, tail: number): Promise<Node
     stderr: true,
     tail,
   })) as unknown as NodeJS.ReadableStream;
+}
+
+/* ─────────────── Jamees Studio (console de banco via docker exec) ─────────────── */
+
+// Lock em memória: 1 exec de console por ambiente (o agente é 1 processo por nó).
+const dbConsoleLocks = new Set<string>();
+
+/** Executa um plano do db-console no container, com 2 sinks, cap de bytes e timeout. */
+async function execDb(containerId: string, plan: ExecPlan): Promise<ExecOutput> {
+  const c = docker.getContainer(containerId);
+  const ex = await c.exec({ Cmd: plan.cmd, Env: plan.env, AttachStdout: true, AttachStderr: true, Tty: false });
+  const stream = await ex.start({ hijack: true, stdin: false });
+  const { Writable } = await import("node:stream");
+  const MAX_BYTES = 12 * 1024 * 1024;
+  const outChunks: Buffer[] = [];
+  const errChunks: Buffer[] = [];
+  let outLen = 0;
+  let truncated = false;
+  const outSink = new Writable({
+    write(chunk, _enc, cb) {
+      const b = Buffer.from(chunk);
+      if (outLen < MAX_BYTES) {
+        outChunks.push(b);
+        outLen += b.length;
+      } else truncated = true;
+      cb();
+    },
+  });
+  const errSink = new Writable({
+    write(chunk, _enc, cb) {
+      errChunks.push(Buffer.from(chunk));
+      cb();
+    },
+  });
+  let timedOut = false;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        (stream as unknown as { destroy(): void }).destroy();
+      } catch {
+        /* ignore */
+      }
+      resolve();
+    }, plan.timeoutMs);
+    docker.modem.demuxStream(stream, outSink, errSink);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    stream.on("end", done);
+    stream.on("close", done);
+  });
+  const info = await ex.inspect().catch(() => ({ ExitCode: 1 }) as Docker.ExecInspectInfo);
+  const stderr = Buffer.concat(errChunks).toString("utf8");
+  return {
+    stdout: Buffer.concat(outChunks),
+    stderr: timedOut ? stderr || "tempo limite excedido (25s)" : stderr,
+    exitCode: timedOut ? 124 : (info.ExitCode ?? 1),
+    truncated,
+  };
+}
+
+class DbBusyError extends Error {
+  code = "db_busy";
+  constructor() {
+    super("já existe uma consulta em andamento neste ambiente");
+  }
+}
+
+export interface RunDbConsoleArgs {
+  containerId: string;
+  envId: string;
+  engine: StudioEngine;
+  sql?: DbRunSqlInput;
+  mongo?: DbRunMongoInput;
+}
+
+/** Ponto de entrada do agente: classifica+monta (via db-console), executa e parseia. */
+export async function runDbConsole(args: RunDbConsoleArgs): Promise<DbResult> {
+  if (dbConsoleLocks.has(args.envId)) throw new DbBusyError();
+  dbConsoleLocks.add(args.envId);
+  try {
+    let plan: ExecPlan;
+    if (isSqlEngine(args.engine) && args.sql) {
+      plan = buildSqlExec(args.engine, args.sql);
+    } else if (args.engine === "mongodb" && args.mongo) {
+      plan = buildMongoExec(args.mongo);
+    } else {
+      const e = new Error("requisição inválida para o engine") as Error & { code: string };
+      e.code = "bad_request";
+      throw e;
+    }
+    const started = Date.now();
+    const out = await execDb(args.containerId, plan);
+    const result = parseExec(plan, out);
+    return { ...result, tookMs: Date.now() - started };
+  } finally {
+    dbConsoleLocks.delete(args.envId);
+  }
 }
