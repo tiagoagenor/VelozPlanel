@@ -97,27 +97,24 @@ export interface StatsResult {
   memLimitBytes: number;
 }
 
-/** PHP: um index.php estático que lê as env vars e imprime a página. */
+// Página "site em construção" (base64; o nome do ambiente é injetado no runtime).
+const CONSTRUCTION_B64 = "PCFET0NUWVBFIGh0bWw+CjxodG1sIGxhbmc9InB0LUJSIj4KPGhlYWQ+CiAgPG1ldGEgY2hhcnNldD0idXRmLTgiPgogIDxtZXRhIG5hbWU9InZpZXdwb3J0IiBjb250ZW50PSJ3aWR0aD1kZXZpY2Utd2lkdGgsIGluaXRpYWwtc2NhbGU9MSI+CiAgPG1ldGEgbmFtZT0icm9ib3RzIiBjb250ZW50PSJub2luZGV4Ij4KICA8bWV0YSBuYW1lPSJjb2xvci1zY2hlbWUiIGNvbnRlbnQ9ImxpZ2h0IGRhcmsiPgogIDx0aXRsZT5TaXRlIGVtIGNvbnN0cnXDp8OjbyAmbWlkZG90OyBqYW1lZXMuY29tPC90aXRsZT4KICA8c3R5bGU+CiAgICA6cm9vdHsKICAgICAgLS1wdXJwbGU6ICM2MzRjYTg7CiAgICAgIC0tcHVycGxlLXN0cm9uZzogIzRhMzg4MDsKICAgICAgLS1wdXJwbGUtc29mdDogI2VmZWNmODsKICAgICAgLS1pbms6ICMyMzIxMmI7CiAgICAgIC0taW5rLXNvZnQ6ICM1YzVhNjg7CiAgICAgIC0tYmc6ICNmNmY1ZmI7CiAgICAgIC0tY2FyZDogI2ZmZmZmZjsKICAgICAgLS1saW5lOiAjZWFlN2YzOwogICAgICAtLXNoYWRvdzogMCAyMHB4IDYwcHggLTI0cHggcmdiYSg3NCw1NiwxMjgsLjM1KTsKICAgIH0KICAgIEBtZWRpYSAocHJlZmVycy1jb2xvci1zY2hlbWU6IGRhcmspewogICAgICA6cm9vdHsKICAgICAgICAtLXB1cnBsZTogI2E5OTZlODsKICAgICAgICAtLXB1cnBsZS1zdHJvbmc6ICNjM2I2ZjI7CiAgICAgICAgLS1wdXJwbGUtc29mdDogIzI0MWYzODsKICAgICAgICAtLWluazogI2YyZjFmNzsKICAgICAgICAtLWluay1zb2Z0OiAjYjBhY2MyOwogICAgICAgIC0tYmc6ICMxMzExMjA7CiAgICAgICAgLS1jYXJkOiAjMWIxODMwOwogICAgICAgIC0tbGluZTogIzJiMjc0NTsKICAgICAgICAtLXNoYWRvdzogMCAyNHB4IDcwcHggLTI4cHggcmdiYSgwLDAsMCwuNyk7CiAgICAgIH0KICAgIH0KCiAgICAqeyBib3gtc2l6aW5nOiBib3JkZXItYm94OyB9CiAgICBodG1sLCBib2R5eyBoZWlnaHQ6IDEwMCU7IH0KICAgIGJvZHl7CiAgICAgIG1hcmdpbjogMDsKICAgICAgZm9udC1mYW1pbHk6IHN5c3RlbS11aSwgLWFwcGxlLXN5c3RlbSwgIlNlZ29lIFVJIiwgUm9ib3RvLCAiSGVsdmV0aWNhIE5ldWUiLCBBcmlhbCwgc2Fucy1zZXJpZjsKICAgICAgY29sb3I6IHZhcigtLWluayk7CiAgICAgIGJhY2tncm91bmQ6IHZhcigtLWJnKTsKICAgICAgYmFja2dyb3VuZC1pbWFnZToKICAgICAgICByYWRpYWwtZ3JhZGllbnQoNjAlIDU1JSBhdCA1MCUgLTEwJSwgcmdiYSg5OSw3NiwxNjgsLjE2KSwgdHJhbnNwYXJlbnQgNjAlKSwKICAgICAgICByYWRpYWwtZ3JhZGllbnQoNDUlIDQwJSBhdCAxMDAlIDEwMCUsIHJnYmEoOTksNzYsMTY4LC4xMCksIHRyYW5zcGFyZW50IDU1JSk7CiAgICAgIC13ZWJraXQtZm9udC1zbW9vdGhpbmc6IGFudGlhbGlhc2VkOwogICAgICB0ZXh0LXJlbmRlcmluZzogb3B0aW1pemVMZWdpYmlsaXR5OwogICAgICBkaXNwbGF5OiBmbGV4OwogICAgICBmbGV4LWRpcmVjdGlvbjogY29sdW1uOwogICAgICBtaW4taGVpZ2h0OiAxMDAlOwogICAgfQoKICAgIC53cmFwewogICAgICBmbGV4OiAxOwogICAgICBkaXNwbGF5OiBmbGV4OwogICAgICBhbGlnbi1pdGVtczogY2VudGVyOwogICAgICBqdXN0aWZ5LWNvbnRlbnQ6IGNlbnRlcjsKICAgICAgcGFkZGluZzogMzJweCAyMHB4OwogICAgfQoKICAgIC5jYXJkewogICAgICB3aWR0aDogMTAwJTsKICAgICAgbWF4LXdpZHRoOiA1NjBweDsKICAgICAgYmFja2dyb3VuZDogdmFyKC0tY2FyZCk7CiAgICAgIGJvcmRlcjogMXB4IHNvbGlkIHZhcigtLWxpbmUpOwogICAgICBib3JkZXItcmFkaXVzOiAyNHB4OwogICAgICBib3gtc2hhZG93OiB2YXIoLS1zaGFkb3cpOwogICAgICBwYWRkaW5nOiA0NHB4IDQwcHggNDBweDsKICAgICAgdGV4dC1hbGlnbjogY2VudGVyOwogICAgfQoKICAgIC8qIFdvcmRtYXJrICovCiAgICAuYnJhbmR7CiAgICAgIGRpc3BsYXk6IGlubGluZS1mbGV4OwogICAgICBhbGlnbi1pdGVtczogYmFzZWxpbmU7CiAgICAgIGZvbnQtd2VpZ2h0OiA4MDA7CiAgICAgIGZvbnQtc2l6ZTogMjJweDsKICAgICAgbGV0dGVyLXNwYWNpbmc6IC0uMDJlbTsKICAgICAgY29sb3I6IHZhcigtLWluayk7CiAgICAgIHVzZXItc2VsZWN0OiBub25lOwogICAgfQogICAgLmJyYW5kIC5kb3R7IGNvbG9yOiB2YXIoLS1wdXJwbGUpOyBmb250LXdlaWdodDogODAwOyBtYXJnaW46IDAgMXB4OyB9CiAgICAuYnJhbmQgLnRsZHsKICAgICAgZm9udC1zaXplOiAuNjJlbTsKICAgICAgZm9udC13ZWlnaHQ6IDYwMDsKICAgICAgY29sb3I6IHZhcigtLWluay1zb2Z0KTsKICAgICAgb3BhY2l0eTogLjc7CiAgICAgIGxldHRlci1zcGFjaW5nOiAwOwogICAgfQoKICAgIC8qIEVtYmxlbSAqLwogICAgLmVtYmxlbXsKICAgICAgd2lkdGg6IDg0cHg7CiAgICAgIGhlaWdodDogODRweDsKICAgICAgbWFyZ2luOiAyOHB4IGF1dG8gMjJweDsKICAgICAgYm9yZGVyLXJhZGl1czogMjJweDsKICAgICAgZGlzcGxheTogZ3JpZDsKICAgICAgcGxhY2UtaXRlbXM6IGNlbnRlcjsKICAgICAgYmFja2dyb3VuZDogbGluZWFyLWdyYWRpZW50KDE2MGRlZywgdmFyKC0tcHVycGxlKSwgdmFyKC0tcHVycGxlLXN0cm9uZykpOwogICAgICBib3gtc2hhZG93OiAwIDE0cHggMzJweCAtMTJweCByZ2JhKDk5LDc2LDE2OCwuNjUpOwogICAgICBwb3NpdGlvbjogcmVsYXRpdmU7CiAgICB9CiAgICAuZW1ibGVtIHN2Z3sgd2lkdGg6IDQ0cHg7IGhlaWdodDogNDRweDsgZGlzcGxheTogYmxvY2s7IH0KICAgIC5nZWFyewogICAgICB0cmFuc2Zvcm0tb3JpZ2luOiA1MCUgNTAlOwogICAgICB0cmFuc2Zvcm0tYm94OiBmaWxsLWJveDsKICAgICAgYW5pbWF0aW9uOiBzcGluIDlzIGxpbmVhciBpbmZpbml0ZTsKICAgIH0KICAgIEBrZXlmcmFtZXMgc3BpbnsgdG97IHRyYW5zZm9ybTogcm90YXRlKDM2MGRlZyk7IH0gfQoKICAgIGgxewogICAgICBtYXJnaW46IDAgMCAxMHB4OwogICAgICBmb250LXNpemU6IDI3cHg7CiAgICAgIGxpbmUtaGVpZ2h0OiAxLjI7CiAgICAgIGxldHRlci1zcGFjaW5nOiAtLjAyZW07CiAgICAgIGNvbG9yOiB2YXIoLS1pbmspOwogICAgfQogICAgLmxlYWR7CiAgICAgIG1hcmdpbjogMCBhdXRvOwogICAgICBtYXgtd2lkdGg6IDQwY2g7CiAgICAgIGZvbnQtc2l6ZTogMTUuNXB4OwogICAgICBsaW5lLWhlaWdodDogMS42OwogICAgICBjb2xvcjogdmFyKC0taW5rLXNvZnQpOwogICAgfQoKICAgIC5zaXRlewogICAgICBkaXNwbGF5OiBpbmxpbmUtYmxvY2s7CiAgICAgIG1heC13aWR0aDogMTAwJTsKICAgICAgbWFyZ2luOiAxOHB4IDAgNHB4OwogICAgICBwYWRkaW5nOiA3cHggMTRweDsKICAgICAgYm9yZGVyLXJhZGl1czogOTk5cHg7CiAgICAgIGJhY2tncm91bmQ6IHZhcigtLXB1cnBsZS1zb2Z0KTsKICAgICAgY29sb3I6IHZhcigtLXB1cnBsZS1zdHJvbmcpOwogICAgICBmb250LXdlaWdodDogNjAwOwogICAgICBmb250LXNpemU6IDE0cHg7CiAgICAgIGxldHRlci1zcGFjaW5nOiAtLjAxZW07CiAgICAgIG92ZXJmbG93LXdyYXA6IGFueXdoZXJlOwogICAgICBib3JkZXI6IDFweCBzb2xpZCB2YXIoLS1saW5lKTsKICAgIH0KCiAgICAvKiBQcm9ncmVzcyBiYXIgKHRvdWNoIG9mIGxpZmUpICovCiAgICAucHJvZ3Jlc3N7CiAgICAgIHBvc2l0aW9uOiByZWxhdGl2ZTsKICAgICAgaGVpZ2h0OiA2cHg7CiAgICAgIG1hcmdpbjogMzBweCBhdXRvIDZweDsKICAgICAgbWF4LXdpZHRoOiAzMjBweDsKICAgICAgYm9yZGVyLXJhZGl1czogOTk5cHg7CiAgICAgIGJhY2tncm91bmQ6IHZhcigtLXB1cnBsZS1zb2Z0KTsKICAgICAgb3ZlcmZsb3c6IGhpZGRlbjsKICAgIH0KICAgIC5wcm9ncmVzczo6YmVmb3JlewogICAgICBjb250ZW50OiAiIjsKICAgICAgcG9zaXRpb246IGFic29sdXRlOwogICAgICB0b3A6IDA7IGxlZnQ6IDA7IGJvdHRvbTogMDsKICAgICAgd2lkdGg6IDQwJTsKICAgICAgYm9yZGVyLXJhZGl1czogOTk5cHg7CiAgICAgIGJhY2tncm91bmQ6IGxpbmVhci1ncmFkaWVudCg5MGRlZywgdHJhbnNwYXJlbnQsIHZhcigtLXB1cnBsZSksIHRyYW5zcGFyZW50KTsKICAgICAgYW5pbWF0aW9uOiBzbGlkZSAxLjlzIGVhc2UtaW4tb3V0IGluZmluaXRlOwogICAgfQogICAgQGtleWZyYW1lcyBzbGlkZXsKICAgICAgMCV7IHRyYW5zZm9ybTogdHJhbnNsYXRlWCgtMTIwJSk7IH0KICAgICAgMTAwJXsgdHJhbnNmb3JtOiB0cmFuc2xhdGVYKDMyMCUpOyB9CiAgICB9CgogICAgLnN0YXR1c3sKICAgICAgbWFyZ2luOiA0cHggMCAwOwogICAgICBmb250LXNpemU6IDEyLjVweDsKICAgICAgY29sb3I6IHZhcigtLWluay1zb2Z0KTsKICAgICAgbGV0dGVyLXNwYWNpbmc6IC4wMWVtOwogICAgfQoKICAgIGZvb3RlcnsKICAgICAgdGV4dC1hbGlnbjogY2VudGVyOwogICAgICBwYWRkaW5nOiAyMnB4IDE2cHggMzBweDsKICAgICAgZm9udC1zaXplOiAxMi41cHg7CiAgICAgIGNvbG9yOiB2YXIoLS1pbmstc29mdCk7CiAgICB9CiAgICBmb290ZXIgLmJyYW5keyBmb250LXNpemU6IDEzcHg7IH0KCiAgICBAbWVkaWEgKG1heC13aWR0aDogNDgwcHgpewogICAgICAuY2FyZHsgcGFkZGluZzogMzRweCAyMnB4IDMwcHg7IGJvcmRlci1yYWRpdXM6IDIwcHg7IH0KICAgICAgaDF7IGZvbnQtc2l6ZTogMjNweDsgfQogICAgICAuZW1ibGVteyB3aWR0aDogNzZweDsgaGVpZ2h0OiA3NnB4OyB9CiAgICB9CgogICAgQG1lZGlhIChwcmVmZXJzLXJlZHVjZWQtbW90aW9uOiByZWR1Y2UpewogICAgICAuZ2VhcnsgYW5pbWF0aW9uOiBub25lOyB9CiAgICAgIC5wcm9ncmVzczo6YmVmb3JleyBhbmltYXRpb246IG5vbmU7IHdpZHRoOiA1NSU7IHRyYW5zZm9ybTogbm9uZTsgbGVmdDogMDsgfQogICAgfQogIDwvc3R5bGU+CjwvaGVhZD4KPGJvZHk+CiAgPG1haW4gY2xhc3M9IndyYXAiPgogICAgPGRpdiBjbGFzcz0iY2FyZCIgcm9sZT0ic3RhdHVzIiBhcmlhLWxpdmU9InBvbGl0ZSI+CgogICAgICA8c3BhbiBjbGFzcz0iYnJhbmQiIGFyaWEtbGFiZWw9ImphbWVlcy5jb20iPmphbWVlczxzcGFuIGNsYXNzPSJkb3QiPi48L3NwYW4+PHNwYW4gY2xhc3M9InRsZCI+Y29tPC9zcGFuPjwvc3Bhbj4KCiAgICAgIDxkaXYgY2xhc3M9ImVtYmxlbSIgYXJpYS1oaWRkZW49InRydWUiPgogICAgICAgIDxzdmcgdmlld0JveD0iMCAwIDI0IDI0IiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogICAgICAgICAgPHBhdGggY2xhc3M9ImdlYXIiIGZpbGw9IiNmZmZmZmYiIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xpcC1ydWxlPSJldmVub2RkIiBkPSJNMTEuMDc4IDIuMjVjLS45MTcgMC0xLjY5OS42NjMtMS44NSAxLjU2N0w5LjA1IDQuODg5Yy0uMDIuMTItLjExNS4yNi0uMjk3LjM0OGE3LjQ5MyA3LjQ5MyAwIDAgMC0uOTg2LjU3Yy0uMTY2LjExNS0uMzM0LjEyNi0uNDUuMDgzTDYuMyA2LjA0NWExLjg3NSAxLjg3NSAwIDAgMC0yLjI4Mi44MTlsLS45MjIgMS41OTdhMS44NzUgMS44NzUgMCAwIDAgLjQzMiAyLjM4NWwuODQuNjkyYy4wOTUuMDc4LjE3LjIyOS4xNTQuNDNhNy41OTggNy41OTggMCAwIDAgMCAxLjEzOWMuMDE1LjItLjA1OS4zNTItLjE1My40M2wtLjg0MS42OTJhMS44NzUgMS44NzUgMCAwIDAtLjQzMiAyLjM4NWwuOTIyIDEuNTk3YTEuODc1IDEuODc1IDAgMCAwIDIuMjgyLjgxOGwxLjAxOS0uMzgyYy4xMTUtLjA0My4yODMtLjAzMS40NS4wODIuMzEyLjIxNC42NDEuNDA1Ljk4NS41Ny4xODIuMDg4LjI3Ny4yMjguMjk3LjM1bC4xNzggMS4wNzFjLjE1MS45MDQuOTMzIDEuNTY3IDEuODUgMS41NjdoMS44NDRjLjkxNiAwIDEuNjk5LS42NjMgMS44NS0xLjU2N2wuMTc4LTEuMDcyYy4wMi0uMTIuMTE0LS4yNi4yOTctLjM0OS4zNDQtLjE2NS42NzMtLjM1Ni45ODUtLjU3LjE2Ny0uMTE0LjMzNS0uMTI1LjQ1LS4wODJsMS4wMi4zODJhMS44NzUgMS44NzUgMCAwIDAgMi4yOC0uODE5bC45MjMtMS41OTdhMS44NzUgMS44NzUgMCAwIDAtLjQzMi0yLjM4NWwtLjg0LS42OTJjLS4wOTUtLjA3OC0uMTctLjIyOS0uMTU0LS40M2E3LjYxNCA3LjYxNCAwIDAgMCAwLTEuMTM5Yy0uMDE2LS4yLjA1OS0uMzUyLjE1My0uNDNsLjg0LS42OTJjLjcwOC0uNTgyLjg5MS0xLjU5LjQzMy0yLjM4NWwtLjkyMi0xLjU5N2ExLjg3NSAxLjg3NSAwIDAgMC0yLjI4Mi0uODE4bC0xLjAyLjM4MmMtLjExNC4wNDMtLjI4Mi4wMzEtLjQ0OS0uMDgzYTcuNDkgNy40OSAwIDAgMC0uOTg1LS41N2MtLjE4My0uMDg3LS4yNzctLjIyNy0uMjk3LS4zNDhsLS4xNzktMS4wNzJhMS44NzUgMS44NzUgMCAwIDAtMS44NS0xLjU2N2gtMS44NDNaTTEyIDE1Ljc1YTMuNzUgMy43NSAwIDEgMCAwLTcuNSAzLjc1IDMuNzUgMCAwIDAgMCA3LjVaIj48L3BhdGg+CiAgICAgICAgPC9zdmc+CiAgICAgIDwvZGl2PgoKICAgICAgPGgxPlNpdGUgZW0gY29uc3RydcOnw6NvPC9oMT4KICAgICAgPHAgY2xhc3M9ImxlYWQiPkVzdGFtb3MgcHJlcGFyYW5kbyB0dWRvIHBhcmEgbyBsYW7Dp2FtZW50by4gTyBjb250ZcO6ZG8gYXBhcmVjZSBhcXVpIGFzc2ltIHF1ZSBhIHB1YmxpY2HDp8OjbyBmb3IgY29uY2x1w61kYS48L3A+CgogICAgICA8c3BhbiBjbGFzcz0ic2l0ZSI+X19TSVRFX05BTUVfXzwvc3Bhbj4KCiAgICAgIDxkaXYgY2xhc3M9InByb2dyZXNzIiByb2xlPSJwcmVzZW50YXRpb24iPjwvZGl2PgogICAgICA8cCBjbGFzcz0ic3RhdHVzIj5BbWJpZW50ZSBhdGl2byAmbWlkZG90OyBhZ3VhcmRhbmRvIHB1YmxpY2HDp8OjbzwvcD4KCiAgICA8L2Rpdj4KICA8L21haW4+CgogIDxmb290ZXI+CiAgICBIb3NwZWRhZG8gcG9yIDxzcGFuIGNsYXNzPSJicmFuZCI+amFtZWVzPHNwYW4gY2xhc3M9ImRvdCI+Ljwvc3Bhbj48c3BhbiBjbGFzcz0idGxkIj5jb208L3NwYW4+PC9zcGFuPgogIDwvZm9vdGVyPgo8L2JvZHk+CjwvaHRtbD4K";
+
+/** PHP: serve a página "site em construção" (nome do ambiente injetado). */
 const PHP_INDEX = `<?php
-$name = htmlspecialchars(getenv("VP_ENV_NAME") ?: "unknown");
-$kind = htmlspecialchars(getenv("VP_RUNTIME_KIND") ?: "php");
-$ver  = htmlspecialchars(getenv("VP_RUNTIME_VERSION") ?: "");
+$name = getenv("VP_ENV_NAME") ?: "seu site";
+$page = str_replace("__SITE_NAME__", htmlspecialchars($name), base64_decode("${CONSTRUCTION_B64}"));
 header("Content-Type: text/html; charset=utf-8");
-echo "<!doctype html><meta charset=utf-8><title>$name</title>";
-echo "<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}</style>";
-echo "<h1>$name</h1><p><strong>Runtime:</strong> $kind $ver</p>";
-echo "<p>Container VelozPlanel ativo.</p>";
+echo $page;
 `;
 
-/** Node: um server http inline estático que lê as env vars. */
+/** Node: serve a página "site em construção" (nome do ambiente injetado). */
 const NODE_SERVER = `const http = require("http");
-const name = process.env.VP_ENV_NAME || "unknown";
-const kind = process.env.VP_RUNTIME_KIND || "node";
-const ver = process.env.VP_RUNTIME_VERSION || "";
-const style = "body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}";
+const name = process.env.VP_ENV_NAME || "seu site";
+const page = Buffer.from("${CONSTRUCTION_B64}", "base64").toString("utf8").split("__SITE_NAME__").join(name);
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(\`<!doctype html><meta charset=utf-8><title>\${name}</title><style>\${style}</style><h1>\${name}</h1><p><strong>Runtime:</strong> \${kind} \${ver}</p><p>Container VelozPlanel ativo.</p>\`);
+  res.end(page);
 }).listen(80, "0.0.0.0");
 console.log("VelozPlanel node server on :80");
 `;
@@ -125,21 +122,16 @@ console.log("VelozPlanel node server on :80");
 /** Python: HTTP server da stdlib (sem framework) que serve a página de exemplo
  *  na :80 — garante que o env "nasce vivo" mesmo sem código do usuário.
  *  NUNCA usar aspas simples (o conteúdo vai entre aspas simples no shell). */
-const PYTHON_SERVER = `import os
+const PYTHON_SERVER = `import os, base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
-name = os.environ.get("VP_ENV_NAME", "app")
-ver = os.environ.get("VP_RUNTIME_VERSION", "")
-html = ("<!doctype html><meta charset=utf-8><title>" + name + "</title>"
-  "<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}"
-  "code{background:#eee;padding:.1em .3em;border-radius:4px}</style>"
-  "<h1>" + name + "</h1><p>Runtime Python " + ver + " ativo.</p>"
-  "<p>Envie seu codigo para <code>/app</code>. Start padrao <code>app.py</code>, escutando <code>0.0.0.0:80</code>.</p>")
+name = os.environ.get("VP_ENV_NAME", "seu site")
+page = base64.b64decode("${CONSTRUCTION_B64}").decode("utf-8").replace("__SITE_NAME__", name)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
-        self.wfile.write(html.encode("utf-8"))
+        self.wfile.write(page.encode("utf-8"))
     def log_message(self, *a):
         pass
 print("VelozPlanel python server on :80")
@@ -159,9 +151,224 @@ const CADDYFILE = `:80 {
 `;
 
 /** Estático: index.html de exemplo (site vazio). Sem aspas simples. */
-const STATIC_INDEX = `<!doctype html><meta charset=utf-8><title>Site estatico</title>
-<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:3rem auto;padding:0 1rem}</style>
-<h1>Seu site esta no ar</h1><p>Envie index.html, CSS, JS ou o build da sua SPA (dist/build) para /site.</p>
+const STATIC_INDEX = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="color-scheme" content="light dark">
+  <title>Site em construção &middot; jamees.com</title>
+  <style>
+    :root{
+      --purple: #634ca8;
+      --purple-strong: #4a3880;
+      --purple-soft: #efecf8;
+      --ink: #23212b;
+      --ink-soft: #5c5a68;
+      --bg: #f6f5fb;
+      --card: #ffffff;
+      --line: #eae7f3;
+      --shadow: 0 20px 60px -24px rgba(74,56,128,.35);
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --purple: #a996e8;
+        --purple-strong: #c3b6f2;
+        --purple-soft: #241f38;
+        --ink: #f2f1f7;
+        --ink-soft: #b0acc2;
+        --bg: #131120;
+        --card: #1b1830;
+        --line: #2b2745;
+        --shadow: 0 24px 70px -28px rgba(0,0,0,.7);
+      }
+    }
+
+    *{ box-sizing: border-box; }
+    html, body{ height: 100%; }
+    body{
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      background-image:
+        radial-gradient(60% 55% at 50% -10%, rgba(99,76,168,.16), transparent 60%),
+        radial-gradient(45% 40% at 100% 100%, rgba(99,76,168,.10), transparent 55%);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    .wrap{
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+    }
+
+    .card{
+      width: 100%;
+      max-width: 560px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 44px 40px 40px;
+      text-align: center;
+    }
+
+    /* Wordmark */
+    .brand{
+      display: inline-flex;
+      align-items: baseline;
+      font-weight: 800;
+      font-size: 22px;
+      letter-spacing: -.02em;
+      color: var(--ink);
+      user-select: none;
+    }
+    .brand .dot{ color: var(--purple); font-weight: 800; margin: 0 1px; }
+    .brand .tld{
+      font-size: .62em;
+      font-weight: 600;
+      color: var(--ink-soft);
+      opacity: .7;
+      letter-spacing: 0;
+    }
+
+    /* Emblem */
+    .emblem{
+      width: 84px;
+      height: 84px;
+      margin: 28px auto 22px;
+      border-radius: 22px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(160deg, var(--purple), var(--purple-strong));
+      box-shadow: 0 14px 32px -12px rgba(99,76,168,.65);
+      position: relative;
+    }
+    .emblem svg{ width: 44px; height: 44px; display: block; }
+    .gear{
+      transform-origin: 50% 50%;
+      transform-box: fill-box;
+      animation: spin 9s linear infinite;
+    }
+    @keyframes spin{ to{ transform: rotate(360deg); } }
+
+    h1{
+      margin: 0 0 10px;
+      font-size: 27px;
+      line-height: 1.2;
+      letter-spacing: -.02em;
+      color: var(--ink);
+    }
+    .lead{
+      margin: 0 auto;
+      max-width: 40ch;
+      font-size: 15.5px;
+      line-height: 1.6;
+      color: var(--ink-soft);
+    }
+
+    .site{
+      display: inline-block;
+      max-width: 100%;
+      margin: 18px 0 4px;
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: var(--purple-soft);
+      color: var(--purple-strong);
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: -.01em;
+      overflow-wrap: anywhere;
+      border: 1px solid var(--line);
+    }
+
+    /* Progress bar (touch of life) */
+    .progress{
+      position: relative;
+      height: 6px;
+      margin: 30px auto 6px;
+      max-width: 320px;
+      border-radius: 999px;
+      background: var(--purple-soft);
+      overflow: hidden;
+    }
+    .progress::before{
+      content: "";
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      width: 40%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, transparent, var(--purple), transparent);
+      animation: slide 1.9s ease-in-out infinite;
+    }
+    @keyframes slide{
+      0%{ transform: translateX(-120%); }
+      100%{ transform: translateX(320%); }
+    }
+
+    .status{
+      margin: 4px 0 0;
+      font-size: 12.5px;
+      color: var(--ink-soft);
+      letter-spacing: .01em;
+    }
+
+    footer{
+      text-align: center;
+      padding: 22px 16px 30px;
+      font-size: 12.5px;
+      color: var(--ink-soft);
+    }
+    footer .brand{ font-size: 13px; }
+
+    @media (max-width: 480px){
+      .card{ padding: 34px 22px 30px; border-radius: 20px; }
+      h1{ font-size: 23px; }
+      .emblem{ width: 76px; height: 76px; }
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      .gear{ animation: none; }
+      .progress::before{ animation: none; width: 55%; transform: none; left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="card" role="status" aria-live="polite">
+
+      <span class="brand" aria-label="jamees.com">jamees<span class="dot">.</span><span class="tld">com</span></span>
+
+      <div class="emblem" aria-hidden="true">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path class="gear" fill="#ffffff" fill-rule="evenodd" clip-rule="evenodd" d="M11.078 2.25c-.917 0-1.699.663-1.85 1.567L9.05 4.889c-.02.12-.115.26-.297.348a7.493 7.493 0 0 0-.986.57c-.166.115-.334.126-.45.083L6.3 6.045a1.875 1.875 0 0 0-2.282.819l-.922 1.597a1.875 1.875 0 0 0 .432 2.385l.84.692c.095.078.17.229.154.43a7.598 7.598 0 0 0 0 1.139c.015.2-.059.352-.153.43l-.841.692a1.875 1.875 0 0 0-.432 2.385l.922 1.597a1.875 1.875 0 0 0 2.282.818l1.019-.382c.115-.043.283-.031.45.082.312.214.641.405.985.57.182.088.277.228.297.35l.178 1.071c.151.904.933 1.567 1.85 1.567h1.844c.916 0 1.699-.663 1.85-1.567l.178-1.072c.02-.12.114-.26.297-.349.344-.165.673-.356.985-.57.167-.114.335-.125.45-.082l1.02.382a1.875 1.875 0 0 0 2.28-.819l.923-1.597a1.875 1.875 0 0 0-.432-2.385l-.84-.692c-.095-.078-.17-.229-.154-.43a7.614 7.614 0 0 0 0-1.139c-.016-.2.059-.352.153-.43l.84-.692c.708-.582.891-1.59.433-2.385l-.922-1.597a1.875 1.875 0 0 0-2.282-.818l-1.02.382c-.114.043-.282.031-.449-.083a7.49 7.49 0 0 0-.985-.57c-.183-.087-.277-.227-.297-.348l-.179-1.072a1.875 1.875 0 0 0-1.85-1.567h-1.843ZM12 15.75a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Z"></path>
+        </svg>
+      </div>
+
+      <h1>Site em construção</h1>
+      <p class="lead">Estamos preparando tudo para o lançamento. O conteúdo aparece aqui assim que a publicação for concluída.</p>
+
+      <span class="site">seu site</span>
+
+      <div class="progress" role="presentation"></div>
+      <p class="status">Ambiente ativo &middot; aguardando publicação</p>
+
+    </div>
+  </main>
+
+  <footer>
+    Hospedado por <span class="brand">jamees<span class="dot">.</span><span class="tld">com</span></span>
+  </footer>
+</body>
+</html>
 `;
 
 /** Puxa a imagem se ela não existir localmente. */
