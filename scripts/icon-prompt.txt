@@ -1,0 +1,14 @@
+Você vai gerar ícones "app-icon" para um painel de hospedagem (marca Jamees). 
+
+ESTILO OBRIGATÓRIO — idêntico ao conjunto que já existe. ABRA e olhe estes dois arquivos para copiar EXATAMENTE o estilo (cor, tile, peso do glifo, margem): apps/painel/public/img/tech/node.png e apps/painel/public/img/tech/php.png.
+Regras do estilo:
+- PNG 512x512, RGBA, fundo TRANSPARENTE fora do tile.
+- Um tile quadrado de cantos bem arredondados (raio ~110px) preenchido com a cor sólida roxa da marca #634ca8 (chapado, sem gradiente forte).
+- Um glifo BRANCO (#ffffff) limpo, minimalista e centralizado, ocupando ~55-60% do tile. Plano e nítido, legível em 34px. Sem texto, sem sombra pesada.
+
+TAREFA — usando geração de imagem (nano banana / Gemini image), gere 4 variações de CADA um destes dois ícones (8 imagens no total):
+1) "python": glifo branco do símbolo do Python (as duas cobras/setas entrelaçadas), silhueta branca simplificada.
+2) "static": glifo branco representando um SITE ESTÁTICO / HTML. Sugestões: os sinais de código </> , ou um globo de site simples, ou um documento/janela de navegador. Escolha a leitura mais limpa em tamanho pequeno.
+
+SALVAR: todas as 8 imagens em apps/painel/public/img/tech/_candidates/ com os nomes python-1.png, python-2.png, python-3.png, python-4.png, static-1.png, static-2.png, static-3.png, static-4.png. 
+NÃO altere mais nada no repositório. Ao terminar, liste os arquivos criados.
