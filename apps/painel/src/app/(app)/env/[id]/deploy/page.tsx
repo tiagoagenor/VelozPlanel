@@ -274,6 +274,18 @@ export default function DeployPage() {
 
   return (
     <div className="flex flex-col gap-5">
+      {/* Aviso da porta — apps Node/Python precisam escutar na :80 */}
+      {(lang === "node" || lang === "python") ? (
+        <div role="note" className="flex items-start gap-2 rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm text-text2">
+          <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-info" />
+          <span>
+            Seu app precisa escutar na <strong className="text-text">porta 80</strong>, no host <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0</code> (não use <code className="font-mono">localhost</code>).
+            {lang === "node"
+              ? <> Ex.: <code className="rounded bg-bg px-1 font-mono text-text">app.listen(process.env.PORT || 80, &quot;0.0.0.0&quot;)</code>.</>
+              : <> Ex. Flask/FastAPI: rode em <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0:80</code> (Django já sobe assim).</>}
+          </span>
+        </div>
+      ) : null}
       {/* STATUS */}
       <Card><div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
