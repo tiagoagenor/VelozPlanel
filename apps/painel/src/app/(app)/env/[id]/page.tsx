@@ -49,6 +49,8 @@ export default function EnvOverviewPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const [metricWindow, setMetricWindow] = React.useState<MetricWindow>("15m");
+  const [showLimit, setShowLimit] = React.useState(true);
+  const [cpuUnit, setCpuUnit] = React.useState<"pct" | "vcpu">("pct");
 
   const diskQuery = useQuery({
     queryKey: ["disk", id],
@@ -105,6 +107,20 @@ export default function EnvOverviewPage() {
   const CPU_LIMIT = 80; // limite de atenção (%)
   const cpuOk = cpuPeak == null || cpuPeak < CPU_LIMIT;
   const memOk = memPeak == null || memLimit === 0 || memPeak < memLimit * 0.9;
+
+  // CPU em % (relativo à cota) OU em vCPU real (0-100% → 0..vcpu do plano).
+  const vcpu = plan?.vcpu ?? null;
+  const canVcpu = vcpu != null && vcpu > 0;
+  const asVcpu = cpuUnit === "vcpu" && canVcpu;
+  const toVcpu = (pct: number) => (pct / 100) * (vcpu ?? 1);
+  const fmtVcpu = (v: number | null) => (v == null ? "—" : `${v.toFixed(2)} vCPU`);
+  const cpuValues = asVcpu ? cpu.map(toVcpu) : cpu;
+  const cpuFormat = asVcpu ? fmtVcpu : fmtCpu;
+  const cpuCur = curCpu == null ? null : asVcpu ? toVcpu(curCpu) : curCpu;
+  const cpuAvgU = cpuAvg == null ? null : asVcpu ? toVcpu(cpuAvg) : cpuAvg;
+  const cpuPeakU = cpuPeak == null ? null : asVcpu ? toVcpu(cpuPeak) : cpuPeak;
+  const cpuLimitVal = asVcpu ? (vcpu ?? 0) : 100;
+  const cpuLimitTxt = asVcpu ? `${(vcpu ?? 0).toFixed(2)} vCPU` : "100%";
 
   return (
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
@@ -182,6 +198,36 @@ export default function EnvOverviewPage() {
           />
         </div>
 
+        {samples.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showLimit}
+              onClick={() => setShowLimit((v) => !v)}
+              className="inline-flex items-center gap-2 text-[13px] text-text2"
+            >
+              <span className={cn("relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors", showLimit ? "bg-brand" : "bg-border")}>
+                <span className={cn("inline-block h-4 w-4 transform rounded-full bg-surface shadow transition-transform", showLimit ? "translate-x-4" : "translate-x-0.5")} />
+              </span>
+              Linha do limite
+            </button>
+
+            <label className="inline-flex items-center gap-2 text-[13px] text-text2">
+              CPU em
+              <SegmentedControl<"pct" | "vcpu">
+                label="Unidade da CPU"
+                value={cpuUnit}
+                onChange={setCpuUnit}
+                options={[
+                  { value: "pct", label: "%" },
+                  { value: "vcpu", label: "vCPU", disabled: !canVcpu },
+                ]}
+              />
+            </label>
+          </div>
+        ) : null}
+
         {samples.length === 0 ? (
           <Card>
             <p className="text-text2">Sem amostras ainda. O coletor grava a cada 5s enquanto o ambiente está ativo.</p>
@@ -190,19 +236,19 @@ export default function EnvOverviewPage() {
           <>
             <MetricCard
               title="Uso de CPU"
-              subtitle="Percentual relativo à cota do plano"
-              bigValue={fmtCpu(curCpu)}
+              subtitle={asVcpu ? "vCPU realmente em uso (cota do plano)" : "Percentual relativo à cota do plano"}
+              bigValue={cpuFormat(cpuCur)}
               ok={cpuOk}
               tone="cpu"
               timestamps={timestamps}
-              values={cpu}
-              format={fmtCpu}
-              limit={100}
-              limitLabel="limite 100%"
+              values={cpuValues}
+              format={cpuFormat}
+              limit={showLimit ? cpuLimitVal : null}
+              limitLabel={`limite ${cpuLimitTxt}`}
               stats={[
-                { label: "Média", value: fmtCpu(cpuAvg) },
-                { label: "Pico", value: fmtCpu(cpuPeak) },
-                { label: "Limite", value: "100%" },
+                { label: "Média", value: cpuFormat(cpuAvgU) },
+                { label: "Pico", value: cpuFormat(cpuPeakU) },
+                { label: "Limite", value: cpuLimitTxt },
               ]}
             />
             <MetricCard
@@ -214,7 +260,7 @@ export default function EnvOverviewPage() {
               timestamps={timestamps}
               values={mem}
               format={(v) => (v == null ? "—" : formatBytes(v))}
-              limit={memLimit > 0 ? memLimit : null}
+              limit={showLimit && memLimit > 0 ? memLimit : null}
               limitLabel={`limite ${formatBytes(memLimit)}`}
               stats={[
                 { label: "Média", value: memAvg == null ? "—" : formatBytes(memAvg) },

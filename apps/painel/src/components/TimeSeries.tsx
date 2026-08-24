@@ -71,6 +71,8 @@ export function TimeSeries({
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
+          hour12: false,
+          timeZone: "America/Sao_Paulo",
         });
 
   // Dados em formato uPlot: x em segundos.
@@ -142,6 +144,16 @@ export function TimeSeries({
           grid: { stroke: gridColor, width: 1 },
           ticks: { stroke: gridColor },
           font: "12px ui-sans-serif, system-ui, sans-serif",
+          // Horário 24h do Brasil (sem "am/pm"). splits vêm em segundos.
+          values: (_u, splits) =>
+            splits.map((t) =>
+              new Date(t * 1000).toLocaleTimeString("pt-BR", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                timeZone: "America/Sao_Paulo",
+              }),
+            ),
         },
         {
           stroke: axisColor,
