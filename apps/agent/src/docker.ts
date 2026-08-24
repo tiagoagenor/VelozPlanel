@@ -245,7 +245,7 @@ const RESERVED_ENV = new Set(["PATH","LD_PRELOAD","LD_LIBRARY_PATH","NVM_DIR","H
 const LOAD_ENV =
   `if [ -f /veloz/env ]; then while IFS= read -r line; do ` +
   `k=\${line%%=*}; v=\${line#*=}; ` +
-  `[ -n "\$k" ] && export "\$k=\$(printf %s "\$v" | base64 -d)"; done < /veloz/env; fi; `;
+  `[ -n "\$k" ] && export "\$k=\$(printf %s "\$v" | base64 -d 2>/dev/null)"; done < /veloz/env; fi; `;
 
 function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
   const setup = setupPrefix(startupScript);
@@ -328,6 +328,10 @@ export interface EnvVarPair { key: string; value: string; buildTime?: boolean }
 function envFileTransport(vars: EnvVarPair[]): string {
   const body =
     vars
+      // Defesa em profundidade: nunca deixa o loader sobrescrever PATH/LD_PRELOAD/
+      // IFS etc. nem o namespace interno VP_ (mesmo filtro do Env nativo do Docker,
+      // ver createContainer). A API já valida as chaves, isto é a 2ª barreira.
+      .filter((v) => !RESERVED_ENV.has(v.key) && !v.key.startsWith("VP_"))
       .map((v) => `${v.key}=${Buffer.from(v.value, "utf8").toString("base64")}`)
       .join("\n") + "\n"; // newline final: senão o `while read` descarta a última var
   return Buffer.from(body, "utf8").toString("base64");
