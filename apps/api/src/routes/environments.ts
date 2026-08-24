@@ -194,6 +194,9 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const { name, plan, runtime } = req.body;
       const planSpec = await getPlan(plan);
       if (!planSpec) throw new ApiHttpError(400, "invalid_plan", "plano inválido");
+      // Plano inativo não pode ser contratado (a UI já não o mostra; isto fecha
+      // o furo de uma chamada direta à API). Admin também respeita.
+      if (!planSpec.active) throw new ApiHttpError(400, "plan_inactive", "este plano não está disponível");
 
       // Limite de máquinas por cliente definido no plano (admin não é limitado).
       if (user.role !== "admin") {

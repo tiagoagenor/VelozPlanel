@@ -58,8 +58,6 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
   const allTypes = typesQ.data ?? [];
   const codeTypes = allTypes.filter((t) => t.category === "app");
   const serviceTypes = allTypes.filter((t) => t.category !== "app");
-  const ordered = [...codeTypes, ...serviceTypes];
-  const shownTypes = filter === "code" ? codeTypes : filter === "service" ? serviceTypes : ordered;
   const versions = RUNTIME_VERSIONS[kind];
 
   React.useEffect(() => {
@@ -97,6 +95,14 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
     return { minVcpu, minMemMb };
   }, [allTypes]);
   const planMeets = React.useCallback((p: { vcpu: number; memMb: number }, t: EnvType) => planMeetsType(p, effectiveMin(t)), [effectiveMin]);
+
+  // Só mostra tipos que TÊM ao menos um plano ATIVO compatível (`plans` já vem
+  // só com ativos). Sem isso, um tipo cujo único plano ficou inativo apareceria
+  // "sem plano compatível" e não daria pra contratar.
+  const typeHasPlan = React.useCallback((t: EnvType) => plans.some((p) => planMeets(p, t)), [plans, planMeets]);
+  const availableCode = codeTypes.filter(typeHasPlan);
+  const availableService = serviceTypes.filter(typeHasPlan);
+  const shownTypes = filter === "code" ? availableCode : filter === "service" ? availableService : [...availableCode, ...availableService];
 
   // "A partir de": menor plano que atende o tipo (para o card do passo 1).
   const fromPriceOf = React.useCallback((t: EnvType): number | null => {
