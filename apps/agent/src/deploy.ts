@@ -122,6 +122,11 @@ async function startBuildContainer(envId: string, image: string, env: EnvPair[],
     Labels: { "vp.env": envId, "vp.role": "build" },
   });
   await c.start();
+  // A imagem SDK do .NET tem git mas NÃO traz openssh-client → git por SSH (deploy
+  // key) falharia com "não autentica". Instala sob demanda (o guard `command -v ssh`
+  // pula PHP/Node/Python, que já têm ssh). O container de build tem egress (docker0).
+  await execIn(c.id, ["sh", "-c",
+    "command -v ssh >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq --no-install-recommends openssh-client) >/dev/null 2>&1 || true"]);
   if (http) {
     // credential helper lê GIT_USER/GIT_PASS do ambiente (injeção-safe: Env do Docker).
     await execIn(c.id, ["sh", "-c",
