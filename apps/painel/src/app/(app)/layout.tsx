@@ -13,7 +13,6 @@
  *    PRINCIPAL
  *      Ambientes         /            (ativo — lista de ambientes)
  *      Domínios          /dominios     (Em breve → tela honesta, não 404)
- *      Bancos de dados   /bancos       (Em breve)
  *      Financeiro        /financeiro   (Em breve)
  *      Suporte           /suporte      (Em breve)
  *    ADMIN  (renderiza só se me().role === 'admin')
