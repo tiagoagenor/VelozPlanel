@@ -460,6 +460,19 @@ app.post("/dotnet-cmd", async (req, reply) => {
   }
 });
 
+// comando .NET efetivamente rodando agora (para exibir no painel "como funciona hoje")
+app.post("/dotnet-effective-cmd", async (req, reply) => {
+  const parsed = containerIdOnly.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const cmd = await dockerDriver.dotnetEffectiveCmd(parsed.data.containerId);
+    return reply.code(200).send({ cmd });
+  } catch (err) {
+    req.log.error({ err }, "dotnet-effective-cmd failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
 app.post("/stop", async (req, reply) => {
   const parsed = containerIdBody.safeParse(req.body);
   if (!parsed.success) {

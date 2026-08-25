@@ -521,6 +521,24 @@ export async function applyDotnetCmd(containerId: string, cmd: string | null): P
   await kill.start({});
 }
 
+/** Descobre o comando .NET que o supervisor está EFETIVAMENTE rodando agora,
+ *  inspecionando o container (mesma ordem do supervisor): comando avançado
+ *  (/.vp-dotnet-cmd) → DLL publicada na raiz de /app → DLL de build em /app/bin
+ *  (projeto de exemplo/fonte via `dotnet run`) → projeto (.csproj) ainda sem build.
+ *  Usado para mostrar no painel "como o app está rodando hoje". "" = nenhum. */
+export async function dotnetEffectiveCmd(containerId: string): Promise<string> {
+  const sh =
+    `R=""; ` +
+    `if [ -f /.vp-dotnet-cmd ]; then R="\$(cat /.vp-dotnet-cmd 2>/dev/null)"; ` +
+    `elif RC="\$(ls /app/*.runtimeconfig.json 2>/dev/null | head -1)"; [ -n "\$RC" ]; then b="\$(basename "\${RC%.runtimeconfig.json}")"; R="dotnet \$b.dll"; ` +
+    `elif RB="\$(find /app/bin -maxdepth 4 -name '*.runtimeconfig.json' 2>/dev/null | head -1)"; [ -n "\$RB" ]; then d="\${RB%.runtimeconfig.json}.dll"; R="dotnet \${d#/app/}"; ` +
+    `elif C="\$(ls /app/*.csproj 2>/dev/null | head -1)"; [ -n "\$C" ]; then R="dotnet run --project \$(basename "\$C")"; ` +
+    `fi; printf 'VPCMD<%s>VPCMD' "\$R"`;
+  const out = await execCapture(containerId, ["sh", "-c", sh]);
+  const m = out.match(/VPCMD<([\s\S]*)>VPCMD/);
+  return (m?.[1] ?? "").trim();
+}
+
 /** Reinicia o app .NET (pós-deploy): mata o pid → o supervisor redetecta a DLL
  *  publicada (*.runtimeconfig.json em /app) e roda `dotnet App.dll`. */
 export async function restartDotnet(containerId: string): Promise<void> {

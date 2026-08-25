@@ -436,56 +436,59 @@ function PythonCmdCard({ id, current, onSaved }: { id: string; current: string |
   );
 }
 
-/** Exemplo/modelo mostrado no campo quando nada foi salvo (modo automático).
- *  É o comando que roda o app publicado; o nome da DLL casa com o projeto de
- *  exemplo (AssemblyName=app). Só passa a valer se o cliente editar e salvar. */
-const DOTNET_CMD_EXAMPLE = "dotnet app.dll";
-
 function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
   const toast = useToast();
-  // Sem comando salvo → mostra o exemplo (nunca vazio). Como o baseline também é o
-  // exemplo, o botão só habilita quando o cliente REALMENTE muda — salvar o exemplo
-  // sem querer não acontece (evita quebrar um ambiente ainda sem publicação).
-  const baseline = current ?? DOTNET_CMD_EXAMPLE;
-  const [cmd, setCmd] = React.useState<string>(baseline);
-  React.useEffect(() => { setCmd(current ?? DOTNET_CMD_EXAMPLE); }, [current]);
-  const dirty = cmd !== baseline;
+  // Comando que o container está rodando AGORA (override salvo, DLL publicada,
+  // DLL de build do exemplo, ou o projeto) — "como funciona hoje".
+  const effQ = useQuery({ queryKey: ["dotnet-eff", id], queryFn: () => api.getDotnetEffectiveCmd(id) });
+  const effective = effQ.data?.cmd ?? "";
+  // O que roda hoje: se há override salvo é ele; senão o comando efetivo detectado.
+  const baseline = current ?? effective;
+
+  const [cmd, setCmd] = React.useState<string>("");
+  const [touched, setTouched] = React.useState(false);
+  // Enquanto o usuário não mexe, o campo espelha o comando real (atualiza quando carrega).
+  React.useEffect(() => { if (!touched) setCmd(baseline); }, [baseline, touched]);
+
+  const dirty = touched && cmd.trim() !== baseline.trim();
   const save = useMutation({
     mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim()),
     onSuccess: (u) => {
+      setTouched(false);
       onSaved(u);
-      toast.show("success", u.dotnetCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou a detectar a DLL publicada.");
+      toast.show("success", u.dotnetCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou ao automático.");
     },
     onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
   });
+  const isOverride = !!(current && current.trim());
   return (
     <Card>
       <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
       <p className="mb-3 text-sm text-text2">
-        Por padrão o ambiente detecta e roda a DLL publicada pelo <code>dotnet publish</code> automaticamente.
-        O campo abaixo mostra o comando padrão como <strong>exemplo</strong> — só mexa se quiser forçar um
-        comando específico (ex.: a sua DLL tem outro nome, ou você passa argumentos). Ele sobe o servidor na porta 80.
+        {isOverride
+          ? <>Este ambiente usa um comando <strong>fixo</strong> que você definiu. Edite abaixo, ou apague e salve para voltar ao automático.</>
+          : <>Modo <strong>automático</strong>: o campo mostra o comando que o ambiente está rodando <strong>agora</strong>. Edite só se quiser fixar um comando próprio (ex.: outro nome de DLL ou argumentos). Ele sobe o servidor na porta 80.</>}
       </p>
       <input
-        value={cmd}
-        onChange={(e) => setCmd(e.target.value)}
+        value={effQ.isPending && !touched ? "" : cmd}
+        onChange={(e) => { setTouched(true); setCmd(e.target.value); }}
         spellCheck={false}
         aria-label="Comando de start avançado do .NET"
-        placeholder={DOTNET_CMD_EXAMPLE}
+        placeholder={effQ.isPending ? "carregando…" : "dotnet app.dll"}
         className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
       />
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
-        <li>Vale <strong>depois do deploy</strong>: o <code>dotnet publish</code> coloca a DLL direto em <code>/app</code> (ex.: <code>/app/app.dll</code>). Não confundir com <code>/app/bin/Debug/…</code>, que é o build do projeto de exemplo rodando via <code>dotnet run</code>.</li>
-        <li>Troque <code>app.dll</code> pelo nome da sua DLL (o do <code>.csproj</code> / <code>AssemblyName</code>), ex.: <code>dotnet MinhaApi.dll</code>.</li>
-        <li>O app precisa escutar na porta 80 — as variáveis <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
-        <li>Deixe o campo <strong>vazio</strong> e salve para voltar ao modo automático (detecta a DLL publicada).</li>
+        <li>Hoje, no <strong>modo exemplo</strong> (antes do deploy), o app roda pelo build em <code>/app/bin/Debug/&lt;versão&gt;/</code> — por isso o comando aponta pra lá.</li>
+        <li>Depois do <strong>deploy</strong>, o <code>dotnet publish</code> coloca a DLL direto em <code>/app</code> e o comando vira <code>dotnet app.dll</code> (troque pelo nome da sua DLL, se diferente).</li>
+        <li>O app precisa escutar na porta 80 — <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
+        <li>Apague o campo e salve para voltar ao <strong>automático</strong>.</li>
       </ul>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
           {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
         </Button>
         <span className="text-sm text-text3">
-          {dirty ? "Reinicia na hora, sem recriar o container." : "Exemplo — edite para usar um comando próprio."}
+          {dirty ? "Reinicia na hora, sem recriar o container." : isOverride ? "Comando fixo ativo." : "Comando atual (automático) — edite para fixar o seu."}
         </span>
       </div>
     </Card>

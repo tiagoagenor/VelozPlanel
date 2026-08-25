@@ -344,6 +344,11 @@ export function setDotnetCmd(id: string, cmd: string | null): Promise<Environmen
   });
 }
 
+/** Comando .NET que o container está rodando agora (para exibir no campo avançado). */
+export function getDotnetEffectiveCmd(id: string): Promise<{ cmd: string }> {
+  return request<{ cmd: string }>(`/environments/${id}/dotnet-effective-cmd`);
+}
+
 /** Troca a versão de Node (via nvm) de um ambiente PHP; aplica ao vivo. */
 export function setPhpNodeVersion(
   id: string,

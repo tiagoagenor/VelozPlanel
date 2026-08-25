@@ -178,6 +178,11 @@ export function applyDotnetCmd(agentUrl: string, containerId: string, cmd: strin
   return call<{ ok: boolean }>(agentUrl, "POST", "/dotnet-cmd", { containerId, cmd });
 }
 
+/** Comando .NET que o supervisor está efetivamente rodando agora (inspeciona o container). */
+export function dotnetEffectiveCmd(agentUrl: string, containerId: string): Promise<{ cmd: string }> {
+  return call<{ cmd: string }>(agentUrl, "POST", "/dotnet-effective-cmd", { containerId });
+}
+
 /** Troca a versão de Node (via nvm) de um container PHP; devolve a versão real. */
 export function applyNodeVersion(
   agentUrl: string,

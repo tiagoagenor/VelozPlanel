@@ -746,6 +746,35 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     },
   );
 
+  // GET /environments/:id/dotnet-effective-cmd — o comando .NET que o container está
+  // rodando AGORA (inspeciona /app: override → DLL publicada → DLL de build → projeto).
+  // Usado pelo painel para mostrar "como o app funciona hoje" no campo avançado.
+  app.get(
+    "/environments/:id/dotnet-effective-cmd",
+    {
+      schema: {
+        params: idParams,
+        response: { 200: z.object({ cmd: z.string() }), 401: apiError, 403: apiError, 404: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<{ cmd: string }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const [row] = await db.select().from(environments).where(eq(environments.id, env.id)).limit(1);
+      if (!row || row.runtimeKind !== "dotnet" || !row.containerId || row.state !== "running") {
+        return { cmd: "" };
+      }
+      try {
+        const agentUrl = await agentUrlForEnv(row);
+        const r = await agent.dotnetEffectiveCmd(agentUrl, row.containerId);
+        return { cmd: r.cmd ?? "" };
+      } catch (err) {
+        req.log.warn({ err, envId: env.id }, "falha ao obter comando efetivo do .NET");
+        return { cmd: "" };
+      }
+    },
+  );
+
   // POST /environments/:id/node-version — troca a versão de Node (via nvm) de um
   // ambiente PHP. Aplica AO VIVO (docker exec, sem recriar) e guarda a versão.
   app.post(
