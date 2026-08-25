@@ -26,7 +26,6 @@ import {
   Globe,
   Settings,
   FolderOpen,
-  Database,
   ShieldCheck,
   TerminalSquare,
   FolderSync,
@@ -74,14 +73,13 @@ function isServiceEnv(env: { category?: string | null } | undefined): boolean {
 
 // Todas as seções são telas REAIS e funcionais — só "Backups" é placeholder
 // (ComingSoon). NÃO marcar as demais como "Em breve" (o mock estático marcava,
-// mas elas já funcionam no app: Domínio & DNS, Arquivos, Banco, SSL, SSH, SFTP,
+// mas elas já funcionam no app: Domínio & DNS, Arquivos, SSL, SSH, SFTP,
 // Deploy, Variáveis).
 const SECTIONS: Section[] = [
   { seg: "", label: "Visão geral", icon: LayoutDashboard },
   { seg: "dominio", label: "Domínio & DNS", icon: Globe, appOnly: true },
   { seg: "configuracoes", label: "Configurações", icon: Settings },
   { seg: "arquivos", label: "Arquivos", icon: FolderOpen, appOnly: true },
-  { seg: "banco", label: "Banco de dados", icon: Database, appOnly: true },
   { seg: "ssl", label: "SSL", icon: ShieldCheck, appOnly: true },
   { seg: "ssh", label: "SSH", icon: TerminalSquare, appOnly: true },
   { seg: "sftp", label: "SFTP", icon: FolderSync, appOnly: true },
