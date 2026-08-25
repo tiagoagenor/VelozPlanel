@@ -40,6 +40,7 @@ import * as cpIngress from "../cp-ingress";
 import { isSubReserved, isSubTaken } from "../subdomain";
 import { setSubdomainInput } from "@velozplanel/contracts";
 import { balanceCents } from "../credits";
+import { settleEnvironment } from "../billing";
 
 const idParams = z.object({ id: z.string().uuid() });
 
@@ -517,6 +518,10 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req, reply) => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+
+      // Acerto de cobrança ANTES de mudar o estado: debita o tempo usado ainda não
+      // faturado (respeita a cortesia de billing_free_minutes). Nunca falha o delete.
+      await settleEnvironment(env.id, req.log);
 
       // Marca "deleting" (raiz + filhos), cancela um provision ainda na fila e enfileira o delete.
       await db.update(environments).set({ state: "deleting" }).where(eq(environments.id, env.id));

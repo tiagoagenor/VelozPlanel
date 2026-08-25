@@ -646,6 +646,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     return {
       enabled: s.billingEnabled,
       intervalMinutes: s.billingIntervalMinutes,
+      freeMinutes: s.billingFreeMinutes ?? 1,
       suspendOnZero: s.suspendOnZero,
       domainPriceMonthCents: s.domainPriceMonthCents ?? 100,
       rateVcpuMonthCents: s.rateVcpuMonthCents ?? 2000,
@@ -685,9 +686,10 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
     async (req): Promise<BillingSettings> => {
       const actor = await requireAdmin(req);
       await getSettings(); // garante a linha
-      const patch: Partial<{ billingEnabled: boolean; billingIntervalMinutes: number; suspendOnZero: boolean; domainPriceMonthCents: number; rateVcpuMonthCents: number; rateRamGbMonthCents: number; rateDiskGbMonthCents: number }> = {};
+      const patch: Partial<{ billingEnabled: boolean; billingIntervalMinutes: number; billingFreeMinutes: number; suspendOnZero: boolean; domainPriceMonthCents: number; rateVcpuMonthCents: number; rateRamGbMonthCents: number; rateDiskGbMonthCents: number }> = {};
       if (req.body.enabled !== undefined) patch.billingEnabled = req.body.enabled;
       if (req.body.intervalMinutes !== undefined) patch.billingIntervalMinutes = req.body.intervalMinutes;
+      if (req.body.freeMinutes !== undefined) patch.billingFreeMinutes = req.body.freeMinutes;
       if (req.body.suspendOnZero !== undefined) patch.suspendOnZero = req.body.suspendOnZero;
       if (req.body.domainPriceMonthCents !== undefined) patch.domainPriceMonthCents = req.body.domainPriceMonthCents;
       if (req.body.rateVcpuMonthCents !== undefined) patch.rateVcpuMonthCents = req.body.rateVcpuMonthCents;

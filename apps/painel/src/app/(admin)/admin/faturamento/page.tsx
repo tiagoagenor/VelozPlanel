@@ -230,6 +230,7 @@ function ConfigCard({ settings }: { settings: BillingSettings }) {
   const [intervalStr, setIntervalStr] = React.useState(
     String(settings.intervalMinutes),
   );
+  const [freeStr, setFreeStr] = React.useState(String(settings.freeMinutes));
   const [domainPriceStr, setDomainPriceStr] = React.useState(
     (settings.domainPriceMonthCents / 100).toFixed(2),
   );
@@ -240,6 +241,9 @@ function ConfigCard({ settings }: { settings: BillingSettings }) {
     parsedInterval >= 1 &&
     parsedInterval <= 1440;
 
+  const parsedFree = Number.parseInt(freeStr, 10);
+  const freeValid = Number.isFinite(parsedFree) && parsedFree >= 0 && parsedFree <= 1440;
+
   const parsedDomainCents = Math.round(
     Number.parseFloat(domainPriceStr.replace(",", ".")) * 100,
   );
@@ -249,6 +253,7 @@ function ConfigCard({ settings }: { settings: BillingSettings }) {
     enabled !== settings.enabled ||
     suspendOnZero !== settings.suspendOnZero ||
     (intervalValid && parsedInterval !== settings.intervalMinutes) ||
+    (freeValid && parsedFree !== settings.freeMinutes) ||
     (domainPriceValid && parsedDomainCents !== settings.domainPriceMonthCents);
 
   const save = useMutation({
@@ -257,6 +262,7 @@ function ConfigCard({ settings }: { settings: BillingSettings }) {
         enabled,
         suspendOnZero,
         intervalMinutes: parsedInterval,
+        freeMinutes: parsedFree,
         domainPriceMonthCents: parsedDomainCents,
       }),
     onSuccess: (data) => {
@@ -315,6 +321,34 @@ function ConfigCard({ settings }: { settings: BillingSettings }) {
             {intervalValid
               ? "Mínimo 1 minuto, máximo 1440 (24 h)."
               : "Informe um número inteiro entre 1 e 1440."}
+          </p>
+        </div>
+
+        <div className="border-t border-border-subtle" />
+
+        <div>
+          <Label htmlFor="billing-free">Cortesia ao deletar (minutos)</Label>
+          <Input
+            id="billing-free"
+            type="number"
+            min={0}
+            max={1440}
+            step={1}
+            inputMode="numeric"
+            value={freeStr}
+            onChange={(e) => setFreeStr(e.target.value)}
+            disabled={save.isPending}
+            aria-invalid={!freeValid}
+            aria-describedby="billing-free-hint"
+            className="mt-1.5 max-w-[10rem]"
+          />
+          <p
+            id="billing-free-hint"
+            className={cn("mt-1 text-xs", freeValid ? "text-text3" : "text-danger")}
+          >
+            {freeValid
+              ? "Ambiente com MENOS de X minutos de vida não é cobrado ao ser deletado (protege delete acidental). 0 = sem cortesia."
+              : "Informe um número inteiro entre 0 e 1440."}
           </p>
         </div>
 

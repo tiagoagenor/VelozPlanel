@@ -1072,6 +1072,7 @@ export type AdminOverview = z.infer<typeof adminOverview>;
 export const billingSettings = z.object({
   enabled: z.boolean(),
   intervalMinutes: z.number().int().min(1).max(1440), // de quanto em quanto tempo o cron roda
+  freeMinutes: z.number().int().min(0).max(1440), // cortesia: < X min de vida não cobra no acerto ao deletar
   suspendOnZero: z.boolean(), // pausar ambiente do cliente quando o saldo zerar
   domainPriceMonthCents: z.number().int().min(0), // taxa de gerência por domínio/mês
   // Taxas por recurso (calculadora dos planos). rateDiskGb também cobra o pausado.
@@ -1107,6 +1108,7 @@ export type BillingRunHour = z.infer<typeof billingRunHour>;
 export const updateBillingSettingsInput = z.object({
   enabled: z.boolean().optional(),
   intervalMinutes: z.number().int().min(1).max(1440).optional(),
+  freeMinutes: z.number().int().min(0).max(1440).optional(),
   suspendOnZero: z.boolean().optional(),
   domainPriceMonthCents: z.number().int().min(0).optional(),
   rateVcpuMonthCents: z.number().int().min(0).optional(),

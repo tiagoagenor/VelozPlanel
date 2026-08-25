@@ -471,6 +471,9 @@ export const platformSettings = pgTable("platform_settings", {
   id: integer("id").primaryKey().default(1),
   billingEnabled: boolean("billing_enabled").notNull().default(false),
   billingIntervalMinutes: integer("billing_interval_minutes").notNull().default(60),
+  // Cortesia: ambientes com MENOS de X minutos de vida não são cobrados no acerto
+  // ao deletar (protege delete acidental/instantâneo). 0 = sem cortesia.
+  billingFreeMinutes: integer("billing_free_minutes").notNull().default(1),
   suspendOnZero: boolean("suspend_on_zero").notNull().default(true),
   domainPriceMonthCents: integer("domain_price_month_cents").notNull().default(100), // R$1,00/domínio/mês
   // Taxas por recurso — alimentam a calculadora "Calcular pela taxa" dos planos.

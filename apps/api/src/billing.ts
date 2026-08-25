@@ -229,6 +229,69 @@ export async function runBilling(log?: FastifyBaseLogger): Promise<{
   return { chargedCents, envsCharged, suspended };
 }
 
+/**
+ * Acerto de cobrança ao DELETAR um ambiente: debita o tempo proporcional ainda
+ * não faturado (desde `last_charged_at ?? created_at` até agora), com a mesma
+ * taxa do cron (ativo = plano+adicional do tipo; pausado = disco). Fecha o buraco
+ * do "criou e deletou antes do cron = grátis".
+ *
+ * CORTESIA (`billing_free_minutes`, default 1): se a VIDA TOTAL do ambiente
+ * (`now - created_at`) for menor que X minutos, NÃO cobra (delete acidental).
+ *
+ * Deve ser chamado ANTES de mudar o estado para "deleting" (a taxa depende do
+ * estado running/paused). Idempotente na prática: avança `last_charged_at`.
+ * Devolve os centavos cobrados (0 se cortesia/sem custo). Nunca lança — o delete
+ * não pode falhar por causa da cobrança.
+ */
+export async function settleEnvironment(envId: string, log?: FastifyBaseLogger): Promise<number> {
+  try {
+    const rows = await db.select().from(environments).where(eq(environments.id, envId)).limit(1);
+    const env = rows[0];
+    if (!env) return 0;
+    // Filho de stack não é cobrado à parte (vai junto do principal).
+    if (env.parentEnvId) return 0;
+    // Só faz sentido acertar o que estava rodando/pausado (provisioning/erro nunca cobrou).
+    if (env.state !== "running" && env.state !== "paused") return 0;
+
+    const settings = await getSettings();
+    if (!settings.billingEnabled) return 0; // cobrança automática desligada → não cobra no delete
+    const now = new Date();
+    const freeMinutes = settings.billingFreeMinutes ?? 1;
+    const lifetimeMs = now.getTime() - env.createdAt.getTime();
+    if (lifetimeMs < freeMinutes * 60_000) return 0; // cortesia
+
+    const since = env.lastChargedAt ?? env.createdAt;
+    const elapsedMs = now.getTime() - since.getTime();
+    if (elapsedMs <= 0) return 0;
+
+    const plan = await getPlan(env.plan);
+    if (!plan) return 0;
+    const diskRateCents = settings.rateDiskGbMonthCents ?? 25;
+    let adder = 0;
+    if (env.typeId) {
+      const t = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
+      adder = t[0]?.priceMonthCents ?? 0;
+    }
+    const hours = elapsedMs / 3_600_000;
+    const ratePerHour =
+      env.state === "running" ? (plan.priceMonthCents + adder) / 720 : (plan.diskGb * diskRateCents) / 720;
+    const cost = Math.round(hours * ratePerHour);
+    if (cost < 1) return 0;
+
+    await db.insert(creditTransactions).values({
+      userId: env.ownerId,
+      amountCents: -cost,
+      kind: "usage",
+      reason: `${env.name} · acerto ao deletar · ${hours.toFixed(2)}h`,
+    });
+    await db.update(environments).set({ lastChargedAt: now }).where(eq(environments.id, env.id));
+    return cost;
+  } catch (err) {
+    log?.error({ err, envId }, "settleEnvironment falhou (delete segue mesmo assim)");
+    return 0;
+  }
+}
+
 /** Total debitado (usage) desde o início do dia (para o painel) — agregado no banco. */
 export async function chargedTodayCents(): Promise<number> {
   const start = new Date();
