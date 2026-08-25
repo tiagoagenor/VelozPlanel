@@ -280,6 +280,10 @@ export default function EnvSettingsPage() {
         <PythonCmdCard id={id} current={env.pythonCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
       )}
 
+      {env.runtime.kind === "dotnet" && (
+        <DotnetCmdCard id={id} current={env.dotnetCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
+      )}
+
       {/* Node.js via nvm — só ambientes PHP */}
       {env.runtime.kind === "php" && (
         <Card>
@@ -421,6 +425,48 @@ function PythonCmdCard({ id, current, onSaved }: { id: string; current: string |
         <li>Django: no <code>settings.py</code>, use <code>ALLOWED_HOSTS = [&quot;*&quot;]</code>.</li>
         <li>Instale as dependências no <strong>Terminal</strong>: <code>pip install -r requirements.txt</code> (Postgres: <code>psycopg2-binary</code>).</li>
         <li>Rode as migrações: <code>python manage.py migrate</code>.</li>
+      </ul>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
+        </Button>
+        <span className="text-sm text-text3">Reinicia na hora, sem recriar o container.</span>
+      </div>
+    </Card>
+  );
+}
+
+function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
+  const toast = useToast();
+  const [cmd, setCmd] = React.useState<string>(current ?? "");
+  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
+  const dirty = cmd !== (current ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim()),
+    onSuccess: (u) => {
+      onSaved(u);
+      toast.show("success", u.dotnetCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou a detectar a DLL publicada.");
+    },
+    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
+  });
+  return (
+    <Card>
+      <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
+      <p className="mb-3 text-sm text-text2">
+        Por padrão o ambiente detecta e roda a DLL publicada pelo <code>dotnet publish</code>. Use este campo só
+        para forçar um comando específico que sobe o servidor na porta 80.
+      </p>
+      <input
+        value={cmd}
+        onChange={(e) => setCmd(e.target.value)}
+        spellCheck={false}
+        aria-label="Comando de start avançado do .NET"
+        placeholder="dotnet MinhaApp.dll"
+        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+      />
+      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
+        <li>O app precisa escutar na porta 80 — as variáveis <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
+        <li>Faça o deploy por git (aba <strong>Deploy</strong>) — ele roda <code>dotnet publish</code> e coloca a DLL em <code>/app</code>.</li>
       </ul>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>

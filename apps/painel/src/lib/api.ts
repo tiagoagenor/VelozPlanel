@@ -336,6 +336,14 @@ export function setPythonCmd(id: string, cmd: string | null): Promise<Environmen
   });
 }
 
+/** Define/limpa o comando avançado de start do .NET (dotnet App.dll). Aplica ao vivo. */
+export function setDotnetCmd(id: string, cmd: string | null): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/dotnet-cmd`, {
+    method: "POST",
+    body: { cmd },
+  });
+}
+
 /** Troca a versão de Node (via nvm) de um ambiente PHP; aplica ao vivo. */
 export function setPhpNodeVersion(
   id: string,

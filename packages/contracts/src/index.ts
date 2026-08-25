@@ -11,16 +11,19 @@ export * from "./dbConsole";
 
 /* ─────────────── Runtimes (linguagem + versão) ─────────────── */
 
-export const runtimeKind = z.enum(["php", "node", "python", "static"]);
+export const runtimeKind = z.enum(["php", "node", "python", "static", "dotnet"]);
 export type RuntimeKind = z.infer<typeof runtimeKind>;
 
 /** Versões oferecidas no núcleo (ordem crescente, como na faixa do Hostoo).
- *  `static` não tem versão real — usa um pseudovalor "1" nunca exibido na UI. */
+ *  `static` não tem versão real — usa um pseudovalor "1" nunca exibido na UI.
+ *  `.NET`: sequência real pula o 4.x (= .NET Framework). 3.0/3.1 são EOL (imagem
+ *  no repo antigo `dotnet/core`); 11.0 ainda é pré-GA — podem falhar no pull. */
 export const RUNTIME_VERSIONS: Record<RuntimeKind, string[]> = {
   php: ["5.6", "7.0", "7.2", "7.3", "7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"],
   node: ["18", "20", "22", "24", "25", "26"],
   python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"],
   static: ["1"],
+  dotnet: ["3.0", "3.1", "5.0", "6.0", "7.0", "8.0", "9.0", "10.0", "11.0"],
 };
 
 /** Versão recomendada por linguagem (destaque/def. na criação). */
@@ -29,6 +32,7 @@ export const RECOMMENDED_VERSION: Record<RuntimeKind, string> = {
   node: "24",
   python: "3.12",
   static: "1",
+  dotnet: "8.0",
 };
 
 /** Runtimes SEM versão (a UI esconde o seletor e o sufixo de versão). */
@@ -43,6 +47,7 @@ export const RUNTIME_LABEL: Record<RuntimeKind, string> = {
   node: "Node.js",
   python: "Python",
   static: "Site estático",
+  dotnet: ".NET",
 };
 
 export const runtimeSpec = z.object({
@@ -228,6 +233,7 @@ export const environment = z.object({
   startupScript: z.string().nullable(), // comandos rodados 1x na criação do container
   nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node/Python (server.js/app.py); null = default
   pythonCmd: z.string().nullable(), // comando avançado de start (Python/Django); null = python3 app.py
+  dotnetCmd: z.string().nullable(), // comando avançado de start (.NET); null = auto (dotnet App.dll da publicação)
   phpNodeVersion: z.string().nullable(), // versão Node escolhida (envs PHP via nvm); null = default da base
   phpNodeVersionFull: z.string().nullable(), // versão Node real resolvida no container (ex.: 22.12.0)
   accessUrl: z.string().nullable(), // URL pública p/ abrir o site (domínio https, ou IP do nó:porta)
@@ -274,6 +280,12 @@ export const setPythonCmdInput = z.object({
 });
 export type SetPythonCmdInput = z.infer<typeof setPythonCmdInput>;
 
+/** Define/limpa o comando avançado de start do .NET (ex.: dotnet App.dll). "" limpa. */
+export const setDotnetCmdInput = z.object({
+  cmd: z.string().max(500).nullable(),
+});
+export type SetDotnetCmdInput = z.infer<typeof setDotnetCmdInput>;
+
 /** Define a versão do Node (via nvm) de um ambiente PHP. Aplica ao vivo. */
 export const setPhpNodeVersionInput = z.object({
   phpNodeVersion: z.enum(RUNTIME_VERSIONS.node as [string, ...string[]]),
@@ -309,6 +321,8 @@ export const deployStepKind = z.enum([
   "pip_install",
   "python_restart",
   "static_reload",
+  "dotnet_publish",
+  "dotnet_restart",
   "shell",
 ]);
 export type DeployStepKind = z.infer<typeof deployStepKind>;
@@ -322,7 +336,7 @@ export type DeployRunTrigger = z.infer<typeof deployRunTrigger>;
 export const deployStrategy = z.enum(["place", "recreate"]);
 export type DeployStrategy = z.infer<typeof deployStrategy>;
 
-export const deployFramework = z.enum(["none", "nextjs", "laravel", "python", "django", "spa", "static"]);
+export const deployFramework = z.enum(["none", "nextjs", "laravel", "python", "django", "spa", "static", "dotnet"]);
 export type DeployFramework = z.infer<typeof deployFramework>;
 
 export const deployRunModel = z.enum(["standalone", "next_start"]);

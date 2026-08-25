@@ -449,6 +449,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS startup_script text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS node_start_file text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS python_cmd text`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS dotnet_cmd text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS php_node_version text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS php_node_version_full text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS php_web_root text`;
@@ -512,6 +513,7 @@ async function seed(): Promise<void> {
     { id: "node", label: "Node.js", category: "app", image: null, port: 80, dataPath: null, needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
     { id: "python", label: "Python", category: "app", image: null, port: 80, dataPath: null, needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
     { id: "static", label: "Site estático (HTML/SPA)", category: "app", image: null, port: 80, dataPath: null, needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
+    { id: "dotnet", label: ".NET", category: "app", image: null, port: 80, dataPath: null, needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
     { id: "redis", label: "Redis", category: "service", image: "redis:7", port: 6379, dataPath: "/data", needsDb: false, childType: null, tool: "redisinsight", publicDomain: false, price: 0, minVcpu: 0, minMemMb: 0 },
     { id: "mysql", label: "MySQL", category: "service", image: "mysql:8", port: 3306, dataPath: "/var/lib/mysql", needsDb: false, childType: null, tool: "phpmyadmin", publicDomain: false, price: 0, minVcpu: 1, minMemMb: 1024 },
     { id: "mariadb", label: "MariaDB", category: "service", image: "mariadb:11", port: 3306, dataPath: "/var/lib/mysql", needsDb: false, childType: null, tool: "phpmyadmin", publicDomain: false, price: 0, minVcpu: 1, minMemMb: 1024 },

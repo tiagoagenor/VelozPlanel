@@ -17,6 +17,7 @@ export interface ProvisionInput {
   startupScript?: string | null;
   startFile?: string | null;
   pythonCmd?: string | null;
+  dotnetCmd?: string | null;
   phpNodeVersion?: string | null;
   phpRoot?: string | null;
   envVars?: { key: string; value: string; buildTime?: boolean }[];
@@ -172,6 +173,11 @@ export function applyPythonCmd(agentUrl: string, containerId: string, cmd: strin
   return call<{ ok: boolean }>(agentUrl, "POST", "/python-cmd", { containerId, cmd });
 }
 
+/** Define/limpa o comando avançado do .NET (dotnet App.dll) e reinicia o app. */
+export function applyDotnetCmd(agentUrl: string, containerId: string, cmd: string | null): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", "/dotnet-cmd", { containerId, cmd });
+}
+
 /** Troca a versão de Node (via nvm) de um container PHP; devolve a versão real. */
 export function applyNodeVersion(
   agentUrl: string,
@@ -239,7 +245,7 @@ export interface DeployRunInput {
   steps: { kind: string; command?: string | null; cwd?: string | null; enabled: boolean }[];
   buildEnv: { key: string; value: string }[]; framework: string; runModel: string; http?: HttpCreds; subdir?: string | null;
   runId: string; nodeStartFile?: string | null; historyLimit?: number;
-  runtimeKind?: string; pythonCmd?: string | null;
+  runtimeKind?: string; pythonCmd?: string | null; dotnetCmd?: string | null;
 }
 export function startDeploy(agentUrl: string, input: DeployRunInput): Promise<{ started: boolean }> {
   return call(agentUrl, "POST", "/deploy/run", input);

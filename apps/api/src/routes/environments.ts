@@ -9,6 +9,7 @@ import {
   setStartupScriptInput,
   setNodeStartFileInput,
   setPythonCmdInput,
+  setDotnetCmdInput,
   setPhpNodeVersionInput,
   phpNodeCurrent as phpNodeCurrentSchema,
   changeRuntimeInput,
@@ -114,6 +115,7 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     startupScript: r.startupScript,
     nodeStartFile: r.nodeStartFile,
     pythonCmd: r.pythonCmd,
+    dotnetCmd: r.dotnetCmd,
     phpNodeVersion: r.phpNodeVersion,
     phpNodeVersionFull: r.phpNodeVersionFull,
     accessUrl,
@@ -703,6 +705,42 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     },
   );
 
+  // POST /environments/:id/dotnet-cmd — define/limpa o comando de start avançado do
+  // .NET (ex.: dotnet App.dll) e reinicia o app. "" ou null volta ao auto (detecta a DLL).
+  app.post(
+    "/environments/:id/dotnet-cmd",
+    {
+      schema: {
+        params: idParams,
+        body: setDotnetCmdInput,
+        response: { 200: environmentSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.runtimeKind !== "dotnet") {
+        throw new ApiHttpError(400, "not_dotnet", "o comando de start avançado só se aplica a ambientes .NET");
+      }
+      const cmd = req.body.cmd?.trim() || null;
+      const updated = await db
+        .update(environments)
+        .set({ dotnetCmd: cmd })
+        .where(eq(environments.id, env.id))
+        .returning();
+      const row = updated[0] ?? env;
+      if (row.containerId && row.state === "running") {
+        const agentUrl = await agentUrlForEnv(row);
+        try {
+          await agent.applyDotnetCmd(agentUrl, row.containerId, cmd);
+        } catch (err) {
+          req.log.warn({ err, envId: env.id }, "falha ao aplicar comando de start do .NET");
+        }
+      }
+      return await toEnvironment(row);
+    },
+  );
+
   // POST /environments/:id/node-version — troca a versão de Node (via nvm) de um
   // ambiente PHP. Aplica AO VIVO (docker exec, sem recriar) e guarda a versão.
   app.post(
@@ -822,6 +860,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         startupScript: env.startupScript,
         startFile: env.nodeStartFile,
         pythonCmd: env.pythonCmd,
+        dotnetCmd: env.dotnetCmd,
         phpNodeVersion: env.phpNodeVersion,
         phpRoot: env.phpWebRoot,
         envVars: await envVarsForProvision(env.id),

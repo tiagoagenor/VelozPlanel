@@ -58,6 +58,7 @@ export const environments = pgTable("environments", {
   startupScript: text("startup_script"), // comandos de inicialização (rodam 1x na criação)
   nodeStartFile: text("node_start_file"), // arquivo que inicia o app Node (e Python: app.py)
   pythonCmd: text("python_cmd"), // comando de start avançado (Python/Django, ex.: gunicorn/runserver)
+  dotnetCmd: text("dotnet_cmd"), // comando de start avançado (.NET, ex.: dotnet App.dll)
   phpNodeVersion: text("php_node_version"), // versão Node escolhida (envs PHP via nvm)
   phpNodeVersionFull: text("php_node_version_full"), // versão Node real resolvida (nvm)
   phpWebRoot: text("php_web_root"), // document root do php -S (Laravel = /var/www/public)

@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   node: "Node.js",
   python: "Python",
   static: "Site estático",
+  dotnet: ".NET",
   redis: "Redis",
   mysql: "MySQL",
   mariadb: "MariaDB",

@@ -45,6 +45,12 @@ function baseImage(env: EnvironmentRow): string {
       return `velozplanel/python:${env.runtimeVersion}`;
     case "static":
       return `velozplanel/node:${STATIC_BUILD_NODE}`;
+    case "dotnet": {
+      // A imagem oficial do SDK já traz git + toolchain → builda direto (sem base própria).
+      const major = parseInt(env.runtimeVersion.split(".")[0] ?? "0", 10);
+      const repo = major > 0 && major < 5 ? "mcr.microsoft.com/dotnet/core/sdk" : "mcr.microsoft.com/dotnet/sdk";
+      return `${repo}:${env.runtimeVersion}`;
+    }
     default:
       return `velozplanel/node:${STATIC_BUILD_NODE}`;
   }
@@ -54,6 +60,7 @@ function appWorkdir(env: EnvironmentRow): string {
   switch (env.runtimeKind) {
     case "node":
     case "python":
+    case "dotnet":
       return "/app";
     case "static":
       return "/site";
@@ -145,6 +152,11 @@ function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackage
       s.push({ kind: "npm_build", label: "Build do site (npm run build)", command: null, enabled: true });
     }
     // "site pronto": só baixar o código; o place copia direto para /site.
+    return s;
+  }
+  if (kind === "dotnet") {
+    s.push({ kind: "dotnet_publish", label: "Publicar (dotnet publish -c Release)", command: null, enabled: true });
+    s.push({ kind: "dotnet_restart", label: "Reiniciar o app", command: null, enabled: true });
     return s;
   }
   if (det.hasComposer) s.push({ kind: "composer_install", label: "Instalar dependências (composer)", command: null, enabled: true });
@@ -355,6 +367,20 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
           }
         }
       }
+      // .NET: pré-configura ASPNETCORE_URLS/HTTP_PORTS (o app escuta na :80) + opt-out de telemetria.
+      if (env.runtimeKind === "dotnet") {
+        for (const [k, v] of [
+          ["ASPNETCORE_URLS", "http://0.0.0.0:80"],
+          ["ASPNETCORE_HTTP_PORTS", "80"],
+          ["DOTNET_CLI_TELEMETRY_OPTOUT", "1"],
+          ["DOTNET_NOLOGO", "1"],
+        ] as const) {
+          const ex = await db.select().from(envVars).where(eq(envVars.envId, env.id));
+          if (!ex.some((r) => r.key === k)) {
+            await db.insert(envVars).values({ envId: env.id, key: k, valueEncrypted: encryptSecret(v), buildTime: false }).onConflictDoNothing();
+          }
+        }
+      }
       const fresh = (await db.select().from(deployConfigs).where(eq(deployConfigs.envId, env.id)).limit(1))[0]!;
       return toConfig(fresh);
     });
@@ -409,7 +435,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
           steps: steps.map((s) => ({ kind: s.kind, command: s.command, cwd: s.cwd, enabled: s.enabled })),
           buildEnv, framework: cfg.framework, runModel: cfg.runModel, http: httpCredsFor(cfg), subdir: cfg.subdir,
           runId: run.id, nodeStartFile: env.nodeStartFile, historyLimit: cfg.historyLimit,
-          runtimeKind: env.runtimeKind, pythonCmd: env.pythonCmd,
+          runtimeKind: env.runtimeKind, pythonCmd: env.pythonCmd, dotnetCmd: env.dotnetCmd,
         });
       } catch (err) {
         await db.update(deployRuns).set({ status: "failed", log: String(err), finishedAt: new Date() }).where(eq(deployRuns.id, run.id));

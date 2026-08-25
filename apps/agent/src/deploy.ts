@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import ssh2 from "ssh2";
 import { createHash } from "node:crypto";
-import { applyNodeStart, applyPhpRoot, applyPythonStart, applyPythonCmd, restartApp } from "./docker.js";
+import { applyNodeStart, applyPhpRoot, applyPythonStart, applyPythonCmd, applyDotnetCmd, restartDotnet, restartApp } from "./docker.js";
 
 const { utils } = ssh2;
 const docker = new Docker();
@@ -33,8 +33,9 @@ export interface RunDeployArgs {
   runId: string; // id da execução (deploy_run) para streaming do log
   nodeStartFile?: string | null; // arquivo de start do Node/Python (restart pós-deploy)
   historyLimit?: number; // quantos logs manter em /veloz/deploys (0 = todos)
-  runtimeKind?: string; // php|node|python|static — distingue node de python no place/restart
+  runtimeKind?: string; // php|node|python|static|dotnet — distingue node de python no place/restart
   pythonCmd?: string | null; // comando avançado do Python (Django) — restart pós-deploy
+  dotnetCmd?: string | null; // comando avançado do .NET — restart pós-deploy
 }
 export interface RunDeployResult {
   status: "success" | "failed";
@@ -300,6 +301,10 @@ export async function detectStack(
       }
     } else if (kind === "static") {
       framework = hasPackageJson && hasBuildScript ? "spa" : "static";
+    } else if (kind === "dotnet") {
+      const csproj = await execIn(c.id, ["sh", "-c", "find /workspace/repo -maxdepth 3 -name '*.csproj' | head -1"]);
+      const sln = await execIn(c.id, ["sh", "-c", "find /workspace/repo -maxdepth 2 -name '*.sln' | head -1"]);
+      framework = csproj.out.trim() || sln.out.trim() ? "dotnet" : "none";
     } else if (hasPackageJson && /"next"\s*:/.test(pkg.out)) {
       framework = "nextjs";
       runModel = "standalone";
@@ -350,7 +355,17 @@ function buildScript(args: RunDeployArgs): string {
         break;
       case "python_restart":
       case "static_reload":
+      case "dotnet_restart":
         continue; // pós-place (rodam no container do app)
+      case "dotnet_publish":
+        // Publica o projeto (auto-detecta o .csproj) em /workspace/publish. A montagem
+        // do artefato (abaixo) copia publish→out. UseAppHost=false → só App.dll (roda
+        // via `dotnet App.dll`, sem apphost nativo por-arquitetura).
+        cmd =
+          "PROJ=\"$(find . -maxdepth 3 -name '*.csproj' | head -1)\"; " +
+          "[ -n \"$PROJ\" ] || { echo 'nenhum .csproj encontrado no repo'; exit 1; }; " +
+          "rm -rf /workspace/publish && dotnet publish \"$PROJ\" -c Release -o /workspace/publish -p:UseAppHost=false --nologo";
+        break;
       case "php_migrate":
       case "artisan_migrate":
       case "artisan_optimize":
@@ -401,6 +416,12 @@ function buildScript(args: RunDeployArgs): string {
   } else if (args.framework === "static" || args.framework === "python" || args.framework === "django") {
     // static "site pronto" → /site inteiro; python → /app inteiro (com .vp-vendor).
     lines.push("cp -a . /workspace/out/ && rm -rf /workspace/out/.git");
+  } else if (args.framework === "dotnet") {
+    // .NET: o artefato é a SAÍDA do `dotnet publish` (auto-contida), não o repo.
+    lines.push(
+      "[ -d /workspace/publish ] && cp -a /workspace/publish/. /workspace/out/ || " +
+        "{ echo 'AVISO: /workspace/publish ausente (o passo de publish rodou?)'; }",
+    );
   } else {
     // genérico: copia o repo inteiro (menos .git)
     lines.push("cp -a . /workspace/out/ && rm -rf /workspace/out/.git");
@@ -517,6 +538,7 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
     appendLog(runId, "\n::vp:phase:place\ncolocando os arquivos no ambiente…\n");
     if (args.framework === "laravel") await placeLaravel(c, args.appContainerId);
     else if (args.framework === "spa" || args.framework === "static") await placeStatic(c, args.appContainerId, args.workdir);
+    else if (args.framework === "dotnet") await placeDotnet(c, args.appContainerId);
     else await placeIntoApp(c, args.appContainerId, args.workdir);
     appendLog(runId, "::vp:placed\n");
 
@@ -540,6 +562,10 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
       } else if (args.runtimeKind === "python") {
         if (args.framework === "django") await applyPythonCmd(args.appContainerId, args.pythonCmd || "python manage.py runserver 0.0.0.0:80 --insecure --noreload");
         else await applyPythonStart(args.appContainerId, args.nodeStartFile || "app.py");
+      } else if (args.runtimeKind === "dotnet") {
+        // .NET: comando avançado (se houver) OU redetecção da DLL publicada (*.runtimeconfig.json).
+        if (args.dotnetCmd && args.dotnetCmd.trim()) await applyDotnetCmd(args.appContainerId, args.dotnetCmd);
+        else await restartDotnet(args.appContainerId);
       } else if (args.framework === "spa" || args.framework === "static") {
         await restartApp(args.appContainerId); // caddy relê /site
       } else if (args.workdir === "/app") {
@@ -591,6 +617,25 @@ async function placeStatic(buildC: Docker.Container, appContainerId: string, doc
     `if [ -d /.veloz-incoming/out ]; then ` +
       `find '${docroot}' -mindepth 1 -maxdepth 1 ! -name '.vp-*' -exec rm -rf {} + ; ` +
       `cp -a /.veloz-incoming/out/. '${docroot}'/ ; fi; rm -rf /.veloz-incoming`,
+  ]);
+}
+
+/**
+ * .NET: deploy LIMPO em /app — a saída do `dotnet publish` é auto-contida, então
+ * DLLs antigas não podem sobrar (senão o supervisor acharia o runtimeconfig errado).
+ * Apaga tudo em /app (os marcadores /.vp-* vivem em /, fora do volume) e copia o novo.
+ */
+async function placeDotnet(buildC: Docker.Container, appContainerId: string): Promise<void> {
+  const app = docker.getContainer(appContainerId);
+  await execIn(appContainerId, ["sh", "-c", "rm -rf /.veloz-incoming && mkdir -p /.veloz-incoming"]);
+  const tar = await buildC.getArchive({ path: "/workspace/out" });
+  await app.putArchive(tar as unknown as NodeJS.ReadableStream, { path: "/.veloz-incoming" });
+  await execIn(appContainerId, [
+    "sh",
+    "-c",
+    `if [ -d /.veloz-incoming/out ]; then ` +
+      `find /app -mindepth 1 -maxdepth 1 -exec rm -rf {} + ; ` +
+      `cp -a /.veloz-incoming/out/. /app/ ; fi; rm -rf /.veloz-incoming`,
   ]);
 }
 

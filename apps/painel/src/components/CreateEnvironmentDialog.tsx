@@ -34,9 +34,10 @@ const CARD_SUBTITLE: Record<string, string> = {
   python: "Rode Python como site: Flask, FastAPI, Django ou o que trouxer.",
   node: "Apps e APIs em JavaScript/TypeScript.",
   php: "Sites e apps em PHP.",
+  dotnet: "Apps e APIs em .NET / ASP.NET Core (C#).",
 };
 /** Ordem fixa dos cards de código (client-side; não renumera o banco). */
-const CODE_ORDER = ["static", "node", "php", "python"];
+const CODE_ORDER = ["static", "node", "php", "python", "dotnet"];
 function codeRank(id: string): number {
   const i = CODE_ORDER.indexOf(id);
   return i === -1 ? CODE_ORDER.length : i;

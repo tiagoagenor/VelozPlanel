@@ -19,7 +19,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 
 type Fw = DeployFramework;
-type DeployLang = "node" | "php" | "python" | "static";
+type DeployLang = "node" | "php" | "python" | "static" | "dotnet";
 const FRAMEWORKS: Record<DeployLang, { id: Fw; label: string; hint: string }[]> = {
   node: [
     { id: "nextjs", label: "Next.js", hint: "Detecta e roda standalone automaticamente" },
@@ -36,6 +36,9 @@ const FRAMEWORKS: Record<DeployLang, { id: Fw; label: string; hint: string }[]> 
   static: [
     { id: "spa", label: "Site com build (React, Vue, Angular)", hint: "Roda npm install + build e publica o dist/build" },
     { id: "static", label: "Site pronto (HTML/CSS/JS)", hint: "Publica os arquivos como estão, sem build" },
+  ],
+  dotnet: [
+    { id: "dotnet", label: ".NET / ASP.NET Core", hint: "Detecta o .csproj, roda dotnet publish e sobe a DLL" },
   ],
 };
 
@@ -137,6 +140,8 @@ export default function DeployPage() {
     { v: "node_restart", label: "Reiniciar o app" },
     { v: "python_restart", label: "Reiniciar o app" },
     { v: "static_reload", label: "Recarregar o site" },
+    { v: "dotnet_publish", label: "Publicar (dotnet publish)" },
+    { v: "dotnet_restart", label: "Reiniciar o app" },
     { v: "shell", label: "Comando personalizado" },
   ];
   type Row = { enabled: boolean; kind: string; command: string | null; label: string; cwd: string | null; mutatesData: boolean };
@@ -146,7 +151,7 @@ export default function DeployPage() {
   const [stepMode, setStepMode] = React.useState<"simple" | "advanced">("simple");
   const [subdir, setSubdir] = React.useState("");
   React.useEffect(() => { if (cfg) { setStepMode((cfg.mode as "simple" | "advanced") ?? "simple"); setSubdir(cfg.subdir ?? ""); } }, [cfg?.mode, cfg?.subdir]);
-  const APP_KINDS = ["php_migrate", "artisan_migrate", "artisan_optimize", "artisan_storage_link", "node_restart", "python_restart", "static_reload"];
+  const APP_KINDS = ["php_migrate", "artisan_migrate", "artisan_optimize", "artisan_storage_link", "node_restart", "python_restart", "static_reload", "dotnet_restart"];
   const isAppKind = (k: string) => APP_KINDS.includes(k);
   const buildFolder = (rowCwd: string | null) => {
     const b = subdir.trim() || "raiz";
@@ -274,15 +279,17 @@ export default function DeployPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Aviso da porta — apps Node/Python precisam escutar na :80 */}
-      {(lang === "node" || lang === "python") ? (
+      {/* Aviso da porta — apps Node/Python/.NET precisam escutar na :80 */}
+      {(lang === "node" || lang === "python" || lang === "dotnet") ? (
         <div role="note" className="flex items-start gap-2 rounded-xl border border-info/30 bg-info/10 px-4 py-3 text-sm text-text2">
           <Info size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-info" />
           <span>
             Seu app precisa escutar na <strong className="text-text">porta 80</strong>, no host <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0</code> (não use <code className="font-mono">localhost</code>).
             {lang === "node"
               ? <> Ex.: <code className="rounded bg-bg px-1 font-mono text-text">app.listen(process.env.PORT || 80, &quot;0.0.0.0&quot;)</code>.</>
-              : <> Ex. Flask/FastAPI: rode em <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0:80</code> (Django já sobe assim).</>}
+              : lang === "dotnet"
+                ? <> No .NET, a variável <code className="rounded bg-bg px-1 font-mono text-text">ASPNETCORE_URLS=http://0.0.0.0:80</code> já vem configurada (não fixe outra porta no código).</>
+                : <> Ex. Flask/FastAPI: rode em <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0:80</code> (Django já sobe assim).</>}
           </span>
         </div>
       ) : null}

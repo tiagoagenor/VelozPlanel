@@ -75,6 +75,7 @@ const provisionBody = z.object({
   startupScript: z.string().nullable().optional(),
   startFile: z.string().nullable().optional(),
   pythonCmd: z.string().nullable().optional(),
+  dotnetCmd: z.string().nullable().optional(),
   phpNodeVersion: z.string().nullable().optional(),
   phpRoot: z.string().nullable().optional(),
   envVars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean().optional() })).optional(),
@@ -242,7 +243,7 @@ const deployRunBody = z.object({
   buildEnv: z.array(z.object({ key: z.string(), value: z.string() })),
   framework: z.string(), runModel: z.string(), http: httpCredsSchema, subdir: z.string().nullable().optional(),
   runId: z.string().min(1), nodeStartFile: z.string().nullable().optional(), historyLimit: z.number().int().optional(),
-  runtimeKind: z.string().optional(), pythonCmd: z.string().nullable().optional(),
+  runtimeKind: z.string().optional(), pythonCmd: z.string().nullable().optional(), dotnetCmd: z.string().nullable().optional(),
 });
 
 app.post("/env-vars", async (req, reply) => {
@@ -438,6 +439,23 @@ app.post("/python-cmd", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "python-cmd failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// define/limpa o comando avançado de start do .NET (ex.: dotnet App.dll)
+const dotnetCmdBody = z.object({
+  containerId: z.string().min(1),
+  cmd: z.string().nullable(), // null/"" limpa e volta ao auto (dotnet App.dll da publicação)
+});
+app.post("/dotnet-cmd", async (req, reply) => {
+  const parsed = dotnetCmdBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    await dockerDriver.applyDotnetCmd(parsed.data.containerId, parsed.data.cmd);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "dotnet-cmd failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
   }
 });

@@ -38,6 +38,7 @@ async function provisionApp(env: EnvironmentRow, nodeId: string, agentUrl: strin
     startupScript: env.startupScript,
     startFile: env.nodeStartFile,
     pythonCmd: env.pythonCmd,
+    dotnetCmd: env.dotnetCmd,
     phpNodeVersion: env.phpNodeVersion,
     phpRoot: env.phpWebRoot,
     envVars: await envVarsFor(env.id),
