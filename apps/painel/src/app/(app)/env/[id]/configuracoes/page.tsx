@@ -436,11 +436,20 @@ function PythonCmdCard({ id, current, onSaved }: { id: string; current: string |
   );
 }
 
+/** Exemplo/modelo mostrado no campo quando nada foi salvo (modo automático).
+ *  É o comando que roda o app publicado; o nome da DLL casa com o projeto de
+ *  exemplo (AssemblyName=app). Só passa a valer se o cliente editar e salvar. */
+const DOTNET_CMD_EXAMPLE = "dotnet app.dll";
+
 function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
   const toast = useToast();
-  const [cmd, setCmd] = React.useState<string>(current ?? "");
-  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
-  const dirty = cmd !== (current ?? "");
+  // Sem comando salvo → mostra o exemplo (nunca vazio). Como o baseline também é o
+  // exemplo, o botão só habilita quando o cliente REALMENTE muda — salvar o exemplo
+  // sem querer não acontece (evita quebrar um ambiente ainda sem publicação).
+  const baseline = current ?? DOTNET_CMD_EXAMPLE;
+  const [cmd, setCmd] = React.useState<string>(baseline);
+  React.useEffect(() => { setCmd(current ?? DOTNET_CMD_EXAMPLE); }, [current]);
+  const dirty = cmd !== baseline;
   const save = useMutation({
     mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim()),
     onSuccess: (u) => {
@@ -453,26 +462,30 @@ function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string |
     <Card>
       <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
       <p className="mb-3 text-sm text-text2">
-        Por padrão o ambiente detecta e roda a DLL publicada pelo <code>dotnet publish</code>. Use este campo só
-        para forçar um comando específico que sobe o servidor na porta 80.
+        Por padrão o ambiente detecta e roda a DLL publicada pelo <code>dotnet publish</code> automaticamente.
+        O campo abaixo mostra o comando padrão como <strong>exemplo</strong> — só mexa se quiser forçar um
+        comando específico (ex.: a sua DLL tem outro nome, ou você passa argumentos). Ele sobe o servidor na porta 80.
       </p>
       <input
         value={cmd}
         onChange={(e) => setCmd(e.target.value)}
         spellCheck={false}
         aria-label="Comando de start avançado do .NET"
-        placeholder="dotnet MinhaApp.dll"
+        placeholder={DOTNET_CMD_EXAMPLE}
         className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
       />
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
+        <li>Troque <code>app.dll</code> pelo nome da sua DLL (o do <code>.csproj</code> / <code>AssemblyName</code>), ex.: <code>dotnet MinhaApi.dll</code>.</li>
         <li>O app precisa escutar na porta 80 — as variáveis <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
-        <li>Faça o deploy por git (aba <strong>Deploy</strong>) — ele roda <code>dotnet publish</code> e coloca a DLL em <code>/app</code>.</li>
+        <li>Deixe o campo <strong>vazio</strong> e salve para voltar ao modo automático (detecta a DLL publicada).</li>
       </ul>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
           {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
         </Button>
-        <span className="text-sm text-text3">Reinicia na hora, sem recriar o container.</span>
+        <span className="text-sm text-text3">
+          {dirty ? "Reinicia na hora, sem recriar o container." : "Exemplo — edite para usar um comando próprio."}
+        </span>
       </div>
     </Card>
   );
