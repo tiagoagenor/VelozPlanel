@@ -1079,14 +1079,24 @@ export async function stats(containerId: string): Promise<StatsResult> {
     cpuPct = (cpuDelta / systemDelta) * onlineCpus * 100;
   }
 
-  // Relativo à cota (NanoCpus): 100% = cota total do ambiente.
+  // Relativo à cota (NanoCpus): 100% = cota total do ambiente. O kernel (CFS,
+  // cpu.max) IMPÕE o teto — então qualquer leitura > 100% é só artefato de
+  // amostragem (janelas de cpuDelta/systemDelta levemente desalinhadas). Travamos
+  // em 100 para o painel não assustar com "103%" (o app nunca passa da cota).
   const quotaCores = await quotaForContainer(container);
   if (quotaCores > 0) {
-    cpuPct = cpuPct / quotaCores;
+    cpuPct = Math.min(100, cpuPct / quotaCores);
   }
   cpuPct = Math.max(0, Math.round(cpuPct * 100) / 100);
 
-  const memBytes = s.memory_stats.usage ?? 0;
+  // Memória = working set (igual ao `docker stats`): tira o cache de arquivo
+  // RECLAIMÁVEL do total. Sem isso o `memory.current` inclui page cache (ex.: o
+  // dotnet build enche o cache) e o painel mostra a RAM quase no teto sem o app
+  // estar de fato perto do limite. cgroup v2 = inactive_file; v1 = total_inactive_file/cache.
+  const rawUsage = s.memory_stats.usage ?? 0;
+  const mstats = s.memory_stats.stats ?? {};
+  const reclaimable = mstats.inactive_file ?? mstats.total_inactive_file ?? mstats.cache ?? 0;
+  const memBytes = Math.max(0, rawUsage - reclaimable);
   const memLimitBytes = s.memory_stats.limit ?? 0;
 
   return { cpuPct, memBytes, memLimitBytes };
@@ -1116,7 +1126,7 @@ interface CpuStats {
 interface DockerStats {
   cpu_stats: CpuStats;
   precpu_stats: CpuStats;
-  memory_stats: { usage?: number; limit?: number };
+  memory_stats: { usage?: number; limit?: number; stats?: Record<string, number> };
 }
 
 /** Limpa a saída de `docker logs`: remove os cabeçalhos binários de multiplexação
