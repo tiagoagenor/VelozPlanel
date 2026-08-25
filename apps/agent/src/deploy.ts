@@ -100,6 +100,29 @@ async function resolveBuildImage(image: string): Promise<string> {
   return image; // deixa o createContainer falhar/pull normalmente
 }
 
+/** Liga o container de build à(s) bridge(s) privada(s) do dono que o app do MESMO
+ *  ambiente usa (qualquer rede que não seja a default bridge/host/none). Assim os
+ *  passos de deploy alcançam os serviços do dono (MySQL/redis/…). Best-effort. */
+async function connectBuildToOwnerNet(envId: string, buildContainerId: string): Promise<void> {
+  try {
+    const list = await docker.listContainers({ all: false, filters: { label: [`vp.env=${envId}`] } });
+    const app = list.find((x) => x.Labels?.["vp.role"] !== "build");
+    if (!app) return;
+    const nets = Object.keys(app.NetworkSettings?.Networks ?? {}).filter(
+      (n) => n !== "bridge" && n !== "host" && n !== "none",
+    );
+    for (const net of nets) {
+      try {
+        await docker.getNetwork(net).connect({ Container: buildContainerId });
+      } catch {
+        /* já conectado / rede sumiu — ignora */
+      }
+    }
+  } catch {
+    /* best-effort: o build segue só na docker0 */
+  }
+}
+
 /** Sobe um container efêmero (sleep) da imagem base montando o volume de build. */
 async function startBuildContainer(envId: string, image: string, env: EnvPair[], http?: HttpCreds): Promise<Docker.Container> {
   await ensureVolume(envId);
@@ -122,6 +145,11 @@ async function startBuildContainer(envId: string, image: string, env: EnvPair[],
     Labels: { "vp.env": envId, "vp.role": "build" },
   });
   await c.start();
+  // Conecta o build à MESMA bridge privada do dono que o app usa, para que passos de
+  // deploy que tocam os serviços do dono (ex.: `dotnet ef database update` no MySQL,
+  // migrações Django/Laravel via shell) alcancem a rede 10.201.x.x. Sem isso o build
+  // fica só na docker0 (egress) e dá "Connect Timeout" no banco. Mesmo tenant → seguro.
+  await connectBuildToOwnerNet(envId, c.id);
   // A imagem SDK do .NET tem git mas NÃO traz openssh-client → git por SSH (deploy
   // key) falharia com "não autentica". Instala sob demanda (o guard `command -v ssh`
   // pula PHP/Node/Python, que já têm ssh). O container de build tem egress (docker0).
