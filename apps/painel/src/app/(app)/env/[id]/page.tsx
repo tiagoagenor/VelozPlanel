@@ -12,6 +12,7 @@ import {
   Plug,
   Check,
   Lock,
+  LockOpen,
   FileCode2,
   MapPin,
   ExternalLink,
@@ -129,8 +130,12 @@ export default function EnvOverviewPage() {
         {/* Chips de meta */}
         <div className="flex flex-wrap gap-2">
           {env.state === "running" ? <Chip tone="success" icon={CircleCheck}>Ativo</Chip> : null}
-          {https ? <Chip tone="success" icon={Lock}>HTTPS ativo</Chip> : null}
-          <Chip tone="surface" icon={FileCode2}>{runtimeText(env)}</Chip>
+          {env.category !== "service" ? (
+            https
+              ? <Chip tone="success" icon={Lock} href={`/env/${id}/ssl`} title="Gerenciar SSL/HTTPS">HTTPS ativo</Chip>
+              : <Chip tone="warning" icon={LockOpen} href={`/env/${id}/ssl`} title="Ativar SSL/HTTPS">HTTPS inativo</Chip>
+          ) : null}
+          <Chip tone="surface" icon={FileCode2} href={`/env/${id}/configuracoes`} title="Ver/alterar em Configurações">{runtimeText(env)}</Chip>
           {env.region ? <Chip tone="surface" icon={MapPin}>{env.region}</Chip> : null}
         </div>
 
@@ -285,13 +290,23 @@ const CHIP_TONE: Record<ChipTone, string> = {
   warning: "vp-pill vp-pill-warning",
   surface: "border-border bg-surface text-text2", // fundo branco (linguagem/região)
 };
-function Chip({ tone, icon: Icon, children }: { tone: ChipTone; icon: React.ComponentType<{ size?: number; className?: string }>; children: React.ReactNode }) {
-  return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-medium", CHIP_TONE[tone])}>
+function Chip({ tone, icon: Icon, children, href, title }: { tone: ChipTone; icon: React.ComponentType<{ size?: number; className?: string }>; children: React.ReactNode; href?: string; title?: string }) {
+  const cls = cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-medium", CHIP_TONE[tone]);
+  const inner = (
+    <>
       <Icon size={14} aria-hidden="true" />
       {children}
-    </span>
+    </>
   );
+  // Com href vira um atalho clicável (ex.: versão → Configurações, HTTPS → SSL).
+  if (href) {
+    return (
+      <Link href={href} title={title} className={cn(cls, "cursor-pointer transition-colors hover:border-brand-strong hover:brightness-95")}>
+        {inner}
+      </Link>
+    );
+  }
+  return <span className={cls}>{inner}</span>;
 }
 
 function DataRow({ label, children }: { label: string; children: React.ReactNode }) {
