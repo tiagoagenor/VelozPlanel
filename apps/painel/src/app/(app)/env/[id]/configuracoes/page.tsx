@@ -475,6 +475,7 @@ function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string |
         className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
       />
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
+        <li>Vale <strong>depois do deploy</strong>: o <code>dotnet publish</code> coloca a DLL direto em <code>/app</code> (ex.: <code>/app/app.dll</code>). Não confundir com <code>/app/bin/Debug/…</code>, que é o build do projeto de exemplo rodando via <code>dotnet run</code>.</li>
         <li>Troque <code>app.dll</code> pelo nome da sua DLL (o do <code>.csproj</code> / <code>AssemblyName</code>), ex.: <code>dotnet MinhaApi.dll</code>.</li>
         <li>O app precisa escutar na porta 80 — as variáveis <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
         <li>Deixe o campo <strong>vazio</strong> e salve para voltar ao modo automático (detecta a DLL publicada).</li>
