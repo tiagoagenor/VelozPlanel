@@ -105,7 +105,12 @@ export async function panelCreds(envId: string): Promise<{ user: string | null; 
 
 /** URL pública do painel (só quando ligado e com subdomínio). */
 export function panelUrl(row: EnvToolRow | null): string | null {
-  return row?.enabled && row.subdomain ? `https://${row.subdomain}.${cpIngress.TOOL_ZONE}` : null;
+  if (!row?.enabled || !row.subdomain) return null;
+  const base = `https://${row.subdomain}.${cpIngress.TOOL_ZONE}`;
+  // Adminer (postgres): pré-seleciona o driver PostgreSQL + o servidor no login,
+  // senão o Adminer abre em MySQL e dá "Connection refused" (porta 3306 inexistente).
+  if (row.kind === "adminer" && row.targetIp) return `${base}/?pgsql=${row.targetIp}`;
+  return base;
 }
 
 /** Liga o painel do ambiente (roteia entre embutido e sidecar). Retorna o subdomínio. */
