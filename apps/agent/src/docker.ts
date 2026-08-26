@@ -817,7 +817,10 @@ export interface ServiceProvisionResult {
  * (nada publicado no host), endurecido. Readiness por exec (não por porta).
  */
 export async function provisionService(args: ServiceProvisionArgs): Promise<ServiceProvisionResult> {
-  await removeExistingByEnv(args.envId); // idempotência em retry (mesmo vp.env)
+  // Sidecar de ferramenta (role "tool:<kind>"): limpa só a instância anterior DELE
+  // (por env+role), para NÃO remover o banco (mesmo vp.env). Serviços/apps: por env.
+  const scopedRole = args.role && args.role.startsWith("tool:") ? args.role : undefined;
+  await removeExistingByEnv(args.envId, scopedRole); // idempotência em retry
   await ensureImage(args.image);
   await ensureNetwork(args.network.name, args.network.subnet, args.network.gateway, args.ownerId);
 
@@ -981,9 +984,13 @@ export async function attachNetwork(
 }
 
 /** Remove qualquer container existente deste ambiente (idempotência do provision em retry). */
-async function removeExistingByEnv(envId: string): Promise<void> {
+async function removeExistingByEnv(envId: string, role?: string): Promise<void> {
   try {
-    const list = await docker.listContainers({ all: true, filters: { label: [`vp.env=${envId}`] } });
+    // Com `role`, limpa só os containers daquele papel (ex.: um sidecar de ferramenta),
+    // sem remover os demais containers do MESMO ambiente (ex.: o banco).
+    const label = [`vp.env=${envId}`];
+    if (role) label.push(`vp.role=${role}`);
+    const list = await docker.listContainers({ all: true, filters: { label } });
     for (const c of list) await docker.getContainer(c.Id).remove({ force: true }).catch(() => {});
   } catch {
     /* ignora */

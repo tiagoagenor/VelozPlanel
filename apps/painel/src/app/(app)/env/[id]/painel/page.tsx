@@ -4,7 +4,7 @@ import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Rabbit,
+  AppWindow,
   ExternalLink,
   Copy,
   Check,
@@ -137,16 +137,17 @@ export default function EnvAdminPanelPage() {
     );
   }
 
+  const toolName = panel.tool ?? "painel";
   return (
     <div className="flex flex-col gap-6">
       <header>
         <h1 className="flex items-center gap-2 text-xl font-bold text-text">
-          <Rabbit size={20} aria-hidden="true" className="text-brand-strong" />
+          <AppWindow size={20} aria-hidden="true" className="text-brand-strong" />
           Painel admin
         </h1>
         <p className="mt-1 text-sm text-text2">
-          Exponha a interface de administração do RabbitMQ numa URL própria. Ligue só
-          quando precisar; desligue para fechar o acesso.
+          Exponha o <strong>{toolName}</strong> numa URL própria. Ligue só quando
+          precisar; desligue para fechar o acesso.
         </p>
       </header>
 
@@ -195,7 +196,7 @@ export default function EnvAdminPanelPage() {
         {toggle.isPending ? (
           <p className="mt-3 flex items-center gap-2 text-sm text-text3">
             <Loader2 size={14} aria-hidden="true" className="animate-spin" />
-            Aplicando… (na primeira vez pode reiniciar o serviço por alguns segundos)
+            Aplicando… (pode levar alguns segundos para subir a ferramenta e emitir o HTTPS)
           </p>
         ) : null}
       </Card>
@@ -226,7 +227,7 @@ export default function EnvAdminPanelPage() {
       <p className="flex items-start gap-2 rounded-lg border border-border-subtle bg-bg p-3 text-sm text-text2">
         <ShieldAlert size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-warning" />
         <span>
-          Enquanto exposto, qualquer pessoa com a URL vê a tela de login do RabbitMQ — o
+          Enquanto exposto, qualquer pessoa com a URL vê a tela de login do {toolName} — o
           acesso é protegido pelo usuário e senha acima. Desligue quando não estiver usando.
           No primeiro acesso, o certificado HTTPS pode levar alguns segundos para emitir.
         </span>

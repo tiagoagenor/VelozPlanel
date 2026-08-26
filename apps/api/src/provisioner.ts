@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { RuntimeKind } from "@velozplanel/contracts";
 import { db } from "./db/client";
-import { environments, envAddresses, serviceCredentials, envTypes, envVars } from "./db/schema";
+import { environments, envAddresses, serviceCredentials, envTypes, envVars, envTools } from "./db/schema";
 import type { EnvironmentRow, JobRow } from "./db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { getPlan } from "./plans";
@@ -239,6 +239,14 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
 
   for (const target of [...children, env]) {
     if (target.autoSubdomain) await cpIngress.removeSite(target.autoSubdomain).catch(() => {});
+    // Painéis de serviço (env_tools): remove o vhost do painel e, se for sidecar
+    // (phpmyadmin/adminer), o container da ferramenta. O rabbitmq embutido não tem
+    // containerId próprio; o jstudio não tem subdomínio/container.
+    const tools = await db.select().from(envTools).where(eq(envTools.envId, target.id));
+    for (const t of tools) {
+      if (t.subdomain) await cpIngress.removeSite(t.subdomain, cpIngress.TOOL_ZONE).catch(() => {});
+      if (t.containerId && agentUrl) await agent.remove(agentUrl, t.containerId).catch(() => {});
+    }
     if (target.containerId) {
       if (!agentUrl) throw new Error("agente indisponível para remover o container");
       await agent.remove(agentUrl, target.containerId); // confirma antes de apagar; falha → retry

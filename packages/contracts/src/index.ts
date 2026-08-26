@@ -815,8 +815,9 @@ export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
 // pode LIGAR/DESLIGAR a exposição desse painel num subdomínio ALEATÓRIO sob jamees.top.
 export const adminPanelStatus = z.object({
   envId: z.string().uuid(),
-  supported: z.boolean(), // true só para serviços com painel embutido (rabbitmq)
+  supported: z.boolean(), // true para serviços com painel (rabbitmq/mysql/mariadb/postgres)
   enabled: z.boolean(),
+  tool: z.string().nullable(), // nome da ferramenta: "phpMyAdmin" | "Adminer" | "RabbitMQ Management"
   url: z.string().nullable(), // https://<aleatório>.jamees.top quando ligado
   user: z.string().nullable(), // usuário de login do painel (ex.: vp_user)
   password: z.string().nullable(), // senha de login (o painel mascara)
