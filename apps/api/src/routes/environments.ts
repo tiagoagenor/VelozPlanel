@@ -36,8 +36,8 @@ import { getPlan } from "../plans";
 import * as agent from "../agent";
 import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode } from "../nodes";
 import { allocateAddress, ownerNetworkFor } from "../ipam";
-import { connectionInfo, serviceUiPort } from "../services";
-import { loadPanelRow, panelUrl } from "../service-panel";
+import { connectionInfo } from "../services";
+import { loadPanelRow, panelUrl, panelKindFor } from "../service-panel";
 import * as cpIngress from "../cp-ingress";
 import { isSubReserved, isSubTaken } from "../subdomain";
 import { setSubdomainInput } from "@velozplanel/contracts";
@@ -79,15 +79,15 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     accessUrl = `https://${r.domain}`;
   } else if (r.autoSubdomain) {
     accessUrl = `https://${r.autoSubdomain}.jamees.top`;
-  } else if (r.httpPort && r.nodeId && !serviceUiPort(r.typeId ?? "")) {
-    // Serviços com painel embutido (rabbitmq) publicam a 15672 só para o painel
+  } else if (r.httpPort && r.nodeId && !panelKindFor(r.typeId)) {
+    // Serviços com painel (rabbitmq embutido) publicam porta só para o painel
     // (exposto por subdomínio no toggle); não é um "site" para abrir por IP:porta.
     const host = await httpHostForNode(r.nodeId);
     if (host) accessUrl = `http://${host}:${r.httpPort}`;
   }
-  // Serviços com painel embutido (rabbitmq): o endereço "Principal" é a URL do
-  // painel admin em jamees.com, quando ligado.
-  if (!accessUrl && serviceUiPort(r.typeId ?? "")) {
+  // Serviços com painel (rabbitmq / phpMyAdmin / Adminer): o endereço "Principal" é a
+  // URL PÚBLICA do painel (<sub>.jamees.top), quando ligado.
+  if (!accessUrl && panelKindFor(r.typeId)) {
     accessUrl = panelUrl(await loadPanelRow(r.id));
   }
   const { category, connection } = await serviceView(r);
