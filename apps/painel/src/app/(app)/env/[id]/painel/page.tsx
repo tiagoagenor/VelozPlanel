@@ -222,6 +222,7 @@ export default function EnvAdminPanelPage() {
               <CopyRow label="URL" value={panel.url} href={panel.url} />
               {panel.user ? <CopyRow label="Usuário" value={panel.user} /> : null}
               {panel.password ? <CopyRow label="Senha" value={panel.password} secret /> : null}
+              {panel.database ? <CopyRow label="Base de dados" value={panel.database} /> : null}
             </dl>
           </div>
         </Card>
