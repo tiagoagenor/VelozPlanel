@@ -807,6 +807,24 @@ export type SslStatus = z.infer<typeof sslStatus>;
 export const forceHttpsInput = z.object({ forceHttps: z.boolean() });
 export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
 
+/* ─────────────── Painel admin de serviço (ex.: RabbitMQ management) ─────────────── */
+
+// Alguns serviços têm um painel web embutido (RabbitMQ management na 15672). O dono
+// pode LIGAR/DESLIGAR a exposição desse painel num subdomínio ALEATÓRIO sob jamees.com.
+export const adminPanelStatus = z.object({
+  envId: z.string().uuid(),
+  supported: z.boolean(), // true só para serviços com painel embutido (rabbitmq)
+  enabled: z.boolean(),
+  url: z.string().nullable(), // https://<aleatório>.jamees.com quando ligado
+  user: z.string().nullable(), // usuário de login do painel (ex.: vp_user)
+  password: z.string().nullable(), // senha de login (o painel mascara)
+  message: z.string().nullable(), // nota honesta sobre estado/limitação
+});
+export type AdminPanelStatus = z.infer<typeof adminPanelStatus>;
+
+export const setAdminPanelInput = z.object({ enabled: z.boolean() });
+export type SetAdminPanelInput = z.infer<typeof setAdminPanelInput>;
+
 /* ─────────────── SSH / SFTP (acesso ao ambiente) ─────────────── */
 
 export const sshKey = z.object({

@@ -35,7 +35,7 @@ import { getPlan } from "../plans";
 import * as agent from "../agent";
 import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode } from "../nodes";
 import { allocateAddress, ownerNetworkFor } from "../ipam";
-import { connectionInfo } from "../services";
+import { connectionInfo, serviceUiPort } from "../services";
 import * as cpIngress from "../cp-ingress";
 import { isSubReserved, isSubTaken } from "../subdomain";
 import { setSubdomainInput } from "@velozplanel/contracts";
@@ -77,7 +77,9 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     accessUrl = `https://${r.domain}`;
   } else if (r.autoSubdomain) {
     accessUrl = `https://${r.autoSubdomain}.jamees.top`;
-  } else if (r.httpPort && r.nodeId) {
+  } else if (r.httpPort && r.nodeId && !serviceUiPort(r.typeId ?? "")) {
+    // Serviços com painel embutido (rabbitmq) publicam a 15672 só para o painel
+    // (exposto por subdomínio no toggle); não é um "site" para abrir por IP:porta.
     const host = await httpHostForNode(r.nodeId);
     if (host) accessUrl = `http://${host}:${r.httpPort}`;
   }

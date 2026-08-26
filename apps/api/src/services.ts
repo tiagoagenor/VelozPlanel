@@ -10,6 +10,21 @@ export function genSecret(): string {
   return randomBytes(18).toString("base64url");
 }
 
+/**
+ * Serviços com PAINEL WEB embutido no próprio container: a porta HTTP desse painel.
+ * Ex.: a imagem `rabbitmq:3-management` serve a UI de management na 15672. Essa é a
+ * porta que publicamos no host (via WireGuard) para reverse-proxear no subdomínio do
+ * painel — NÃO a porta de dados do serviço (AMQP 5672, que fica só na bridge interna).
+ */
+export const SERVICE_UI_PORTS: Record<string, number> = {
+  rabbitmq: 15672,
+};
+
+/** Porta do painel web embutido do tipo de serviço, ou null se não tem painel. */
+export function serviceUiPort(typeId: string): number | null {
+  return SERVICE_UI_PORTS[typeId] ?? null;
+}
+
 export interface ServiceCreds {
   rootPassword: string;
   user: string;

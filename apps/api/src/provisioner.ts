@@ -8,7 +8,7 @@ import { getPlan } from "./plans";
 import * as agent from "./agent";
 import { agentUrlForEnv, pickNodeForNewEnv } from "./nodes";
 import { allocateAddress, releaseAddresses } from "./ipam";
-import { serviceRuntime, makeCreds, stackAppEnv } from "./services";
+import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
 import { subdomainFromName } from "./subdomain";
 
@@ -74,15 +74,41 @@ async function provisionServiceEnv(env: EnvironmentRow, et: typeof envTypes.$inf
   }
   // Reusa credenciais já gravadas para o env do docker (para o container casar com o painel).
   const envForContainer = hasCreds ? await rebuildServiceEnv(env.id, et.id) : rt.env;
+  // Serviços com painel web embutido (ex.: rabbitmq → 15672) publicam essa porta no
+  // host, para o painel poder ser exposto num subdomínio. Demais serviços: sem publicação.
+  const uiPort = serviceUiPort(et.id);
   const result = await agent.provisionService(agentUrl, {
     envId: env.id, name: env.name, image: et.image,
     limits: { vcpu: planSpec.vcpu, memMb: planSpec.memMb },
     network: { name: alloc.bridgeName, subnet: alloc.subnet, gateway: alloc.gateway },
     ip: alloc.ip, ownerId: env.ownerId, dataPath: et.dataPath,
     env: envForContainer, readiness: rt.readiness, role: "service",
+    publishPort: uiPort,
   });
   await db.update(envAddresses).set({ containerId: result.containerId }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "service")));
-  await db.update(environments).set({ containerId: result.containerId, state: "running", errorMessage: null }).where(eq(environments.id, env.id));
+  await db.update(environments).set({ containerId: result.containerId, httpPort: result.httpPort ?? null, state: "running", errorMessage: null }).where(eq(environments.id, env.id));
+}
+
+/**
+ * Garante que o container de um serviço com painel embutido está publicando a porta
+ * do painel (recria o container reusando volume/credenciais se preciso). Usado quando
+ * o dono LIGA o painel num serviço que foi provisionado antes desta funcionalidade.
+ * Retorna o env já com o httpPort preenchido.
+ */
+export async function ensureServiceUiPublished(envId: string): Promise<EnvironmentRow> {
+  const [env] = await db.select().from(environments).where(eq(environments.id, envId)).limit(1);
+  if (!env) throw new PermanentJobError("ambiente não encontrado");
+  if (env.httpPort) return env; // já publica a porta
+  if (!env.typeId) throw new PermanentJobError("ambiente sem tipo");
+  if (!serviceUiPort(env.typeId)) throw new PermanentJobError("este serviço não tem painel embutido");
+  if (!env.nodeId) throw new PermanentJobError("ambiente sem nó");
+  const [et] = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
+  if (!et || et.category !== "service") throw new PermanentJobError("tipo de serviço inválido");
+  const agentUrl = await agentUrlForEnv({ nodeId: env.nodeId });
+  await provisionServiceEnv(env, et, env.nodeId, agentUrl); // recria publicando a porta (volume/creds preservados)
+  const [fresh] = await db.select().from(environments).where(eq(environments.id, envId)).limit(1);
+  if (!fresh) throw new PermanentJobError("ambiente sumiu após republicar a porta");
+  return fresh;
 }
 
 /** Provisiona uma stack (n8n/wordpress): banco-filho + app, ambos já com linha no DB. */
@@ -163,10 +189,12 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
     }
 
     // Endereço temporário <sub>.jamees.top — só para ambientes WEB (têm httpPort).
-    // Serviços puros (sem porta web) ficam de fora. Best-effort (não falha o provision).
+    // Serviços puros (sem porta web) ficam de fora. Serviços com painel embutido
+    // (rabbitmq) TAMBÉM ficam de fora: o painel é exposto por toggle em jamees.com,
+    // não automaticamente. Best-effort (não falha o provision).
     try {
       const [fresh] = await db.select().from(environments).where(eq(environments.id, env.id)).limit(1);
-      if (fresh?.httpPort) {
+      if (fresh?.httpPort && !serviceUiPort(fresh.typeId ?? "")) {
         let sub = fresh.autoSubdomain;
         if (!sub) {
           sub = await subdomainFromName(fresh.name);

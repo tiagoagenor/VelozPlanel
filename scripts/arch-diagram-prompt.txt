@@ -1,0 +1,36 @@
+Você vai GERAR UMA IMAGEM (use a ferramenta de geração de imagem — nano banana / Gemini image) de um DIAGRAMA DE ARQUITETURA DE NUVEM, estilo infográfico técnico moderno e limpo (parecido com diagramas de arquitetura da AWS/GCP), para um painel de hospedagem chamado "Jamees".
+
+TAREFA: gere 3 variações da MESMA imagem e salve em docs/_arch-candidates/ como arquitetura-1.png, arquitetura-2.png, arquitetura-3.png. Resolução alta (ex.: 1600x1000 landscape). Ao terminar, liste os arquivos criados. NÃO altere mais nada no repositório.
+
+ESTILO OBRIGATÓRIO:
+- Fundo branco (ou cinza bem claro). Visual FLAT, vetorial, profissional, com bastante respiro.
+- Cor de destaque da marca: ROXO #634ca8 (títulos, bordas de destaque, setas principais). Apoio: roxo escuro #4a3880 e roxo claro #efecf8. Neutros em cinza.
+- Caixas retangulares de cantos arredondados, com um pequeno ÍCONE simples em cada uma (servidor, banco de dados, container/cubo, cadeado, globo, engrenagem). Ícones em linha, minimalistas.
+- Tipografia sans-serif limpa. Use POUCO texto — só rótulos curtos (1 a 3 palavras). Priorize legibilidade; nada de parágrafos.
+- Título no topo: "Jamees — Arquitetura".
+
+CONTEÚDO DO DIAGRAMA (layout em 3 faixas horizontais, de cima para baixo):
+
+FAIXA 1 (topo) — "Internet": um ícone de usuário/navegador ("Cliente") e um ícone de nuvem ("Internet"). Setas descem para a Faixa 2.
+
+FAIXA 2 (meio) — uma grande caixa roxa rotulada "Plano de Controle" contendo, lado a lado, caixinhas:
+  - "Caddy" (borda HTTPS, ícone de cadeado/globo)
+  - "Painel" (ícone de janela)
+  - "API" (ícone de engrenagem)
+  - "Postgres" (ícone de banco)
+  - "MariaDB" (ícone de banco)
+  - "DNS" (ícone de globo)
+  Uma seta do "Caddy" para "Painel" e "API". Rótulo pequeno na caixa: "hub WireGuard".
+
+FAIXA 3 (base) — DUAS caixas iguais rotuladas "Nó de Hospedagem", cada uma contendo:
+  - "Agente" (ícone de engrenagem/robô)
+  - uma sub-caixa tracejada rotulada "Rede do dono" com DOIS cubos dentro: "App" (container) e "Banco" (container), com uma seta curta ligando os dois.
+  Ícone de Docker/baleia pequeno em cada nó.
+
+CONEXÕES (muito importante, com legenda):
+- Do "Plano de Controle" até cada "Nó de Hospedagem": setas TRACEJADAS ROXAS grossas rotuladas "WireGuard (privado)" — representa o tráfego de GESTÃO.
+- Do "Cliente/Internet" (Faixa 1) direto até os cubos "App" nos nós: setas SÓLIDAS CINZA/VERDE rotuladas "HTTPS por domínio (público)" — representa o tráfego PÚBLICO dos sites.
+
+LEGENDA no rodapé, dois itens: linha tracejada roxa = "Gestão (WireGuard, privada)"; linha sólida = "Acesso público (HTTPS/domínio)".
+
+Deixe o diagrama equilibrado, simétrico e fácil de ler à primeira vista. Sem marca d'água, sem logos de terceiros, sem texto extra além dos rótulos citados.

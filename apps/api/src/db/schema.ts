@@ -367,6 +367,7 @@ export const envTools = pgTable("env_tools", {
   targetIp: text("target_ip"), // IP interno que o proxy alcança (a própria ferramenta)
   targetPort: integer("target_port"),
   passwordHash: text("password_hash"), // Jamees Studio: senha opcional (bcrypt); null = sem senha
+  subdomain: text("subdomain"), // painel de serviço: subdomínio aleatório fixo sob jamees.com
 });
 export type EnvToolRow = typeof envTools.$inferSelect;
 

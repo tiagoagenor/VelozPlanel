@@ -18,6 +18,7 @@ import type {
   Node,
   SessionUser,
   SslStatus,
+  AdminPanelStatus,
   SshConfig,
   SshKey,
   AddSshKeyInput,
@@ -398,6 +399,21 @@ export function setForceHttps(
 export function issueSsl(id: string): Promise<SslStatus> {
   return request<SslStatus>(`/environments/${id}/ssl/issue`, {
     method: "POST",
+  });
+}
+
+/* ─────────────── Painel admin de serviço (RabbitMQ) ─────────────── */
+
+/** Estado do painel admin embutido (exposto ou não, URL, credenciais). */
+export function getAdminPanel(id: string): Promise<AdminPanelStatus> {
+  return request<AdminPanelStatus>(`/environments/${id}/admin-panel`);
+}
+
+/** Liga/desliga a exposição do painel admin num subdomínio aleatório. */
+export function setAdminPanel(id: string, enabled: boolean): Promise<AdminPanelStatus> {
+  return request<AdminPanelStatus>(`/environments/${id}/admin-panel`, {
+    method: "POST",
+    body: { enabled },
   });
 }
 

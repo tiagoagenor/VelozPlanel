@@ -412,6 +412,8 @@ async function createSchema(): Promise<void> {
   `;
   // Jamees Studio: senha opcional do painel (hash bcrypt; null = sem senha).
   await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS password_hash text`;
+  // Painel de serviço (rabbitmq): subdomínio aleatório fixo sob jamees.com.
+  await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS subdomain text`;
   // 1 linha por (env, ferramenta) — idempotência do flag liga/desliga.
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_tools_env_kind_uq ON env_tools(env_id, kind)`;
 

@@ -41,6 +41,7 @@ import { metricsRoutes } from "./routes/metrics";
 import { filesRoutes } from "./routes/files";
 import { databasesRoutes } from "./routes/databases";
 import { sslRoutes } from "./routes/ssl";
+import { adminPanelRoutes } from "./routes/admin-panel";
 import { sshRoutes } from "./routes/ssh";
 import { sftpRoutes } from "./routes/sftp";
 import { deployRoutes } from "./routes/deploy";
@@ -145,6 +146,7 @@ async function main(): Promise<void> {
       await v1.register(filesRoutes);
       await v1.register(databasesRoutes);
       await v1.register(sslRoutes);
+      await v1.register(adminPanelRoutes);
       await v1.register(sshRoutes);
       await v1.register(sftpRoutes);
       await v1.register(deployRoutes);
