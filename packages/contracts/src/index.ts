@@ -821,6 +821,7 @@ export const adminPanelStatus = z.object({
   url: z.string().nullable(), // https://<aleatório>.jamees.top quando ligado
   user: z.string().nullable(), // usuário de login do painel (ex.: vp_user)
   password: z.string().nullable(), // senha de login (o painel mascara)
+  database: z.string().nullable(), // banco inicial do serviço (ex.: "app"); dá pra criar outros
   message: z.string().nullable(), // nota honesta sobre estado/limitação
 });
 export type AdminPanelStatus = z.infer<typeof adminPanelStatus>;

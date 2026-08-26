@@ -91,16 +91,20 @@ export async function generatePanelSubdomain(): Promise<string> {
   return generateSubdomain();
 }
 
-/** Usuário/senha (do banco/serviço) para o login do painel, das credenciais cifradas. */
-export async function panelCreds(envId: string): Promise<{ user: string | null; password: string | null }> {
+/** Usuário/senha/banco (do serviço) para o login do painel, das credenciais cifradas. */
+export async function panelCreds(
+  envId: string,
+): Promise<{ user: string | null; password: string | null; database: string | null }> {
   const rows = await db.select().from(serviceCredentials).where(eq(serviceCredentials.envId, envId));
   let user: string | null = null;
   let password: string | null = null;
+  let database: string | null = null;
   for (const c of rows) {
     if (c.key === "user") user = decryptSecret(c.valueEncrypted);
     else if (c.key === "password") password = decryptSecret(c.valueEncrypted);
+    else if (c.key === "database") database = decryptSecret(c.valueEncrypted);
   }
-  return { user, password };
+  return { user, password, database };
 }
 
 /** URL pública do painel (só quando ligado e com subdomínio). */

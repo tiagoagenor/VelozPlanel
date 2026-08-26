@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Loader2,
   ShieldAlert,
+  Database,
 } from "lucide-react";
 import type { AdminPanelStatus } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -200,6 +201,17 @@ export default function EnvAdminPanelPage() {
           </p>
         ) : null}
       </Card>
+
+      {/* Banco inicial */}
+      {panel.database ? (
+        <p className="flex items-start gap-2 rounded-lg border border-border-subtle bg-bg p-3 text-sm text-text2">
+          <Database size={16} aria-hidden="true" className="mt-0.5 shrink-0 text-brand-strong" />
+          <span>
+            Banco inicial: <strong className="font-mono">{panel.database}</strong>. É o banco
+            criado junto com o ambiente — você pode criar outros bancos dentro do {toolName}.
+          </span>
+        </p>
+      ) : null}
 
       {/* Acesso (quando ligado) */}
       {panel.enabled && panel.url ? (

@@ -22,7 +22,7 @@ const idParams = z.object({ id: z.string().uuid() });
 function buildStatus(
   env: EnvironmentRow,
   row: EnvToolRow | null,
-  creds: { user: string | null; password: string | null },
+  creds: { user: string | null; password: string | null; database: string | null },
 ): AdminPanelStatus {
   const tool = panelToolLabel(env.typeId);
   const supported = !!tool;
@@ -44,6 +44,7 @@ function buildStatus(
     url,
     user: enabled ? creds.user : null,
     password: enabled ? creds.password : null,
+    database: creds.database,
     message,
   };
 }

@@ -178,7 +178,11 @@ export default function EnvOverviewPage() {
         <Card>
           <CardTitle className="mb-3">Endereços</CardTitle>
           <dl className="flex flex-col divide-y divide-border/70">
-            <CopyRow label="Principal" value={env.accessUrl ?? "—"} href={env.accessUrl ?? undefined} />
+            <CopyRow
+              label="Principal"
+              value={env.accessUrl ?? env.connection?.url ?? "—"}
+              href={env.accessUrl ?? undefined}
+            />
             <CopyRow label="Domínio" value={env.domain ?? "Não configurado"} muted={!env.domain} />
             {env.internalIp ? <CopyRow label="IP interno" value={env.internalIp} mono /> : null}
             {env.containerId ? <CopyRow label="Container" value={env.containerId.slice(0, 12)} mono /> : null}
