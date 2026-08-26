@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Copy,
   CircleCheck,
+  HardDrive,
 } from "lucide-react";
 import { RUNTIME_LABEL, runtimeHasVersions, type MetricSample, type Environment } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -75,6 +76,9 @@ export default function EnvOverviewPage() {
   const env = envQuery.data;
   const { byId: plansById } = usePlans();
   const plan = env ? plansById.get(env.plan) ?? null : null;
+  // Disco: usado (SizeRw + volumes) sobre a cota do plano (GiB). % pode passar de 100 (estouro).
+  const diskPct =
+    diskBytes != null && plan ? (diskBytes / (plan.diskGb * 1024 ** 3)) * 100 : null;
 
   const samples: MetricSample[] = metricsQuery.data?.samples ?? [];
   const timestamps = samples.map((s) => s.ts);
@@ -202,6 +206,52 @@ export default function EnvOverviewPage() {
             ]}
           />
         </div>
+
+        {/* Disco (sem gráfico) — usado / cota do plano, para todos os ambientes */}
+        <Card>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-[13.5px] text-text2">
+                <HardDrive size={15} aria-hidden="true" className="text-brand-strong" />
+                Disco
+              </p>
+              <p className="mt-1 font-display text-[1.5rem] font-bold leading-none tabular-nums text-text">
+                {diskBytes == null ? "—" : formatBytes(diskBytes)}
+                <span className="ml-1.5 text-[0.9rem] font-normal text-text3">
+                  / {plan ? `${plan.diskGb} GB` : "—"}
+                </span>
+              </p>
+            </div>
+            {diskPct != null ? (
+              <span
+                className={cn(
+                  "shrink-0 text-[13px] font-medium tabular-nums",
+                  diskPct >= 90 ? "text-danger" : diskPct >= 75 ? "text-warning" : "text-text2",
+                )}
+              >
+                {diskPct.toFixed(0)}%
+              </span>
+            ) : null}
+          </div>
+          {diskPct != null ? (
+            <div
+              className="mt-3 h-2 w-full overflow-hidden rounded-full bg-border"
+              role="progressbar"
+              aria-valuenow={Math.round(Math.min(100, diskPct))}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Uso de disco"
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  diskPct >= 90 ? "bg-danger" : diskPct >= 75 ? "bg-warning" : "bg-brand",
+                )}
+                style={{ width: `${Math.min(100, diskPct)}%` }}
+              />
+            </div>
+          ) : null}
+        </Card>
 
         {samples.length > 0 ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">

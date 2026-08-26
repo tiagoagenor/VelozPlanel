@@ -1050,15 +1050,35 @@ export async function remove(containerId: string): Promise<void> {
   await container.remove({ force: true });
 }
 
-/** Uso de disco do container = tamanho da camada de escrita (SizeRw). */
+/** Uso de disco do ambiente = camada de escrita (SizeRw) + volumes veloz-* montados. */
 export async function diskUsage(containerId: string): Promise<{ diskBytes: number }> {
-  // `size: true` faz o Docker calcular SizeRw (camada de escrita). Não está na
-  // tipagem do dockerode, por isso o cast.
-  const inspectWithSize = docker.getContainer(containerId).inspect as unknown as (
+  // `size: true` faz o Docker calcular SizeRw (camada de escrita); Mounts traz os volumes.
+  // Não está na tipagem do dockerode, por isso o cast.
+  const container = docker.getContainer(containerId);
+  const inspectWithSize = container.inspect as unknown as (
     opts: { size: boolean },
-  ) => Promise<{ SizeRw?: number }>;
-  const info = await inspectWithSize.call(docker.getContainer(containerId), { size: true });
-  return { diskBytes: Math.max(0, Math.round(info.SizeRw ?? 0)) };
+  ) => Promise<{
+    SizeRw?: number;
+    Mounts?: { Type?: string; Name?: string; Destination?: string }[];
+  }>;
+  const info = await inspectWithSize.call(container, { size: true });
+  let total = Math.max(0, Math.round(info.SizeRw ?? 0));
+  // SizeRw NÃO inclui volumes nomeados. Soma os volumes do VelozPanel: veloz-data (dados
+  // de serviço: postgres/mysql/rabbitmq…) e veloz-code (código de python/dotnet/estático),
+  // via `du -sk` (KB, compatível GNU e busybox/Alpine) dentro do container.
+  const volDests = (info.Mounts ?? [])
+    .filter((m) => m.Type === "volume" && (m.Name ?? "").startsWith("veloz-") && m.Destination)
+    .map((m) => m.Destination!);
+  for (const dest of volDests) {
+    try {
+      const out = await execCapture(containerId, ["du", "-sk", dest]);
+      const kb = parseInt(out.trim().split(/\s+/)[0] ?? "", 10);
+      if (Number.isFinite(kb)) total += kb * 1024;
+    } catch {
+      /* du indisponível ou container parado — ignora esse volume (fica só o SizeRw) */
+    }
+  }
+  return { diskBytes: total };
 }
 
 export async function stats(containerId: string): Promise<StatsResult> {
