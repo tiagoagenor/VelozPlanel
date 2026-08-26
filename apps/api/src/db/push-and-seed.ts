@@ -61,6 +61,9 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS mem_mb_override integer`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS auto_subdomain text`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS environments_auto_subdomain_uq ON environments(lower(auto_subdomain))`;
+  // Uso de disco persistido: último valor medido (com a máquina ligada) + quando.
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS disk_bytes bigint`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS disk_measured_at timestamptz`;
   // Subdomínios reservados (jamees.top) — ninguém seleciona.
   await sql`
     CREATE TABLE IF NOT EXISTS reserved_subdomains (

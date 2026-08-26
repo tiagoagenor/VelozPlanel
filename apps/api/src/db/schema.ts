@@ -71,6 +71,8 @@ export const environments = pgTable("environments", {
   memMbOverride: integer("mem_mb_override"), // admin alterou RAM
   lastChargedAt: timestamp("last_charged_at", { withTimezone: true }), // último débito de cobrança
   errorMessage: text("error_message"), // mensagem de falha do job (provision/delete) — mostrada no painel
+  diskBytes: bigint("disk_bytes", { mode: "number" }), // último uso de disco medido (SizeRw + volumes)
+  diskMeasuredAt: timestamp("disk_measured_at", { withTimezone: true }), // quando o disco foi medido
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

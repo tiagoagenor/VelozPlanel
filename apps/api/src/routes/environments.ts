@@ -25,6 +25,7 @@ import type {
   RuntimeKind,
   EnvState,
   EnvCategory,
+  DiskUsage,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs } from "../db/schema";
@@ -341,15 +342,29 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         response: { 200: diskUsageSchema, 401: apiError, 403: apiError, 404: apiError },
       },
     },
-    async (req): Promise<{ diskBytes: number }> => {
+    async (req): Promise<DiskUsage> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
-      if (env.state !== "running" || !env.containerId) return { diskBytes: 0 };
-      try {
-        return await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
-      } catch {
-        return { diskBytes: 0 };
+      // Só mede da máquina quando ligada (o `du` nos volumes exige o container de pé).
+      // Ao medir, SALVA o valor; assim, pausado/desligado, devolvemos o último salvo.
+      if (env.state === "running" && env.containerId) {
+        try {
+          const { diskBytes } = await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
+          const measuredAt = new Date();
+          await db
+            .update(environments)
+            .set({ diskBytes, diskMeasuredAt: measuredAt })
+            .where(eq(environments.id, env.id));
+          return { diskBytes, measuredAt: measuredAt.toISOString(), live: true };
+        } catch {
+          /* nó indisponível — cai no último valor salvo abaixo */
+        }
       }
+      return {
+        diskBytes: env.diskBytes ?? 0,
+        measuredAt: env.diskMeasuredAt ? env.diskMeasuredAt.toISOString() : null,
+        live: false,
+      };
     },
   );
 
@@ -433,10 +448,21 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+      // Captura o tamanho do disco ANTES de parar (o container ainda está de pé, então o
+      // `du` nos volumes funciona). Fica salvo para exibir enquanto pausado. Best-effort.
+      let diskPatch: { diskBytes?: number; diskMeasuredAt?: Date } = {};
+      if (env.state === "running" && env.containerId) {
+        try {
+          const { diskBytes } = await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
+          diskPatch = { diskBytes, diskMeasuredAt: new Date() };
+        } catch {
+          /* nó indisponível — mantém o último valor salvo */
+        }
+      }
       if (env.containerId) await agent.stop(await agentUrlForEnv(env), env.containerId);
       const updated = await db
         .update(environments)
-        .set({ state: "paused" })
+        .set({ state: "paused", ...diskPatch })
         .where(eq(environments.id, env.id))
         .returning();
       return await toEnvironment(updated[0] ?? env);

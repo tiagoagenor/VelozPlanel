@@ -61,6 +61,8 @@ export default function EnvOverviewPage() {
     staleTime: 15_000,
   });
   const diskBytes = diskQuery.data?.diskBytes ?? null;
+  const diskLive = diskQuery.data?.live ?? true; // false = valor salvo (pausado/desligado)
+  const diskMeasuredAt = diskQuery.data?.measuredAt ?? null;
 
   const envQuery = useQuery({
     queryKey: ["environment", id],
@@ -250,6 +252,11 @@ export default function EnvOverviewPage() {
                 style={{ width: `${Math.min(100, diskPct)}%` }}
               />
             </div>
+          ) : null}
+          {!diskLive && diskMeasuredAt ? (
+            <p className="mt-2 text-[11.5px] text-text3">
+              Último valor medido · {formatDateTime(diskMeasuredAt)}
+            </p>
           ) : null}
         </Card>
 

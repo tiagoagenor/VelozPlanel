@@ -660,9 +660,11 @@ export const metricSeries = z.object({
 });
 export type MetricSeries = z.infer<typeof metricSeries>;
 
-/** Uso de disco atual do ambiente (medido sob demanda no nó). */
+/** Uso de disco do ambiente. Medido ao vivo quando ligado; senão, último valor salvo. */
 export const diskUsage = z.object({
   diskBytes: z.number().int().nonnegative(),
+  measuredAt: z.string().datetime().nullable(), // quando o valor foi medido (null = nunca)
+  live: z.boolean(), // true = medido agora (ligado); false = valor salvo (pausado/desligado)
 });
 export type DiskUsage = z.infer<typeof diskUsage>;
 
