@@ -36,6 +36,7 @@ import * as agent from "../agent";
 import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode } from "../nodes";
 import { allocateAddress, ownerNetworkFor } from "../ipam";
 import { connectionInfo, serviceUiPort } from "../services";
+import { loadPanelRow, panelUrl } from "../service-panel";
 import * as cpIngress from "../cp-ingress";
 import { isSubReserved, isSubTaken } from "../subdomain";
 import { setSubdomainInput } from "@velozplanel/contracts";
@@ -82,6 +83,11 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     // (exposto por subdomínio no toggle); não é um "site" para abrir por IP:porta.
     const host = await httpHostForNode(r.nodeId);
     if (host) accessUrl = `http://${host}:${r.httpPort}`;
+  }
+  // Serviços com painel embutido (rabbitmq): o endereço "Principal" é a URL do
+  // painel admin em jamees.com, quando ligado.
+  if (!accessUrl && serviceUiPort(r.typeId ?? "")) {
+    accessUrl = panelUrl(await loadPanelRow(r.id));
   }
   const { category, connection } = await serviceView(r);
   // Região do nó + IP interno na rede do dono (serviços/stacks).

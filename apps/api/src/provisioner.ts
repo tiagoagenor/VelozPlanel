@@ -11,6 +11,7 @@ import { allocateAddress, releaseAddresses } from "./ipam";
 import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
 import { subdomainFromName } from "./subdomain";
+import { enablePanel } from "./service-panel";
 
 /**
  * Handlers dos jobs da fila (provisionar/remover ambiente). São RECONCILIADORES:
@@ -190,8 +191,7 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
 
     // Endereço temporário <sub>.jamees.top — só para ambientes WEB (têm httpPort).
     // Serviços puros (sem porta web) ficam de fora. Serviços com painel embutido
-    // (rabbitmq) TAMBÉM ficam de fora: o painel é exposto por toggle em jamees.com,
-    // não automaticamente. Best-effort (não falha o provision).
+    // (rabbitmq) têm o próprio endereço em jamees.com (bloco abaixo). Best-effort.
     try {
       const [fresh] = await db.select().from(environments).where(eq(environments.id, env.id)).limit(1);
       if (fresh?.httpPort && !serviceUiPort(fresh.typeId ?? "")) {
@@ -205,6 +205,17 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
       }
     } catch {
       /* subdomínio é auxiliar — não bloqueia o provisionamento */
+    }
+
+    // Serviços com painel embutido (rabbitmq): o painel admin já nasce EXPOSTO num
+    // subdomínio aleatório em jamees.com — o dono pode desligar depois. Best-effort.
+    try {
+      const [fresh] = await db.select().from(environments).where(eq(environments.id, env.id)).limit(1);
+      if (fresh?.httpPort && serviceUiPort(fresh.typeId ?? "")) {
+        await enablePanel(fresh);
+      }
+    } catch {
+      /* painel é auxiliar — não bloqueia o provisionamento */
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
