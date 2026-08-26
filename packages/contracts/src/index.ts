@@ -810,12 +810,12 @@ export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
 /* ─────────────── Painel admin de serviço (ex.: RabbitMQ management) ─────────────── */
 
 // Alguns serviços têm um painel web embutido (RabbitMQ management na 15672). O dono
-// pode LIGAR/DESLIGAR a exposição desse painel num subdomínio ALEATÓRIO sob jamees.com.
+// pode LIGAR/DESLIGAR a exposição desse painel num subdomínio ALEATÓRIO sob jamees.top.
 export const adminPanelStatus = z.object({
   envId: z.string().uuid(),
   supported: z.boolean(), // true só para serviços com painel embutido (rabbitmq)
   enabled: z.boolean(),
-  url: z.string().nullable(), // https://<aleatório>.jamees.com quando ligado
+  url: z.string().nullable(), // https://<aleatório>.jamees.top quando ligado
   user: z.string().nullable(), // usuário de login do painel (ex.: vp_user)
   password: z.string().nullable(), // senha de login (o painel mascara)
   message: z.string().nullable(), // nota honesta sobre estado/limitação

@@ -11,8 +11,10 @@ import path from "node:path";
 const DIR = process.env.CP_INGRESS_DIR ?? "/caddy-managed";
 export const SUB_ZONE = "jamees.top";
 // Zona usada pelos PAINÉIS de serviço (ex.: RabbitMQ management): subdomínio
-// aleatório sob jamees.com. Requer um wildcard DNS `*.jamees.com A <CP>`.
-export const TOOL_ZONE = "jamees.com";
+// aleatório sob jamees.top — mesma zona dos ambientes (wildcard *.jamees.top no
+// PowerDNS + cert automático). Os nomes não colidem: a geração checa tanto
+// environments.auto_subdomain quanto env_tools.subdomain.
+export const TOOL_ZONE = "jamees.top";
 
 export function subFqdn(sub: string, zone: string = SUB_ZONE): string {
   return `${sub}.${zone}`;

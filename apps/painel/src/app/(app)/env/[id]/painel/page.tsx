@@ -166,7 +166,7 @@ export default function EnvAdminPanelPage() {
               )}
             </span>
             <span className="max-w-md text-sm text-text2">
-              Publica a interface em <strong>https://&lt;aleatório&gt;.jamees.com</strong> com
+              Publica a interface em <strong>https://&lt;aleatório&gt;.jamees.top</strong> com
               HTTPS automático. O subdomínio é sorteado uma vez e mantido.
             </span>
           </div>

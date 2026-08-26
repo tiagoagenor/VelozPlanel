@@ -73,7 +73,7 @@ export function panelUrl(row: EnvToolRow | null): string | null {
 }
 
 /**
- * Liga o painel: escreve o vhost do Caddy do CP para <sub>.jamees.com → nó:httpPort
+ * Liga o painel: escreve o vhost do Caddy do CP para <sub>.jamees.top → nó:httpPort
  * e marca env_tools(enabled=true). Requer o ambiente já com httpPort publicado
  * (a porta do painel). Best-effort: retorna sem erro se faltar rota/porta.
  * Retorna o subdomínio usado (ou null se não deu para ligar).

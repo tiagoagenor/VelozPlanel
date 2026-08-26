@@ -10,6 +10,7 @@ import { environments } from "./schema";
 import { serviceUiPort } from "../services";
 import { ensureServiceUiPublished } from "../provisioner";
 import { enablePanel, loadPanelRow } from "../service-panel";
+import * as cpIngress from "../cp-ingress";
 
 async function main(): Promise<void> {
   const rows = await db.select().from(environments);
@@ -18,10 +19,12 @@ async function main(): Promise<void> {
     if (!serviceUiPort(env.typeId ?? "")) continue; // só serviços com painel
     if (env.state !== "running" && env.state !== "paused") continue;
     const existing = await loadPanelRow(env.id);
-    if (existing?.enabled) {
-      console.log(`[backfill-panels] ${env.name} (${env.id}) já ligado — pulando`);
+    // Respeita quem o dono desligou de propósito (linha existe e enabled=false).
+    if (existing && !existing.enabled) {
+      console.log(`[backfill-panels] ${env.name} (${env.id}) desligado pelo dono — pulando`);
       continue;
     }
+    // Reconcilia: (re)escreve o vhost na zona ATUAL (migra jamees.com→jamees.top).
     try {
       let e = env;
       if (!e.httpPort) {
@@ -30,7 +33,7 @@ async function main(): Promise<void> {
       }
       const sub = await enablePanel(e);
       if (sub) {
-        console.log(`[backfill-panels] ${env.name} (${env.id}) → https://${sub}.jamees.com`);
+        console.log(`[backfill-panels] ${env.name} (${env.id}) → https://${sub}.${cpIngress.TOOL_ZONE}`);
         done++;
       } else {
         console.log(`[backfill-panels] ${env.name}: não foi possível ligar (rota/porta)`);

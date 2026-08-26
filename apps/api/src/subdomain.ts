@@ -5,7 +5,7 @@
 import { sql } from "drizzle-orm";
 import { slugify } from "@velozplanel/contracts";
 import { db } from "./db/client";
-import { environments, reservedSubdomains } from "./db/schema";
+import { environments, reservedSubdomains, envTools } from "./db/schema";
 
 const CHARS = "abcdefghjkmnpqrstuvwxyz23456789"; // sem i/l/o/0/1
 
@@ -22,7 +22,10 @@ export async function isSubReserved(sub: string): Promise<boolean> {
 
 export async function isSubTaken(sub: string, exceptEnvId?: string): Promise<boolean> {
   const rows = await db.select({ id: environments.id }).from(environments).where(sql`lower(auto_subdomain) = ${sub.toLowerCase()}`);
-  return rows.some((r) => r.id !== exceptEnvId);
+  if (rows.some((r) => r.id !== exceptEnvId)) return true;
+  // Painéis de serviço (env_tools.subdomain) vivem na MESMA zona jamees.top — evita colisão.
+  const tools = await db.select({ id: envTools.id }).from(envTools).where(sql`lower(subdomain) = ${sub.toLowerCase()}`);
+  return tools.length > 0;
 }
 
 /** Gera um subdomínio novo (7 chars; 8 após várias colisões), livre e não-reservado. */
