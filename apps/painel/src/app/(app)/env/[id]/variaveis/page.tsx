@@ -49,11 +49,23 @@ export default function EnvVarsPage() {
   const [importText, setImportText] = React.useState("");
   const [importing, setImporting] = React.useState(false);
 
-  // Carrega mascarado (sem os valores em texto). O texto só é buscado quando o
-  // usuário clica no olhinho de uma linha — escondido = só se vê no container.
+  // Valores EXIBIDOS por padrão: ao carregar, busca os valores em texto. O olho
+  // de cada linha esconde/mostra; escondido = só se vê de dentro do container.
   React.useEffect(() => {
-    if (q.data) setRows(q.data.vars.map((v) => ({ key: v.key, value: "", dirty: false, shown: false })));
+    if (!q.data) return;
+    setRows(q.data.vars.map((v) => ({ key: v.key, value: "", dirty: false, shown: true })));
     setRevealed(false);
+    if (q.data.vars.length > 0) {
+      (async () => {
+        try {
+          const r = await api.revealEnvVars(id);
+          const byKey = new Map(r.vars.map((v) => [v.key, v.value]));
+          setRows((rs) => rs.map((rr) => (rr.dirty ? rr : { ...rr, value: byKey.get(rr.key) ?? "" })));
+          setRevealed(true);
+        } catch { /* mantém mascarado se falhar */ }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data]);
 
   const save = useMutation({
@@ -103,9 +115,9 @@ export default function EnvVarsPage() {
       const idx = idxByKey.get(p.key);
       const cur = idx !== undefined ? out[idx] : undefined;
       if (idx !== undefined && cur) {
-        out[idx] = { ...cur, value: p.value, dirty: true, shown: false };
+        out[idx] = { ...cur, value: p.value, dirty: true, shown: true };
       } else {
-        out.push({ key: p.key, value: p.value, dirty: true, shown: false });
+        out.push({ key: p.key, value: p.value, dirty: true, shown: true });
         idxByKey.set(p.key, out.length - 1);
       }
     }
@@ -141,9 +153,9 @@ export default function EnvVarsPage() {
           <p className="text-sm text-text2">
             Variáveis <strong>reais</strong> do processo. Ao salvar, aplicam no container vivo
             (reinicia o app ~1s) e são reaplicadas se o container for recriado. Ficam disponíveis
-            no <strong>build</strong> e no runtime, guardadas criptografadas. O valor fica
-            <strong> escondido</strong> — clique no olho para revelar; sem revelar, ele só é visto
-            de dentro do container.
+            no <strong>build</strong> e no runtime, guardadas criptografadas. O valor é
+            <strong> exibido</strong> — clique no olho da linha para <strong>esconder</strong>;
+            escondido, ele só é visto de dentro do container.
           </p>
 
           <div className="flex flex-col gap-2">
