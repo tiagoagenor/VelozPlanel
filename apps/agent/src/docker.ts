@@ -560,14 +560,15 @@ export async function restartDotnet(containerId: string): Promise<void> {
 function lxcfsBinds(): string[] {
   if (!process.env.VP_LXCFS) return [];
   const base = "/var/lib/lxcfs/proc";
+  // :ro — o cliente só LÊ esses arquivos (htop/free); escrever neles não faz sentido.
   return [
-    `${base}/cpuinfo:/proc/cpuinfo`,
-    `${base}/meminfo:/proc/meminfo`,
-    `${base}/stat:/proc/stat`,
-    `${base}/uptime:/proc/uptime`,
-    `${base}/loadavg:/proc/loadavg`,
-    `${base}/diskstats:/proc/diskstats`,
-    `${base}/swaps:/proc/swaps`,
+    `${base}/cpuinfo:/proc/cpuinfo:ro`,
+    `${base}/meminfo:/proc/meminfo:ro`,
+    `${base}/stat:/proc/stat:ro`,
+    `${base}/uptime:/proc/uptime:ro`,
+    `${base}/loadavg:/proc/loadavg:ro`,
+    `${base}/diskstats:/proc/diskstats:ro`,
+    `${base}/swaps:/proc/swaps:ro`,
   ];
 }
 
@@ -680,6 +681,11 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       NanoCpus: Math.round(limits.vcpu * 1e9),
       RestartPolicy: { Name: "unless-stopped" }, // site volta após crash/OOM (D4)
       Init: true, // init do Docker (tini) como PID 1 → sinais/SIGTERM e reap limpos
+      // Paridade com os containers de serviço: mata ARP-spoof L2 na bridge do dono
+      // e bloqueia escalada via setuid. `ping` segue funcionando (ICMP datagram via
+      // net.ipv4.ping_group_range, padrão do Docker moderno — não precisa de NET_RAW).
+      CapDrop: ["NET_RAW", "NET_ADMIN"],
+      SecurityOpt: ["no-new-privileges"],
       Binds: binds.length ? binds : undefined, // LXCFS (htop/free veem o plano)
       CpusetCpus: cpuset || undefined, // cores visíveis = ceil(vcpu) (htop/nproc corretos)
       // HostPort "" => Docker escolhe uma porta efêmera livre no host.
