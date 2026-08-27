@@ -72,6 +72,25 @@ export default function EnvSettingsPage() {
     setStartup(env?.startupScript ?? "");
   }, [env?.startupScript]);
   const startupDirty = startup !== (env?.startupScript ?? "");
+
+  // Recriar o container com a MESMA versão — re-roda os comandos de inicialização.
+  // Só para ambientes de app (serviços/stacks são provisionados por outro caminho).
+  const isApp = !env?.category || env.category === "app";
+  const [recreateOpen, setRecreateOpen] = React.useState(false);
+  const recreate = useMutation({
+    mutationFn: () => api.changeRuntime(id, { kind, version: env!.runtime.version }),
+    onSuccess: (updated) => {
+      qc.setQueryData(["environment", id], updated);
+      qc.invalidateQueries({ queryKey: ["environments"] });
+      qc.invalidateQueries({ queryKey: ["metrics", id] });
+      setRecreateOpen(false);
+      toast.show("success", "Container recriado — os comandos de inicialização foram executados.");
+    },
+    onError: (err) => {
+      setRecreateOpen(false);
+      toast.show("error", err instanceof Error ? err.message : "Não foi possível recriar o container.");
+    },
+  });
   const saveStartup = useMutation({
     mutationFn: () => api.setStartupScript(id, startup.trim() === "" ? null : startup),
     onSuccess: (updated) => {
@@ -350,11 +369,55 @@ export default function EnvSettingsPage() {
           >
             {saveStartup.isPending ? "Salvando…" : "Salvar"}
           </Button>
+          {isApp ? (
+            <Button
+              variant="outline"
+              onClick={() => setRecreateOpen(true)}
+              disabled={startupDirty || saveStartup.isPending || recreate.isPending}
+              title={startupDirty ? "Salve os comandos antes de recriar" : undefined}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              {recreate.isPending ? "Recriando…" : "Recriar container"}
+            </Button>
+          ) : null}
           <span className="text-sm text-text3">
-            Para valer agora, recrie o container (reaplique a versão acima).
+            {startupDirty
+              ? "Salve primeiro; depois recrie o container para os comandos valerem."
+              : "Os comandos rodam quando o container é recriado."}
           </span>
         </div>
       </Card>
+
+      <Dialog
+        open={recreateOpen}
+        onClose={() => setRecreateOpen(false)}
+        title="Recriar o container?"
+        description="O container é destruído e criado de novo com a mesma versão. O ambiente fica indisponível por alguns segundos e os comandos de inicialização rodam de novo."
+      >
+        <div className="flex flex-col gap-4">
+          {kind === "node" || kind === "php" ? (
+            <p className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">
+              <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span>
+                Em {labelKind(kind)}, os arquivos publicados vivem dentro do container —
+                depois de recriar, <strong>rode um novo deploy</strong> para o site voltar.
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm text-text2">
+              O código do app fica em volume e é preservado.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setRecreateOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => recreate.mutate()} disabled={recreate.isPending}>
+              {recreate.isPending ? "Recriando…" : "Recriar container"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       <Dialog
         open={confirmOpen}
