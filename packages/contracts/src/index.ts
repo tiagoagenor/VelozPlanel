@@ -538,8 +538,8 @@ export const setEnvVarsInput = z.object({
             (k) => !RESERVED_ENV_KEYS.includes(k) && !k.startsWith("VP_"),
             "chave reservada pelo sistema",
           ),
-        value: z.string().max(32768),
-        buildTime: z.boolean().default(false),
+        value: z.string().max(32768).optional(), // omitido = mantém o valor atual (não altera o segredo)
+        buildTime: z.boolean().default(true),
       }),
     )
     .max(100),

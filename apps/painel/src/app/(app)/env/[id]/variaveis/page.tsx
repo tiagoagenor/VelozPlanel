@@ -11,7 +11,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 
-interface Row { key: string; value: string; buildTime: boolean; dirty: boolean }
+interface Row { key: string; value: string; dirty: boolean; shown: boolean }
 
 /** Parseia um .env: ignora linhas em branco e comentadas (#), aceita `export`,
  *  aspas simples/duplas e comentário no fim de valor sem aspas. */
@@ -44,44 +44,55 @@ export default function EnvVarsPage() {
   const toast = useToast();
   const q = useQuery({ queryKey: ["env-vars", id], queryFn: () => api.getEnvVars(id) });
   const [rows, setRows] = React.useState<Row[]>([]);
-  const [revealed, setRevealed] = React.useState(false);
-  const [hidden, setHidden] = React.useState(false); // valores visíveis por padrão; olhinho esconde
+  const [revealed, setRevealed] = React.useState(false); // já buscamos os valores em texto?
   const [importOpen, setImportOpen] = React.useState(false);
   const [importText, setImportText] = React.useState("");
   const [importing, setImporting] = React.useState(false);
 
-  // Ao carregar, revela os valores automaticamente (exibidos sempre).
+  // Carrega mascarado (sem os valores em texto). O texto só é buscado quando o
+  // usuário clica no olhinho de uma linha — escondido = só se vê no container.
   React.useEffect(() => {
-    if (q.data) {
-      setRows(q.data.vars.map((v) => ({ key: v.key, value: "", buildTime: true, dirty: false })));
-      if (q.data.vars.length > 0 && !revealed) reveal.mutate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (q.data) setRows(q.data.vars.map((v) => ({ key: v.key, value: "", dirty: false, shown: false })));
+    setRevealed(false);
   }, [q.data]);
 
-  const reveal = useMutation({
-    mutationFn: () => api.revealEnvVars(id),
-    onSuccess: (r) => {
-      setRows(r.vars.map((v) => ({ key: v.key, value: v.value, buildTime: true, dirty: false })));
-      setRevealed(true);
-    },
-    onError: () => toast.show("error", "Não foi possível revelar."),
-  });
-
   const save = useMutation({
+    // value só das linhas EDITADAS; as intocadas vão sem value → o backend mantém
+    // o segredo atual (nunca zera nem precisa revelar pra salvar).
     mutationFn: () =>
-      api.setEnvVars(id, { vars: rows.filter((r) => r.key.trim()).map((r) => ({ key: r.key.trim(), value: r.value, buildTime: true })) }),
+      api.setEnvVars(id, {
+        vars: rows.filter((r) => r.key.trim()).map((r) => ({ key: r.key.trim(), buildTime: true, ...(r.dirty ? { value: r.value } : {}) })),
+      }),
     onSuccess: (r) => {
       qc.setQueryData(["env-vars", id], r);
+      setRows(r.vars.map((v) => ({ key: v.key, value: "", dirty: false, shown: false })));
+      setRevealed(false);
       toast.show("success", r.message ?? "Salvo.");
     },
     onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
   });
 
+  /** Mostra/esconde o valor de UMA linha. Ao mostrar, busca os valores em texto
+   *  uma vez (revealEnvVars) — sem marcar dirty, então salvar não os reenvia. */
+  async function toggleShow(i: number) {
+    const row = rows[i];
+    if (!row) return;
+    if (row.shown) { setRows((rs) => rs.map((r, j) => (j === i ? { ...r, shown: false } : r))); return; }
+    if (!revealed) {
+      try {
+        const r = await api.revealEnvVars(id);
+        const byKey = new Map(r.vars.map((v) => [v.key, v.value]));
+        setRows((rs) => rs.map((rr) => (rr.dirty ? rr : { ...rr, value: byKey.get(rr.key) ?? rr.value })));
+        setRevealed(true);
+      } catch { toast.show("error", "Não foi possível revelar."); return; }
+    }
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, shown: true } : r)));
+  }
+
   function update(i: number, patch: Partial<Row>) {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch, dirty: true } : r)));
   }
-  function addRow() { setRows((rs) => [...rs, { key: "", value: "", buildTime: true, dirty: true }]); }
+  function addRow() { setRows((rs) => [...rs, { key: "", value: "", dirty: true, shown: true }]); }
   function removeRow(i: number) { setRows((rs) => rs.filter((_, j) => j !== i)); }
 
   /** Mescla as variáveis do .env colado nas linhas atuais (sobrescreve chaves iguais). */
@@ -92,9 +103,9 @@ export default function EnvVarsPage() {
       const idx = idxByKey.get(p.key);
       const cur = idx !== undefined ? out[idx] : undefined;
       if (idx !== undefined && cur) {
-        out[idx] = { ...cur, value: p.value, buildTime: true, dirty: true };
+        out[idx] = { ...cur, value: p.value, dirty: true, shown: false };
       } else {
-        out.push({ key: p.key, value: p.value, buildTime: true, dirty: true });
+        out.push({ key: p.key, value: p.value, dirty: true, shown: false });
         idxByKey.set(p.key, out.length - 1);
       }
     }
@@ -109,27 +120,16 @@ export default function EnvVarsPage() {
     }
     setImporting(true);
     try {
-      // Se há segredos ainda mascarados, revela primeiro para não salvá-los vazios ao mesclar.
-      let base = rows;
-      if (hasSecrets && !revealed) {
-        const r = await api.revealEnvVars(id);
-        base = r.vars.map((v) => ({ key: v.key, value: v.value, buildTime: true, dirty: false }));
-        setRevealed(true);
-      }
-      setRows(mergeImport(base, parsed));
+      setRows(mergeImport(rows, parsed));
       setImportOpen(false);
       setImportText("");
       toast.show("success", `${parsed.length} variável(is) importada(s). Revise e clique em Salvar e aplicar.`);
-    } catch {
-      toast.show("error", "Não foi possível revelar os valores atuais para mesclar com segurança.");
     } finally {
       setImporting(false);
     }
   }
 
   if (q.isPending) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="animate-spin text-brand-strong" /></div>;
-
-  const hasSecrets = (q.data?.vars.length ?? 0) > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -141,28 +141,31 @@ export default function EnvVarsPage() {
           <p className="text-sm text-text2">
             Variáveis <strong>reais</strong> do processo. Ao salvar, aplicam no container vivo
             (reinicia o app ~1s) e são reaplicadas se o container for recriado. Ficam disponíveis
-            no <strong>build</strong> e no runtime. Guardadas criptografadas.
+            no <strong>build</strong> e no runtime, guardadas criptografadas. O valor fica
+            <strong> escondido</strong> — clique no olho para revelar; sem revelar, ele só é visto
+            de dentro do container.
           </p>
 
           <div className="flex flex-col gap-2">
-            {rows.length > 0 ? (
-              <div className="flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={() => setHidden((h) => !h)}
-                  aria-pressed={hidden}
-                  className="inline-flex items-center gap-1.5 text-xs text-text2 hover:text-text"
-                  title={hidden ? "Mostrar valores" : "Esconder valores"}
-                >
-                  {hidden ? <Eye size={15} /> : <EyeOff size={15} />}
-                  {hidden ? "Mostrar valores" : "Esconder valores"}
-                </button>
-              </div>
-            ) : null}
             {rows.map((r, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2">
                 <Input className="min-w-[160px] flex-1 font-mono" placeholder="CHAVE" value={r.key} onChange={(e) => update(i, { key: e.target.value })} />
-                <Input type={hidden ? "password" : "text"} className="min-w-[200px] flex-[2] font-mono" placeholder="valor" value={r.value} onChange={(e) => update(i, { value: e.target.value })} />
+                <Input
+                  type={r.shown ? "text" : "password"}
+                  className="min-w-[200px] flex-[2] font-mono"
+                  placeholder={r.shown ? "valor" : "••••••••"}
+                  value={r.value}
+                  onChange={(e) => update(i, { value: e.target.value, shown: true })}
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShow(i)}
+                  aria-label={r.shown ? "Esconder valor" : "Revelar valor"}
+                  title={r.shown ? "Esconder valor" : "Revelar valor"}
+                  className="rounded p-1.5 text-text2 hover:bg-bg hover:text-brand-strong"
+                >
+                  {r.shown ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
                 <button type="button" onClick={() => removeRow(i)} aria-label="Remover" className="rounded p-1.5 text-text2 hover:bg-bg hover:text-danger"><Trash2 size={16} /></button>
               </div>
             ))}

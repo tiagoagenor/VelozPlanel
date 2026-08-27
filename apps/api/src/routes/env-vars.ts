@@ -50,28 +50,29 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       const vars = req.body.vars;
 
+      // value omitido = mantém o segredo atual (o painel só manda valor de linhas
+      // editadas; assim o segredo nunca sai do servidor sem o usuário revelar).
+      const existing = await db.select().from(envVars).where(eq(envVars.envId, env.id));
+      const exByKey = new Map(existing.map((r) => [r.key, r]));
+      const finalRows = vars.map((v) => {
+        const enc = v.value !== undefined
+          ? encryptSecret(v.value)
+          : (exByKey.get(v.key)?.valueEncrypted ?? encryptSecret(""));
+        return { envId: env.id, key: v.key, valueEncrypted: enc, buildTime: v.buildTime ?? true };
+      });
+
       await db.delete(envVars).where(eq(envVars.envId, env.id));
-      if (vars.length) {
-        await db.insert(envVars).values(
-          vars.map((v) => ({
-            envId: env.id,
-            key: v.key,
-            valueEncrypted: encryptSecret(v.value),
-            buildTime: v.buildTime ?? false,
-          })),
-        );
-      }
+      if (finalRows.length) await db.insert(envVars).values(finalRows);
+
+      // aplicação ao vivo precisa do valor real (decifra os mantidos).
+      const applyVars = finalRows.map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted) }));
 
       let applied = false;
       let message: string | null = "Salvo.";
       if (env.containerId && env.state === "running") {
         try {
           const agentUrl = await agentUrlForEnv(env);
-          const r = await agent.applyEnvVars(
-            agentUrl,
-            env.containerId,
-            vars.map((v) => ({ key: v.key, value: v.value })),
-          );
+          const r = await agent.applyEnvVars(agentUrl, env.containerId, applyVars);
           applied = r.applied;
           message = r.applied
             ? "Aplicado — o app foi reiniciado com as variáveis."
