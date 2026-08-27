@@ -253,7 +253,7 @@ export const envVars = pgTable(
       .references(() => environments.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     valueEncrypted: text("value_encrypted").notNull(), // "v1:" + base64(iv|tag|ciphertext)
-    buildTime: boolean("build_time").notNull().default(false),
+    buildTime: boolean("build_time").notNull().default(true), // toda var vai pro build+runtime (revertível)
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
