@@ -481,6 +481,9 @@ export const platformSettings = pgTable("platform_settings", {
   billingFreeMinutes: integer("billing_free_minutes").notNull().default(1),
   suspendOnZero: boolean("suspend_on_zero").notNull().default(true),
   defaultRegion: text("default_region"), // região pré-selecionada no wizard de criação (super admin)
+  // Desconexão automática do SSH/SFTP por inatividade (super admin). Segundos.
+  // 0 = desativado. Lido a cada login pelo gateway (vale para novas sessões).
+  sshIdleTimeoutSeconds: integer("ssh_idle_timeout_seconds").notNull().default(900),
   domainPriceMonthCents: integer("domain_price_month_cents").notNull().default(100), // R$1,00/domínio/mês
   // Taxas por recurso — alimentam a calculadora "Calcular pela taxa" dos planos.
   // NÃO entram na cobrança (a cobrança usa o preço gravado do plano). Exceção:

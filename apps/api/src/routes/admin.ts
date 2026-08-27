@@ -10,6 +10,8 @@ import {
   resourceChangeInput,
   grantSubdomainChangesInput,
   setDefaultRegionInput,
+  sshSecuritySettings,
+  setSshSecurityInput,
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
@@ -349,6 +351,28 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       await db.update(platformSettings).set({ defaultRegion: req.body.region }).where(eq(platformSettings.id, 1));
       await recordAudit(actor, "settings.default_region", req.body.region, "", req);
       return { region: req.body.region };
+    },
+  );
+
+  // Segurança do acesso SSH/SFTP: desconexão por inatividade (0 = desativado).
+  app.get(
+    "/admin/ssh-security",
+    { schema: { response: { 200: sshSecuritySettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ idleTimeoutSeconds: number }> => {
+      await requireAdmin(req);
+      const rows = await db.select({ v: platformSettings.sshIdleTimeoutSeconds }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1);
+      return { idleTimeoutSeconds: rows[0]?.v ?? 900 };
+    },
+  );
+  app.put(
+    "/admin/ssh-security",
+    { schema: { body: setSshSecurityInput, response: { 200: sshSecuritySettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ idleTimeoutSeconds: number }> => {
+      const actor = await requireAdmin(req);
+      await db.insert(platformSettings).values({ id: 1 }).onConflictDoNothing();
+      await db.update(platformSettings).set({ sshIdleTimeoutSeconds: req.body.idleTimeoutSeconds }).where(eq(platformSettings.id, 1));
+      await recordAudit(actor, "settings.ssh_idle_timeout", String(req.body.idleTimeoutSeconds), "", req);
+      return { idleTimeoutSeconds: req.body.idleTimeoutSeconds };
     },
   );
 

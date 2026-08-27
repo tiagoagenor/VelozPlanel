@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { timingSafeEqual } from "node:crypto";
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client";
-import { sshConfigs, sshKeys, sftpConfigs, environments, envTypes, envAddresses } from "../db/schema";
+import { sshConfigs, sshKeys, sftpConfigs, environments, envTypes, envAddresses, platformSettings } from "../db/schema";
 import { hashPassword, verifyPassword } from "../auth";
 import { allocateAddress, releaseAddresses } from "../ipam";
 import { agentUrlForEnv } from "../nodes";
@@ -139,6 +139,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       const et = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
       if (et[0] && et[0].category !== "app") workdir = "/";
     }
+    // Timeout de inatividade global (super admin). O gateway lê a cada login.
+    const ps = await db.select({ v: platformSettings.sshIdleTimeoutSeconds }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1);
     return {
       enabled: cfg.enabled,
       username: cfg.username,
@@ -148,6 +150,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       accessScope: cfg.accessScope,
       allowlist: Array.isArray(cfg.allowlist) ? (cfg.allowlist as string[]) : [],
       keys: keys.map((k) => k.publicKey),
+      idleTimeoutSeconds: ps[0]?.v ?? 900,
     };
   });
 

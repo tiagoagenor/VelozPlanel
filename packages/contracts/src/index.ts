@@ -655,6 +655,12 @@ export type RegionOption = z.infer<typeof regionOption>;
 export const setDefaultRegionInput = z.object({ region: z.string().min(1).max(64) });
 export type SetDefaultRegionInput = z.infer<typeof setDefaultRegionInput>;
 
+/** Segurança do acesso SSH/SFTP (super admin). idleTimeoutSeconds: 0 = desativado. */
+export const sshSecuritySettings = z.object({ idleTimeoutSeconds: z.number().int().min(0).max(86400) });
+export type SshSecuritySettings = z.infer<typeof sshSecuritySettings>;
+export const setSshSecurityInput = z.object({ idleTimeoutSeconds: z.number().int().min(0).max(86400) });
+export type SetSshSecurityInput = z.infer<typeof setSshSecurityInput>;
+
 /* ─────────────── Métricas ─────────────── */
 
 export const metricSample = z.object({

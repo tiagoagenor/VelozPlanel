@@ -799,6 +799,13 @@ export function setDefaultRegion(region: string): Promise<{ region: string }> {
   return request<{ region: string }>("/admin/default-region", { method: "PUT", body: { region } });
 }
 
+export function getSshSecurity(): Promise<{ idleTimeoutSeconds: number }> {
+  return request<{ idleTimeoutSeconds: number }>("/admin/ssh-security");
+}
+export function setSshIdleTimeout(idleTimeoutSeconds: number): Promise<{ idleTimeoutSeconds: number }> {
+  return request<{ idleTimeoutSeconds: number }>("/admin/ssh-security", { method: "PUT", body: { idleTimeoutSeconds } });
+}
+
 /* ── Auditoria ── */
 
 export function listAudit(limit = 200): Promise<AuditEntry[]> {

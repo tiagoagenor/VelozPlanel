@@ -66,6 +66,7 @@ export default function AdminNodesPage() {
       </header>
 
       <DefaultRegionCard />
+      <SshSecurityCard />
 
       {nodesQuery.isPending ? (
         <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
@@ -427,6 +428,67 @@ function DefaultRegionCard() {
             </option>
           ))}
         </select>
+      </div>
+    </Card>
+  );
+}
+
+/** Desconexão automática do SSH por inatividade (super admin). 0 = desativado. */
+function SshSecurityCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["ssh-security"], queryFn: api.getSshSecurity });
+  // Editado em MINUTOS (mais amigável); guardado em segundos.
+  const [minutes, setMinutes] = React.useState<string>("");
+  React.useEffect(() => {
+    if (q.data) setMinutes(String(Math.round((q.data.idleTimeoutSeconds ?? 0) / 60)));
+  }, [q.data]);
+
+  const currentMin = q.data ? Math.round((q.data.idleTimeoutSeconds ?? 0) / 60) : null;
+  const parsed = Number(minutes);
+  const valid = minutes.trim() !== "" && Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0 && parsed <= 1440;
+  const dirty = valid && currentMin !== null && parsed !== currentMin;
+
+  const save = useMutation({
+    mutationFn: () => api.setSshIdleTimeout(parsed * 60),
+    onSuccess: (r) => {
+      qc.setQueryData(["ssh-security"], r);
+      toast.show("success", r.idleTimeoutSeconds === 0 ? "Desconexão por inatividade desativada." : `Desconecta após ${Math.round(r.idleTimeoutSeconds / 60)} min de inatividade.`);
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
+  });
+
+  return (
+    <Card className="mb-6 flex flex-col gap-3">
+      <div>
+        <h2 className="vp-accent-bar text-base font-semibold text-text">Segurança do acesso SSH</h2>
+        <p className="mt-0.5 text-sm text-text2">
+          Desconecta a sessão SSH do cliente após um tempo <strong>sem atividade</strong> (sem digitar
+          nem receber saída). Vale para <strong>novas conexões</strong>. Use <code>0</code> para desativar.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="ssh-idle">Inatividade até desconectar (minutos)</Label>
+          <Input
+            id="ssh-idle"
+            type="number"
+            min={0}
+            max={1440}
+            step={1}
+            inputMode="numeric"
+            className="w-40"
+            value={minutes}
+            disabled={q.isPending || save.isPending}
+            onChange={(e) => setMinutes(e.target.value)}
+          />
+        </div>
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+        <span className="pb-2 text-sm text-text3">
+          {currentMin === null ? "" : currentMin === 0 ? "Atual: desativado." : `Atual: ${currentMin} min.`}
+        </span>
       </div>
     </Card>
   );

@@ -476,6 +476,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS domain_price_month_cents integer NOT NULL DEFAULT 100`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS default_region text`;
   await sql`UPDATE platform_settings SET default_region='local' WHERE default_region IS NULL`;
+  await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS ssh_idle_timeout_seconds integer NOT NULL DEFAULT 900`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_vcpu_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_ram_gb_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_disk_gb_month_cents integer NOT NULL DEFAULT 25`;
