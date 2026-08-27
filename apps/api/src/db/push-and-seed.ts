@@ -240,6 +240,7 @@ async function createSchema(): Promise<void> {
   `;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_vars_env_key_idx ON env_vars(env_id, key)`;
   await sql`ALTER TABLE env_vars ALTER COLUMN build_time SET DEFAULT true`; // toda var = build por padrão
+  await sql`ALTER TABLE env_vars ADD COLUMN IF NOT EXISTS hidden boolean NOT NULL DEFAULT false`;
 
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`;
 

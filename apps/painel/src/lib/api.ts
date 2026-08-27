@@ -570,8 +570,8 @@ export function getEnvVars(id: string): Promise<EnvVarsConfig> {
 export function setEnvVars(id: string, input: SetEnvVarsInput): Promise<EnvVarsConfig> {
   return request<EnvVarsConfig>(`/environments/${id}/env-vars`, { method: "PUT", body: input });
 }
-export function revealEnvVars(id: string): Promise<{ vars: { key: string; value: string; buildTime: boolean }[] }> {
-  return request<{ vars: { key: string; value: string; buildTime: boolean }[] }>(`/environments/${id}/env-vars/reveal`, { method: "POST" });
+export function revealEnvVars(id: string): Promise<{ vars: { key: string; value: string; buildTime: boolean; hidden: boolean }[] }> {
+  return request<{ vars: { key: string; value: string; buildTime: boolean; hidden: boolean }[] }>(`/environments/${id}/env-vars/reveal`, { method: "POST" });
 }
 
 /* ─────────────── Métricas ─────────────── */

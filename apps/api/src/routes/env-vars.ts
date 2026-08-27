@@ -34,7 +34,7 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
       return {
-        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask() })),
+        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask(), hidden: r.hidden })),
         applied: true,
         message: null,
       };
@@ -58,7 +58,7 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
         const enc = v.value !== undefined
           ? encryptSecret(v.value)
           : (exByKey.get(v.key)?.valueEncrypted ?? encryptSecret(""));
-        return { envId: env.id, key: v.key, valueEncrypted: enc, buildTime: v.buildTime ?? true };
+        return { envId: env.id, key: v.key, valueEncrypted: enc, buildTime: v.buildTime ?? true, hidden: v.hidden ?? false };
       });
 
       await db.delete(envVars).where(eq(envVars.envId, env.id));
@@ -84,7 +84,7 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       }
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
       return {
-        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask() })),
+        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask(), hidden: r.hidden })),
         applied,
         message,
       };
@@ -94,14 +94,15 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /reveal — devolve os valores em texto UMA vez (no-store, sem cache).
   app.post(
     "/environments/:id/env-vars/reveal",
-    { schema: { params: idParams, response: { 200: z.object({ vars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean() })) }), 401: apiError, 403: apiError, 404: apiError } } },
+    { schema: { params: idParams, response: { 200: z.object({ vars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean(), hidden: z.boolean() })) }), 401: apiError, 403: apiError, 404: apiError } } },
     async (req, reply) => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       reply.header("cache-control", "no-store");
       reply.header("pragma", "no-cache");
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
-      return { vars: rows.map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted), buildTime: r.buildTime })) };
+      // Escondida: o valor NUNCA sai do servidor (só é visto de dentro do container).
+      return { vars: rows.map((r) => ({ key: r.key, value: r.hidden ? "" : decryptSecret(r.valueEncrypted), buildTime: r.buildTime, hidden: r.hidden })) };
     },
   );
 }

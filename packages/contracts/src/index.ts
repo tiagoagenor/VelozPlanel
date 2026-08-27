@@ -522,6 +522,7 @@ export const envVar = z.object({
   buildTime: z.boolean(),
   hasValue: z.boolean(),
   valueMasked: z.string(),
+  hidden: z.boolean(), // escondida = valor NUNCA sai do servidor (só se vê no container)
 });
 export type EnvVar = z.infer<typeof envVar>;
 
@@ -540,6 +541,7 @@ export const setEnvVarsInput = z.object({
           ),
         value: z.string().max(32768).optional(), // omitido = mantém o valor atual (não altera o segredo)
         buildTime: z.boolean().default(true),
+        hidden: z.boolean().default(false), // esconder o valor de vez (não revelável no painel)
       }),
     )
     .max(100),
