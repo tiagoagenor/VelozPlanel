@@ -742,7 +742,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         .where(eq(environments.id, env.id))
         .returning();
       const row = updated[0] ?? env;
-      if (row.containerId && row.state === "running") {
+      if ((req.body.apply ?? true) && row.containerId && row.state === "running") {
         const agentUrl = await agentUrlForEnv(row);
         try {
           await agent.applyPythonCmd(agentUrl, row.containerId, cmd);
@@ -778,7 +778,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         .where(eq(environments.id, env.id))
         .returning();
       const row = updated[0] ?? env;
-      if (row.containerId && row.state === "running") {
+      if ((req.body.apply ?? true) && row.containerId && row.state === "running") {
         const agentUrl = await agentUrlForEnv(row);
         try {
           await agent.applyDotnetCmd(agentUrl, row.containerId, cmd);

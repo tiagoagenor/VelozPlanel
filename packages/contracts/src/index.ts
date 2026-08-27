@@ -278,12 +278,14 @@ export type SetNodeStartFileInput = z.infer<typeof setNodeStartFileInput>;
 /** Define/limpa o comando avançado de start do Python (Django/gunicorn). "" limpa. */
 export const setPythonCmdInput = z.object({
   cmd: z.string().max(500).nullable(),
+  apply: z.boolean().optional().default(true), // false = só salva (aplica no próximo deploy)
 });
 export type SetPythonCmdInput = z.infer<typeof setPythonCmdInput>;
 
 /** Define/limpa o comando avançado de start do .NET (ex.: dotnet App.dll). "" limpa. */
 export const setDotnetCmdInput = z.object({
   cmd: z.string().max(500).nullable(),
+  apply: z.boolean().optional().default(true), // false = só salva (aplica no próximo deploy)
 });
 export type SetDotnetCmdInput = z.infer<typeof setDotnetCmdInput>;
 

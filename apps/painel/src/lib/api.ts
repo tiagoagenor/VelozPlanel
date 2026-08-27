@@ -354,18 +354,18 @@ export function setNodeStartFile(
 }
 
 /** Define/limpa o comando de start avançado do Python (Django); aplica ao vivo. */
-export function setPythonCmd(id: string, cmd: string | null): Promise<Environment> {
+export function setPythonCmd(id: string, cmd: string | null, apply = true): Promise<Environment> {
   return request<Environment>(`/environments/${id}/python-cmd`, {
     method: "POST",
-    body: { cmd },
+    body: { cmd, apply },
   });
 }
 
 /** Define/limpa o comando avançado de start do .NET (dotnet App.dll). Aplica ao vivo. */
-export function setDotnetCmd(id: string, cmd: string | null): Promise<Environment> {
+export function setDotnetCmd(id: string, cmd: string | null, apply = true): Promise<Environment> {
   return request<Environment>(`/environments/${id}/dotnet-cmd`, {
     method: "POST",
-    body: { cmd },
+    body: { cmd, apply },
   });
 }
 

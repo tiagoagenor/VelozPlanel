@@ -9,7 +9,7 @@ import {
   CheckCircle2, XCircle, Info, ArrowRight, ArrowLeft, Sparkles, Boxes, Pencil, RefreshCw, AlertTriangle, Trash2,
 } from "lucide-react";
 import { RUNTIME_LABEL } from "@velozplanel/contracts";
-import type { DeployConfig, DeployFramework } from "@velozplanel/contracts";
+import type { DeployConfig, DeployFramework, Environment } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -306,6 +306,14 @@ export default function DeployPage() {
           </Button>
         </div>
       </div></Card>
+
+      {/* Comando de start avançado — só salva; aplica no próximo deploy */}
+      {lang === "python" && envQ.data ? (
+        <PythonStartCmdCard id={id} current={envQ.data.pythonCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
+      ) : null}
+      {lang === "dotnet" && envQ.data ? (
+        <DotnetStartCmdCard id={id} current={envQ.data.dotnetCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
+      ) : null}
 
       {/* CONEXÃO (editável) */}
       <Card><div className="flex flex-col gap-3">
@@ -606,5 +614,91 @@ export default function DeployPage() {
         </div>
       </Dialog>
     </div>
+  );
+}
+
+/** Comando de start avançado (Python/Django) — SÓ SALVA; aplica no próximo deploy. */
+function PythonStartCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
+  const toast = useToast();
+  const [cmd, setCmd] = React.useState<string>(current ?? "");
+  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
+  const dirty = cmd !== (current ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setPythonCmd(id, cmd.trim() === "" ? null : cmd.trim(), false),
+    onSuccess: (u) => {
+      onSaved(u);
+      toast.show("success", u.pythonCmd ? "Comando salvo — vale no próximo deploy." : "Comando removido — volta ao padrão python3 <arquivo>.");
+    },
+    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
+  });
+  return (
+    <Card><div className="flex flex-col gap-3">
+      <h3 className="vp-accent-bar flex items-center gap-2 font-semibold text-text">Comando de start (avançado)</h3>
+      <p className="text-sm text-text2">
+        Para frameworks como <strong>Django</strong>: o comando que sobe o servidor na porta 80.
+        Deixe vazio para o padrão <code>python3 {"{arquivo de start}"}</code>. É aplicado no <strong>próximo deploy</strong>.
+      </p>
+      <input
+        value={cmd}
+        onChange={(e) => setCmd(e.target.value)}
+        spellCheck={false}
+        aria-label="Comando de start avançado do Python"
+        placeholder="python manage.py runserver 0.0.0.0:80 --insecure --noreload"
+        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+        <span className="text-sm text-text3">Só salva — vale a partir do próximo deploy.</span>
+      </div>
+    </div></Card>
+  );
+}
+
+/** Comando de start avançado (.NET) — SÓ SALVA; aplica no próximo deploy. */
+function DotnetStartCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
+  const toast = useToast();
+  const effQ = useQuery({ queryKey: ["dotnet-eff", id], queryFn: () => api.getDotnetEffectiveCmd(id) });
+  const effective = effQ.data?.cmd ?? "";
+  const baseline = current ?? effective;
+  const [cmd, setCmd] = React.useState<string>("");
+  const [touched, setTouched] = React.useState(false);
+  React.useEffect(() => { if (!touched) setCmd(baseline); }, [baseline, touched]);
+  const dirty = touched && cmd.trim() !== baseline.trim();
+  const save = useMutation({
+    mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim(), false),
+    onSuccess: (u) => {
+      setTouched(false);
+      onSaved(u);
+      toast.show("success", u.dotnetCmd ? "Comando salvo — vale no próximo deploy." : "Comando removido — volta ao automático.");
+    },
+    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
+  });
+  const isOverride = !!(current && current.trim());
+  return (
+    <Card><div className="flex flex-col gap-3">
+      <h3 className="vp-accent-bar flex items-center gap-2 font-semibold text-text">Comando de start (avançado)</h3>
+      <p className="text-sm text-text2">
+        {isOverride
+          ? <>Comando <strong>fixo</strong> definido por você. Edite abaixo, ou apague e salve para voltar ao automático.</>
+          : <>Modo <strong>automático</strong>: o campo mostra o comando que o ambiente roda hoje. Edite para fixar o seu (ex.: outro nome de DLL). Sobe na porta 80.</>}
+        {" "}É aplicado no <strong>próximo deploy</strong>.
+      </p>
+      <input
+        value={effQ.isPending && !touched ? "" : cmd}
+        onChange={(e) => { setTouched(true); setCmd(e.target.value); }}
+        spellCheck={false}
+        aria-label="Comando de start avançado do .NET"
+        placeholder={effQ.isPending ? "carregando…" : "dotnet app.dll"}
+        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+        <span className="text-sm text-text3">Só salva — vale a partir do próximo deploy.</span>
+      </div>
+    </div></Card>
   );
 }
