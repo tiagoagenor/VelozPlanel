@@ -53,6 +53,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Rotas /env/[id]/* ganham o submenu branco FIXO (2ª coluna colada no rail).
   // Só elas: as demais telas mantêm o <main> centralizado (max-w-1320).
   const isEnv = /^\/env\/[^/]+/.test(pathname);
+  // O Data Studio (IDE estilo DBeaver) ocupa a área toda: sem submenu, sem padding.
+  const isStudio = /^\/env\/[^/]+\/studio(\/|$)/.test(pathname);
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -82,7 +84,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : null}
 
         <main id="conteudo" className="min-w-0 flex-1">
-          {isEnv ? (
+          {isStudio ? (
+            // IDE full-bleed: altura toda abaixo do topbar, sem padding nem submenu.
+            <div className="h-[calc(100vh-4rem)] w-full overflow-hidden">{children}</div>
+          ) : isEnv ? (
             // Full-bleed: sem centralização. O padding-esquerdo (não margin) reserva
             // a faixa do submenu branco fixo (246px) + goteira. O submenu vive na env layout.
             <div className="w-full px-5 py-8 sm:px-6 lg:py-8 lg:pr-10 lg:pl-[calc(var(--vp-submenu-w)+2.5rem)]">

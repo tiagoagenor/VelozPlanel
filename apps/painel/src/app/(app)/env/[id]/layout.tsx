@@ -177,6 +177,10 @@ export default function EnvContextLayout({
   const transitioning = env?.state === "provisioning" || env?.state === "deleting";
   const busy = pause.isPending || start.isPending || remove.isPending || transitioning;
 
+  // Data Studio (IDE): ocupa a área toda — sem submenu de seções nem cabeçalho.
+  // O "Voltar para ambiente" e o chrome ficam por conta da própria página do Studio.
+  if (currentSeg === "studio") return <>{children}</>;
+
   return (
     <>
       {/* Mobile: submenu empilhado acima do conteúdo. Desktop: submenu é `fixed`

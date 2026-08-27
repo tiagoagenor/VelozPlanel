@@ -6,6 +6,8 @@ import type {
   DatabaseWithSecret,
   DbStudioConfig,
   DbResult,
+  DbSchema,
+  DbTableMeta,
   DbRunSqlInput,
   DbRunMongoInput,
   DbRunRedisInput,
@@ -253,10 +255,32 @@ export function setStudioPassword(id: string, password: string | null): Promise<
 export function unlockStudio(id: string, password: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/environments/${id}/studio/unlock`, { method: "POST", body: { password } });
 }
+/**
+ * O agente executa 1 consulta por ambiente de cada vez (lock; paralelo → 429 db_busy).
+ * Serializa TODAS as chamadas do Studio de um mesmo ambiente numa fila FIFO por id,
+ * para o react-query poder disparar schema/dados/contagem/metadados sem colidir.
+ */
+const studioChains = new Map<string, Promise<unknown>>();
+function studioSerialize<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = studioChains.get(id) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // roda fn independente do resultado anterior
+  studioChains.set(id, run.catch(() => {}));
+  return run;
+}
+
 export function studioExec(id: string, body: DbStudioExecBody): Promise<DbResult> {
-  return request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body });
+  return studioSerialize(id, () => request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body }));
 }
 export type DbStudioExecBody = { sql: DbRunSqlInput } | { mongo: DbRunMongoInput } | { redis: DbRunRedisInput };
+
+/** Introspecção de schema (IDE): lista tabelas/views + versão. */
+export function getStudioSchema(id: string): Promise<DbSchema> {
+  return studioSerialize(id, () => request<DbSchema>(`/environments/${id}/studio/schema`));
+}
+/** Metadados de uma tabela (colunas, PK, índices, FKs, triggers, DDL). */
+export function getStudioTable(id: string, name: string): Promise<DbTableMeta> {
+  return studioSerialize(id, () => request<DbTableMeta>(`/environments/${id}/studio/table/${encodeURIComponent(name)}`));
+}
 
 export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
@@ -761,6 +785,13 @@ export function changeResources(
   return request<AdminEnvironment>(`/admin/environments/${id}/resources`, {
     method: "POST",
     body: input,
+  });
+}
+
+export function grantSubdomainChanges(id: string, count: number): Promise<AdminEnvironment> {
+  return request<AdminEnvironment>(`/admin/environments/${id}/subdomain-grant`, {
+    method: "POST",
+    body: { count },
   });
 }
 

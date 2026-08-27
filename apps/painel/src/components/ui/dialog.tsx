@@ -11,6 +11,14 @@ export interface DialogProps {
   description?: string;
   children: React.ReactNode;
   className?: string;
+  /** Classe de largura (sobrescreve o padrão). Ex.: "w-[min(94vw,44rem)]". */
+  widthClass?: string;
+  /**
+   * true (padrão): o modal inteiro rola. false: o modal vira uma coluna flex de
+   * altura fixa e NÃO rola — o conteúdo (children) gerencia o próprio scroll
+   * (para topo/rodapé fixos e só o miolo rolando).
+   */
+  scrollBody?: boolean;
 }
 
 /**
@@ -25,6 +33,8 @@ export function Dialog({
   description,
   children,
   className,
+  widthClass = "w-[min(92vw,32rem)]",
+  scrollBody = true,
 }: DialogProps) {
   const ref = React.useRef<HTMLDialogElement>(null);
   const titleId = React.useId();
@@ -56,7 +66,9 @@ export function Dialog({
       onCancel={onClose}
       onClick={onClick}
       className={cn(
-        "vp-pop-shadow m-auto max-h-[92vh] w-[min(92vw,32rem)] overflow-y-auto rounded-xl border border-border-subtle bg-elevated p-6 text-text",
+        "vp-pop-shadow m-auto rounded-xl border border-border-subtle bg-elevated p-6 text-text",
+        widthClass,
+        scrollBody ? "max-h-[92vh] overflow-y-auto" : "flex h-[min(90vh,680px)] max-h-[92vh] flex-col overflow-hidden",
         "backdrop:bg-[#1b1730]/45 backdrop:backdrop-blur-sm",
         className,
       )}
