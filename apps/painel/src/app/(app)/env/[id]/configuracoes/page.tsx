@@ -343,7 +343,9 @@ export default function EnvSettingsPage() {
         </Card>
       )}
 
-      {/* Comandos de inicialização */}
+      {/* Comandos de inicialização — só apps: em serviços (mysql/postgres/…) o
+          container usa o entrypoint da imagem oficial e o script nunca roda. */}
+      {isApp ? (
       <Card>
         <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
           Comandos de inicialização
@@ -387,6 +389,7 @@ export default function EnvSettingsPage() {
           </span>
         </div>
       </Card>
+      ) : null}
 
       <Dialog
         open={recreateOpen}
