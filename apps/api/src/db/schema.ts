@@ -479,6 +479,7 @@ export const platformSettings = pgTable("platform_settings", {
   // ao deletar (protege delete acidental/instantâneo). 0 = sem cortesia.
   billingFreeMinutes: integer("billing_free_minutes").notNull().default(1),
   suspendOnZero: boolean("suspend_on_zero").notNull().default(true),
+  defaultRegion: text("default_region"), // região pré-selecionada no wizard de criação (super admin)
   domainPriceMonthCents: integer("domain_price_month_cents").notNull().default(100), // R$1,00/domínio/mês
   // Taxas por recurso — alimentam a calculadora "Calcular pela taxa" dos planos.
   // NÃO entram na cobrança (a cobrança usa o preço gravado do plano). Exceção:

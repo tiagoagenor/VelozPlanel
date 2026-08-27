@@ -65,6 +65,8 @@ export default function AdminNodesPage() {
         </p>
       </header>
 
+      <DefaultRegionCard />
+
       {nodesQuery.isPending ? (
         <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
       ) : nodesQuery.isError ? (
@@ -359,5 +361,50 @@ function EditPublicHostDialog({
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** Super admin escolhe a região pré-selecionada no wizard de criar ambiente. */
+function DefaultRegionCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const regionsQuery = useQuery({ queryKey: ["regions"], queryFn: api.listRegions });
+  const regions = regionsQuery.data ?? [];
+  const current = regions.find((r) => r.isDefault)?.region ?? "";
+
+  const save = useMutation({
+    mutationFn: (region: string) => api.setDefaultRegion(region),
+    onSuccess: (_r, region) => {
+      qc.invalidateQueries({ queryKey: ["regions"] });
+      toast.show("success", `Região padrão: ${region}.`);
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
+  });
+
+  return (
+    <Card className="mb-6 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="vp-accent-bar text-base font-semibold text-text">Região padrão</h2>
+          <p className="mt-0.5 text-sm text-text2">
+            Região já selecionada no wizard de criar ambiente (o cliente pode trocar).
+          </p>
+        </div>
+        <select
+          value={current}
+          disabled={regionsQuery.isPending || save.isPending || regions.length === 0}
+          onChange={(e) => save.mutate(e.target.value)}
+          aria-label="Região padrão"
+          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-brand-strong"
+        >
+          {regions.length === 0 ? <option value="">—</option> : null}
+          {regions.map((r) => (
+            <option key={r.region} value={r.region}>
+              {r.region}{r.online ? "" : " (offline)"}
+            </option>
+          ))}
+        </select>
+      </div>
+    </Card>
   );
 }

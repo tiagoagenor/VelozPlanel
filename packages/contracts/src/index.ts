@@ -642,8 +642,13 @@ export const regionOption = z.object({
   region: z.string(),
   alert: z.string().nullable(), // aviso do super admin (ex.: "instável")
   online: z.boolean(), // há nó online com Agente nessa região
+  isDefault: z.boolean(), // região pré-selecionada no wizard (definida pelo super admin)
 });
 export type RegionOption = z.infer<typeof regionOption>;
+
+/** Super admin define a região pré-selecionada no wizard de criar ambiente. */
+export const setDefaultRegionInput = z.object({ region: z.string().min(1).max(64) });
+export type SetDefaultRegionInput = z.infer<typeof setDefaultRegionInput>;
 
 /* ─────────────── Métricas ─────────────── */
 

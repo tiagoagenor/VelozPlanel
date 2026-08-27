@@ -90,8 +90,13 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
 
   React.useEffect(() => {
     if (!open || region) return;
-    const firstOnline = regions.find((r) => r.online) ?? regions[0];
-    if (firstOnline) setRegion(firstOnline.region);
+    // Região padrão definida pelo super admin (isDefault); senão a 1ª online.
+    const def =
+      regions.find((r) => r.isDefault && r.online) ??
+      regions.find((r) => r.isDefault) ??
+      regions.find((r) => r.online) ??
+      regions[0];
+    if (def) setRegion(def.region);
   }, [open, regions, region]);
 
   const nameError = nameTouched ? validateName(name) : null;

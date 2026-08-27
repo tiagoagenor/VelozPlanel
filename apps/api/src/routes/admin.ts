@@ -9,6 +9,7 @@ import {
   adminEnvironment as adminEnvSchema,
   resourceChangeInput,
   grantSubdomainChangesInput,
+  setDefaultRegionInput,
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
@@ -335,6 +336,19 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       const updated = list.find((e) => e.id === env.id);
       if (!updated) throw new ApiHttpError(500, "internal_error", "erro ao recarregar ambiente");
       return updated;
+    },
+  );
+
+  // Define a região pré-selecionada no wizard de criar ambiente.
+  app.put(
+    "/admin/default-region",
+    { schema: { body: setDefaultRegionInput, response: { 200: z.object({ region: z.string() }), 401: apiError, 403: apiError } } },
+    async (req): Promise<{ region: string }> => {
+      const actor = await requireAdmin(req);
+      await db.insert(platformSettings).values({ id: 1 }).onConflictDoNothing();
+      await db.update(platformSettings).set({ defaultRegion: req.body.region }).where(eq(platformSettings.id, 1));
+      await recordAudit(actor, "settings.default_region", req.body.region, "", req);
+      return { region: req.body.region };
     },
   );
 

@@ -795,6 +795,10 @@ export function grantSubdomainChanges(id: string, count: number): Promise<AdminE
   });
 }
 
+export function setDefaultRegion(region: string): Promise<{ region: string }> {
+  return request<{ region: string }>("/admin/default-region", { method: "PUT", body: { region } });
+}
+
 /* ── Auditoria ── */
 
 export function listAudit(limit = 200): Promise<AuditEntry[]> {
