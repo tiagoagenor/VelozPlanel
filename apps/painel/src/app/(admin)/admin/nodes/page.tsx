@@ -224,6 +224,7 @@ function EditPublicHostDialog({
   const [value, setValue] = React.useState("");
   const [httpValue, setHttpValue] = React.useState("");
   const [alertValue, setAlertValue] = React.useState("");
+  const [regionValue, setRegionValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
   // Pré-preenche com o valor atual sempre que abrir para um nó.
@@ -232,15 +233,17 @@ function EditPublicHostDialog({
       setValue(node.publicHost ?? "");
       setHttpValue(node.httpHost ?? "");
       setAlertValue(node.alertMessage ?? "");
+      setRegionValue(node.region ?? "");
       setError(null);
     }
   }, [node]);
 
   const mutation = useMutation({
-    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null }) =>
+    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null; region?: string }) =>
       api.updateNode(node!.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      qc.invalidateQueries({ queryKey: ["regions"] });
       toast.show("success", "Nó atualizado.");
       onClose();
     },
@@ -258,10 +261,13 @@ function EditPublicHostDialog({
     const pub = value.trim();
     const http = httpValue.trim();
     const alert = alertValue.trim();
+    const region = regionValue.trim();
+    if (region === "") { setError("A região não pode ficar vazia."); return; }
     const patch = {
       publicHost: pub === "" ? null : pub,
       httpHost: http === "" ? null : http,
       alertMessage: alert === "" ? null : alert,
+      region,
     };
     const parsed = updateNodeInput.safeParse(patch);
     if (!parsed.success) {
@@ -275,6 +281,7 @@ function EditPublicHostDialog({
       publicHost: parsed.data.publicHost ?? null,
       httpHost: parsed.data.httpHost ?? null,
       alertMessage: parsed.data.alertMessage ?? null,
+      region: parsed.data.region,
     });
   }
 
@@ -288,6 +295,22 @@ function EditPublicHostDialog({
       description={PUBLIC_HOST_HELP}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="node-region">Região</Label>
+          <Input
+            id="node-region"
+            value={regionValue}
+            onChange={(e) => setRegionValue(e.target.value)}
+            placeholder="ex.: local, ca, São Paulo"
+            aria-describedby="node-region-help"
+            autoComplete="off"
+          />
+          <p id="node-region-help" className="text-xs text-text3">
+            Nome mostrado no seletor ao criar ambiente. Se renomear a região que é
+            a padrão, a padrão acompanha o novo nome.
+          </p>
+        </div>
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="node-public-host">Host público (SSH/SFTP, DNS)</Label>
           <Input

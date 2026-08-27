@@ -634,6 +634,7 @@ export const updateNodeInput = z.object({
     .nullable()
     .optional(),
   alertMessage: z.string().max(500).nullable().optional(),
+  region: z.string().trim().min(1).max(64).optional(), // nome da região (rótulo/chave)
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
 

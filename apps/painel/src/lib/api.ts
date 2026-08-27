@@ -204,7 +204,7 @@ export function listNodes(): Promise<Node[]> {
  */
 export function updateNode(
   id: string,
-  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null },
+  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null; region?: string },
 ): Promise<Node> {
   return request<Node>(`/nodes/${id}`, {
     method: "PATCH",
