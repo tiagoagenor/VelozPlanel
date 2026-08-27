@@ -70,7 +70,7 @@ export default function EnvDomainPage() {
         <p className="mt-1 text-sm text-text2">Domínios e subdomínios que abrem o ambiente {env?.name ? <strong>{env.name}</strong> : "atual"}.</p>
       </header>
 
-      {env?.autoSubdomain ? <SubdomainCard id={id} sub={env.autoSubdomain} /> : null}
+      {env?.autoSubdomain ? <SubdomainCard id={id} sub={env.autoSubdomain} changesLeft={env.subdomainChangesLeft} /> : null}
 
       {/* Lista de domínios apontando para este ambiente */}
       {pointsQuery.isPending ? (
@@ -168,7 +168,7 @@ export default function EnvDomainPage() {
 }
 
 /** Card do endereço temporário <sub>.jamees.top — editável pelo cliente. */
-function SubdomainCard({ id, sub }: { id: string; sub: string }) {
+function SubdomainCard({ id, sub, changesLeft }: { id: string; sub: string; changesLeft: number }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [editing, setEditing] = React.useState(false);
@@ -198,7 +198,7 @@ function SubdomainCard({ id, sub }: { id: string; sub: string }) {
       <div className="flex items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-text"><Globe size={15} className="text-brand-strong" /> Endereço temporário</h3>
         {!editing ? (
-          <Button variant="ghost" size="sm" onClick={() => { setEditing(true); setError(null); }}><Pencil size={14} /> Personalizar</Button>
+          <Button variant="ghost" size="sm" disabled={changesLeft <= 0} onClick={() => { setEditing(true); setError(null); }} title={changesLeft <= 0 ? "Você já personalizou este endereço. Peça ao suporte para liberar uma nova troca." : undefined}><Pencil size={14} /> Personalizar</Button>
         ) : null}
       </div>
 
@@ -227,7 +227,12 @@ function SubdomainCard({ id, sub }: { id: string; sub: string }) {
           </div>
         </form>
       )}
-      <p className="mt-2 text-xs text-text3">Endereço automático do ambiente. Um domínio próprio (abaixo) tem prioridade quando configurado.</p>
+      <p className="mt-2 text-xs text-text3">
+        Endereço automático do ambiente. Um domínio próprio (abaixo) tem prioridade quando configurado.
+        {changesLeft <= 0
+          ? " Você já usou sua troca de endereço — peça ao suporte para liberar uma nova."
+          : ` Você ainda pode trocar o endereço ${changesLeft} ${changesLeft === 1 ? "vez" : "vezes"}.`}
+      </p>
     </Card>
   );
 }

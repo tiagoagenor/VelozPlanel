@@ -67,6 +67,7 @@ export const environments = pgTable("environments", {
   httpPort: integer("http_port"),
   domain: text("domain"),
   autoSubdomain: text("auto_subdomain"), // endereço temporário <sub>.jamees.top (único)
+  subdomainChangesLeft: integer("subdomain_changes_left").notNull().default(1), // quantas vezes o cliente ainda pode trocar o subdomínio; admin libera mais
   vcpuOverride: doublePrecision("vcpu_override"), // admin alterou vCPU (senão usa o do plano)
   memMbOverride: integer("mem_mb_override"), // admin alterou RAM
   lastChargedAt: timestamp("last_charged_at", { withTimezone: true }), // último débito de cobrança

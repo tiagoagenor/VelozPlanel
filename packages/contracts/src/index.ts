@@ -229,6 +229,7 @@ export const environment = z.object({
   httpPort: z.number().int().nullable(), // porta publicada no host de dev
   domain: z.string().nullable(), // domínio próprio configurado pelo cliente
   autoSubdomain: z.string().nullable(), // endereço temporário <sub>.jamees.top
+  subdomainChangesLeft: z.number().int(), // quantas vezes o cliente ainda pode trocar o subdomínio (0 = travado até o admin liberar)
   runtimeVersionFull: z.string().nullable(), // versão real resolvida no container (ex.: 24.19.0)
   startupScript: z.string().nullable(), // comandos rodados 1x na criação do container
   nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node/Python (server.js/app.py); null = default
@@ -1011,8 +1012,15 @@ export const adminEnvironment = z.object({
   runtime: runtimeSpec,
   state: envState,
   createdAt: z.string().datetime(),
+  subdomainChangesLeft: z.number().int(), // trocas de subdomínio ainda disponíveis
 });
 export type AdminEnvironment = z.infer<typeof adminEnvironment>;
+
+/** Admin libera N trocas adicionais de subdomínio para um ambiente. */
+export const grantSubdomainChangesInput = z.object({
+  count: z.number().int().min(1).max(20),
+});
+export type GrantSubdomainChangesInput = z.infer<typeof grantSubdomainChangesInput>;
 
 /** Alterar vCPU/RAM a quente (requisito nº 9) — motivo obrigatório, vai para auditoria. */
 export const resourceChangeInput = z.object({

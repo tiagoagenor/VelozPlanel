@@ -1,13 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { count, eq, desc } from "drizzle-orm";
+import { count, eq, desc, sql } from "drizzle-orm";
 import {
   adminUser as adminUserSchema,
   createUserInput,
   updateUserInput,
   adminEnvironment as adminEnvSchema,
   resourceChangeInput,
+  grantSubdomainChangesInput,
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
@@ -263,6 +264,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
         runtime: { kind: e.runtimeKind as RuntimeKind, version: e.runtimeVersion },
         state: e.state as EnvState,
         createdAt: e.createdAt.toISOString(),
+        subdomainChangesLeft: e.subdomainChangesLeft,
       }));
   };
 
@@ -307,6 +309,28 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
         .set({ vcpuOverride: vcpu, memMbOverride: memMb })
         .where(eq(environments.id, env.id));
       await recordAudit(actor, "env.resources", `${env.name}`, `vcpu=${vcpu} memMb=${memMb} motivo="${reason}"`, req);
+      const list = await listEnvs();
+      const updated = list.find((e) => e.id === env.id);
+      if (!updated) throw new ApiHttpError(500, "internal_error", "erro ao recarregar ambiente");
+      return updated;
+    },
+  );
+
+  // Libera N trocas adicionais de subdomínio para o cliente do ambiente.
+  app.post(
+    "/admin/environments/:id/subdomain-grant",
+    { schema: { params: idParams, body: grantSubdomainChangesInput, response: { 200: adminEnvSchema, 401: apiError, 403: apiError, 404: apiError } } },
+    async (req): Promise<AdminEnvironment> => {
+      const actor = await requireAdmin(req);
+      const rows = await db.select().from(environments).where(eq(environments.id, req.params.id)).limit(1);
+      const env = rows[0];
+      if (!env) throw new ApiHttpError(404, "not_found", "ambiente não encontrado");
+      const { count: n } = req.body;
+      await db
+        .update(environments)
+        .set({ subdomainChangesLeft: sql`${environments.subdomainChangesLeft} + ${n}` })
+        .where(eq(environments.id, env.id));
+      await recordAudit(actor, "env.subdomain_grant", `${env.name}`, `+${n} troca(s) de subdomínio`, req);
       const list = await listEnvs();
       const updated = list.find((e) => e.id === env.id);
       if (!updated) throw new ApiHttpError(500, "internal_error", "erro ao recarregar ambiente");

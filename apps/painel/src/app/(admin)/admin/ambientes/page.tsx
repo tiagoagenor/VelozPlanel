@@ -165,6 +165,17 @@ function ChangeResourcesDialog({
   const [mem, setMem] = React.useState("1024");
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const [grantN, setGrantN] = React.useState("1");
+
+  const grant = useMutation({
+    mutationFn: () => api.grantSubdomainChanges(env!.id, Math.max(1, Number(grantN) || 1)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "environments"] });
+      qc.invalidateQueries({ queryKey: ["admin", "audit"] });
+      toast.show("success", "Troca de subdomínio liberada.");
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao liberar."),
+  });
 
   React.useEffect(() => {
     if (env) {
@@ -246,6 +257,20 @@ function ChangeResourcesDialog({
             quente (sem recriar o container).
           </span>
         </p>
+
+        <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-bg p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium text-text2">Endereço (subdomínio)</span>
+            <span className="text-xs text-text3">Trocas restantes: <strong className="text-text">{env.subdomainChangesLeft}</strong></span>
+          </div>
+          <p className="text-xs text-text3">O cliente pode trocar o subdomínio enquanto tiver trocas. Libere mais aqui.</p>
+          <div className="flex items-center gap-2">
+            <Input type="number" min={1} max={20} value={grantN} onChange={(e) => setGrantN(e.target.value)} className="w-20" />
+            <Button type="button" variant="outline" size="sm" disabled={grant.isPending} onClick={() => grant.mutate()}>
+              {grant.isPending ? "Liberando…" : "Liberar trocas"}
+            </Button>
+          </div>
+        </div>
 
         {error ? (
           <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">

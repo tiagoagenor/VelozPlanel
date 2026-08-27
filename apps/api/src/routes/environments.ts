@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { eq, count, and, isNull } from "drizzle-orm";
+import { eq, count, and, isNull, sql } from "drizzle-orm";
 import {
   environment as environmentSchema,
   createEnvironmentInput,
@@ -121,6 +121,7 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     httpPort: r.httpPort,
     domain: r.domain,
     autoSubdomain: r.autoSubdomain,
+    subdomainChangesLeft: r.subdomainChangesLeft,
     runtimeVersionFull: r.runtimeVersionFull,
     startupScript: r.startupScript,
     nodeStartFile: r.nodeStartFile,
@@ -625,12 +626,21 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const sub = req.body.subdomain; // já normalizado/validado (formato) pelo zod
+      const isAdmin = user.role === "admin";
+      const old = env.autoSubdomain;
+      const changed = (old ?? "").toLowerCase() !== sub.toLowerCase();
+      // Cliente comum só troca enquanto tiver saldo de alterações (admin libera mais).
+      if (changed && !isAdmin && env.subdomainChangesLeft <= 0) {
+        throw new ApiHttpError(403, "subdomain_limit", "Você já personalizou este endereço. Peça ao suporte para liberar uma nova troca.");
+      }
       if (await isSubReserved(sub)) throw new ApiHttpError(409, "subdomain_reserved", `“${sub}” é reservado; escolha outro.`);
       if (await isSubTaken(sub, env.id)) throw new ApiHttpError(409, "subdomain_taken", `“${sub}” já está em uso; escolha outro.`);
-      const old = env.autoSubdomain;
+      const patch: Record<string, unknown> = { autoSubdomain: sub };
+      // Consome 1 alteração só quando um cliente comum de fato muda o valor.
+      if (changed && !isAdmin) patch.subdomainChangesLeft = sql`GREATEST(${environments.subdomainChangesLeft} - 1, 0)`;
       let updated;
       try {
-        updated = await db.update(environments).set({ autoSubdomain: sub }).where(eq(environments.id, env.id)).returning();
+        updated = await db.update(environments).set(patch).where(eq(environments.id, env.id)).returning();
       } catch {
         throw new ApiHttpError(409, "subdomain_taken", "esse subdomínio acabou de ser tomado; tente outro.");
       }
