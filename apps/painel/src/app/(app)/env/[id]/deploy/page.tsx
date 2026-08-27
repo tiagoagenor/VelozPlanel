@@ -505,7 +505,7 @@ export default function DeployPage() {
                         <textarea value={r.command ?? ""} onChange={(e) => setRow(i, { command: e.target.value })} rows={2} spellCheck={false} placeholder="ex.: php artisan queue:restart" className="w-full rounded-lg border border-border bg-surface px-2 py-1 font-mono text-xs" />
                       ) : null}
                       {isAppKind(r.kind) ? (
-                        <p className="text-xs text-text3">Roda no <strong>site</strong> (/var/www ou /app) — a pasta do projeto não se aplica.</p>
+                        <p className="text-xs text-text3">Roda no <strong>site</strong> (/app) — a pasta do projeto não se aplica.</p>
                       ) : (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs text-text3">Pasta:</span>

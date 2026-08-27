@@ -254,7 +254,7 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
     if (agentUrl) {
       await agent.removeVolume(agentUrl, `veloz-data-${target.id}`).catch(() => {});
       await agent.removeVolume(agentUrl, `veloz-deploy-${target.id}`).catch(() => {});
-      await agent.removeVolume(agentUrl, `veloz-code-${target.id}`).catch(() => {}); // python/static
+      await agent.removeVolume(agentUrl, `veloz-code-${target.id}`).catch(() => {}); // código do app em /app (todos os runtimes)
     }
     await releaseAddresses(target.id).catch(() => {});
   }

@@ -21,7 +21,7 @@ export interface RunDeployArgs {
   envId: string;
   image: string; // imagem base do runtime do ambiente (tem git/toolchain)
   appContainerId: string;
-  workdir: string; // /var/www (php) | /app (node)
+  workdir: string; // /app/www (php público) | /app (node/python/static)
   repoUrl: string;
   branch: string;
   steps: DeployStepSpec[];
@@ -429,15 +429,15 @@ function buildScript(args: RunDeployArgs): string {
     );
   } else if (args.framework === "laravel") {
     // Laravel: separa o public/ (docroot) do resto do framework.
-    //   out/www/       = conteúdo do public/  -> /var/www (docroot)
-    //   out/framework/ = repo inteiro          -> /var/projeto-laravel (fora do docroot)
+    //   out/www/       = conteúdo do public/  -> /app/www (docroot público)
+    //   out/framework/ = repo inteiro          -> /app (código, fora do docroot)
     lines.push(
       "mkdir -p /workspace/out/framework /workspace/out/www && " +
         "cp -a . /workspace/out/framework/ && rm -rf /workspace/out/framework/.git && " +
         "cp -a /workspace/out/framework/public/. /workspace/out/www/",
     );
   } else if (args.framework === "spa") {
-    // SPA: só o artefato de build vai para /site. Auto-detecta dist|build|out;
+    // SPA: só o artefato de build vai para /app. Auto-detecta dist|build|out;
     // Angular gera dist/<proj>/ — desce para a subpasta que tem index.html.
     lines.push(
       "OUT=''; for d in dist build out; do [ -d \"$d\" ] && { OUT=\"$d\"; break; }; done; " +
@@ -447,7 +447,7 @@ function buildScript(args: RunDeployArgs): string {
         "else echo 'AVISO: nao achei dist/build/out — publicando a raiz'; cp -a . /workspace/out/ && rm -rf /workspace/out/.git; fi",
     );
   } else if (args.framework === "static" || args.framework === "python" || args.framework === "django") {
-    // static "site pronto" → /site inteiro; python → /app inteiro (com .vp-vendor).
+    // static "site pronto" → /app inteiro; python → /app inteiro (com .vp-vendor).
     lines.push("cp -a . /workspace/out/ && rm -rf /workspace/out/.git");
   } else if (args.framework === "dotnet") {
     // .NET: o artefato é a SAÍDA do `dotnet publish` (auto-contida), não o repo.
@@ -476,17 +476,13 @@ function appStepCommand(kind: string): string | null {
     `[ -n "$k" ] && export "$k=$(printf %s "$v" | base64 -d 2>/dev/null)"; done < /veloz/env; fi; `;
   switch (kind) {
     case "laravel_fix_index":
-      // Verifica se o index.php do docroot aponta para o framework; se não, corrige.
-      return (
-        `F=/var/www/index.php; [ -f "$F" ] || { echo "index.php ausente em /var/www"; exit 1; }; ` +
-        `if grep -qF "__DIR__.'/../" "$F"; then ` +
-        `sed -i "s#__DIR__\\.'/\\.\\./#'/var/projeto-laravel/#g" "$F"; ` +
-        `echo "index.php corrigido: apontando para /var/projeto-laravel"; ` +
-        `else echo "index.php OK"; fi`
-      );
+      // No layout /app o público (/app/www) fica DENTRO de /app, então o
+      // __DIR__.'/../' canônico do public/index.php já resolve certo
+      // (/app/www/../vendor = /app/vendor). Não precisa mais reescrever.
+      return `echo "index.php OK (layout /app — caminhos relativos canônicos)"`;
     case "artisan_storage_link":
       // Symlink no docroot real (o artisan storage:link criaria no lugar errado).
-      return `ln -sfn /var/projeto-laravel/storage/app/public /var/www/storage && echo "storage: /var/www/storage -> /var/projeto-laravel/storage/app/public"`;
+      return `ln -sfn /app/storage/app/public /app/www/storage && echo "storage: /app/www/storage -> /app/storage/app/public"`;
     case "artisan_clear":
       return `[ -f .env ] || { echo "sem .env — pulei limpeza de cache"; exit 0; }; ${LOAD} php artisan optimize:clear`;
     case "artisan_optimize":
@@ -575,8 +571,8 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
     else await placeIntoApp(c, args.appContainerId, args.workdir);
     appendLog(runId, "::vp:placed\n");
 
-    // Laravel: artisan/.env vivem em /var/projeto-laravel (fora do docroot).
-    const artisanDir = args.framework === "laravel" ? "/var/projeto-laravel" : args.workdir;
+    // Laravel: artisan/.env vivem em /app (fora do docroot /app/www).
+    const artisanDir = args.framework === "laravel" ? "/app" : args.workdir;
     for (const st of args.steps) {
       if (!st.enabled) continue;
       const acmd = appStepCommand(st.kind);
@@ -600,11 +596,11 @@ async function runDeployInner(args: RunDeployArgs): Promise<void> {
         if (args.dotnetCmd && args.dotnetCmd.trim()) await applyDotnetCmd(args.appContainerId, args.dotnetCmd);
         else await restartDotnet(args.appContainerId);
       } else if (args.framework === "spa" || args.framework === "static") {
-        await restartApp(args.appContainerId); // caddy relê /site
-      } else if (args.workdir === "/app") {
+        await restartApp(args.appContainerId); // caddy relê /app
+      } else if (args.runtimeKind === "node") {
         await applyNodeStart(args.appContainerId, args.nodeStartFile || "index.js"); // node
       }
-      if (args.framework === "laravel") await applyPhpRoot(args.appContainerId, "/var/www", true);
+      if (args.framework === "laravel") await applyPhpRoot(args.appContainerId, "/app/www", true);
     } catch (e) { appendLog(runId, "aviso: " + String(e) + "\n"); }
 
     appendLog(runId, "::vp:done\n");
@@ -636,7 +632,7 @@ async function placeIntoApp(buildC: Docker.Container, appContainerId: string, wo
 }
 
 /**
- * Estático (SPA/site pronto): deploy LIMPO — apaga o docroot (/site) preservando
+ * Estático (SPA/site pronto): deploy LIMPO — apaga o docroot (/app) preservando
  * só os arquivos internos /.vp-* (Caddyfile) e copia o artefato novo.
  */
 async function placeStatic(buildC: Docker.Container, appContainerId: string, docroot: string): Promise<void> {
@@ -673,11 +669,13 @@ async function placeDotnet(buildC: Docker.Container, appContainerId: string): Pr
 }
 
 /**
- * Colocação do layout Laravel: separa o artefato em dois destinos no MESMO
- * container do app (o build entrega out/www e out/framework):
- *   /var/www              = conteúdo do public/ (docroot) — recriado por inteiro a cada deploy.
- *   /var/projeto-laravel  = o framework — recriado, mas PRESERVA storage/ e .env (estado do cliente).
- * Assim o código/.env ficam FORA do docroot (nunca são servidos) e /var/www nunca acumula lixo.
+ * Colocação do layout Laravel: separa o artefato em dois destinos DENTRO do
+ * volume /app (o build entrega out/www e out/framework):
+ *   /app       = o framework — recriado, mas PRESERVA storage/, .env e www/ (estado do cliente).
+ *   /app/www   = conteúdo do public/ (docroot público) — recriado por inteiro a cada deploy.
+ * Assim o código/.env ficam FORA do docroot (/app/www) e nunca são servidos.
+ * Como /app/www fica DENTRO de /app, o public/index.php canônico
+ * (__DIR__.'/../vendor') resolve certo → não precisa reescrever nada.
  */
 async function placeLaravel(buildC: Docker.Container, appContainerId: string): Promise<void> {
   const app = docker.getContainer(appContainerId);
@@ -686,18 +684,19 @@ async function placeLaravel(buildC: Docker.Container, appContainerId: string): P
   await app.putArchive(tar as unknown as NodeJS.ReadableStream, { path: "/.veloz-incoming" });
   const reorg = [
     "set -e",
-    "mkdir -p /var/projeto-laravel",
-    // framework: atualiza o código, preservando storage/ (uploads/logs) e .env (segredos)
-    "find /var/projeto-laravel -mindepth 1 -maxdepth 1 ! -name storage ! -name .env -exec rm -rf {} +",
-    "cp -a /.veloz-incoming/out/framework/. /var/projeto-laravel/",
-    "cp /.veloz-incoming/out/.veloz-sha /var/projeto-laravel/.veloz-sha 2>/dev/null || true",
+    "mkdir -p /app /app/www",
+    // framework: atualiza o código em /app, preservando storage/ (uploads/logs),
+    // .env (segredos) e www/ (docroot, populado logo abaixo).
+    "find /app -mindepth 1 -maxdepth 1 ! -name storage ! -name .env ! -name www -exec rm -rf {} +",
+    "cp -a /.veloz-incoming/out/framework/. /app/",
+    "cp /.veloz-incoming/out/.veloz-sha /app/.veloz-sha 2>/dev/null || true",
     // diretórios graváveis garantidos (inclusive no 1º deploy)
-    "mkdir -p /var/projeto-laravel/storage/app/public /var/projeto-laravel/storage/framework/cache /var/projeto-laravel/storage/framework/sessions /var/projeto-laravel/storage/framework/views /var/projeto-laravel/bootstrap/cache",
-    "chmod -R ug+rwX /var/projeto-laravel/storage /var/projeto-laravel/bootstrap/cache",
-    // www: substitui 100% (uploads ficam no storage do framework, via symlink)
-    "find /var/www -mindepth 1 -maxdepth 1 -exec rm -rf {} +",
-    "cp -a /.veloz-incoming/out/www/. /var/www/",
-    "ln -sfn /var/projeto-laravel/storage/app/public /var/www/storage",
+    "mkdir -p /app/storage/app/public /app/storage/framework/cache /app/storage/framework/sessions /app/storage/framework/views /app/bootstrap/cache",
+    "chmod -R ug+rwX /app/storage /app/bootstrap/cache",
+    // www: docroot público — substitui 100% (uploads ficam no storage, via symlink)
+    "find /app/www -mindepth 1 -maxdepth 1 -exec rm -rf {} +",
+    "cp -a /.veloz-incoming/out/www/. /app/www/",
+    "ln -sfn /app/storage/app/public /app/www/storage",
     "rm -rf /.veloz-incoming",
   ].join("; ");
   await execIn(appContainerId, ["sh", "-c", reorg]);

@@ -40,7 +40,7 @@ export interface ProvisionArgs {
   dotnetCmd?: string | null; // comando de start avançado (.NET, ex.: dotnet App.dll)
   phpNodeVersion?: string | null; // versão Node (via nvm) para ambientes PHP
   envVars?: EnvVarPair[]; // variáveis de ambiente gerenciadas (Env real do Docker)
-  phpRoot?: string | null; // docroot do php -S (Laravel = /var/www/public)
+  phpRoot?: string | null; // docroot do php -S (público = /app/www)
   // Rede por-dono: quando presente, o app nasce na bridge do dono (IP fixo) em vez
   // da docker0 — assim app e serviços/bancos do MESMO dono se alcançam. A porta
   // publicada (PortBindings) e o supervisor continuam iguais.
@@ -144,7 +144,7 @@ HTTPServer(("0.0.0.0", 80), H).serve_forever()
 /** Estático: Caddyfile com fallback SPA (try_files → index.html) e arquivos
  *  ocultos escondidos. Sem aspas simples. */
 const CADDYFILE = `:80 {
-	root * /site
+	root * /app
 	encode gzip
 	try_files {path} {path}/ /index.html
 	file_server {
@@ -265,19 +265,22 @@ const LOAD_ENV =
 function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
   const setup = setupPrefix(startupScript);
   if (runtime.kind === "php") {
-    // Supervisor: docroot vem de /.vp-php-root (senão VP_PHP_ROOT, senão /var/www).
-    // Laravel serve /var/www/public com um router (URLs limpas). Guard: se o
-    // ROOT ainda não existir (antes do 1º deploy), cai para /var/www → :80 sempre sobe.
+    // Supervisor PHP: docroot público = /app/www. O código/framework/.env vive em
+    // /app (FORA do docroot → nunca é servido) — separação de segurança dentro do
+    // volume /app padronizado. docroot vem de /.vp-php-root (senão VP_PHP_ROOT,
+    // senão /app/www). Guard: se o ROOT não existir ainda, cai para /app/www.
     const script =
       setup +
-      `touch /.veloz-env-capable; mkdir -p /var/www; ` +
+      `touch /.veloz-env-capable; mkdir -p /app/www; ` +
       `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `while :; do ` +
       LOAD_ENV +
-      `ROOT="\$(cat /.vp-php-root 2>/dev/null || printf '%s' "\${VP_PHP_ROOT:-/var/www}")"; ` +
-      `[ -d "\$ROOT" ] || ROOT=/var/www; ` +
-      `[ -f /var/www/index.php ] || printf '%s' '${PHP_INDEX}' > /var/www/index.php; ` +
-      `if [ -f /.vp-php-router.php ]; then RT=/.vp-php-router.php; else RT=""; fi; ` +
+      `ROOT="\$(cat /.vp-php-root 2>/dev/null || printf '%s' "\${VP_PHP_ROOT:-/app/www}")"; ` +
+      `[ -d "\$ROOT" ] || ROOT=/app/www; ` +
+      `[ -f /app/www/index.php ] || printf '%s' '${PHP_INDEX}' > /app/www/index.php; ` +
+      // Router SEMPRE presente (esconde dotfiles + URLs limpas), para todo PHP.
+      `[ -f /.vp-php-router.php ] || (printf '%s' '${PHP_ROUTER_B64}' | base64 -d > /.vp-php-router.php); ` +
+      `RT=/.vp-php-router.php; ` +
       `cd "\$ROOT"; php -S 0.0.0.0:80 -t "\$ROOT" \$RT & VPPID=\$!; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
       `done`;
@@ -307,14 +310,14 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
     return ["sh", "-c", script];
   }
   if (runtime.kind === "static") {
-    // ESTÁTICO: Caddy file-server na :80 com fallback SPA. docroot /site.
+    // ESTÁTICO: Caddy file-server na :80 com fallback SPA. docroot /app.
     // O container usa Entrypoint=/bin/sh (ver createContainer) → Cmd = ["-c", …].
     const script =
       setup +
-      `mkdir -p /site; ` +
+      `mkdir -p /app; ` +
       `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `[ -f /.vp-caddyfile ] || printf '%s' '${CADDYFILE}' > /.vp-caddyfile; ` +
-      `[ -f /site/index.html ] || (printf '%s' '${STATIC_INDEX_B64}' | base64 -d > /site/index.html); ` +
+      `[ -f /app/index.html ] || (printf '%s' '${STATIC_INDEX_B64}' | base64 -d > /app/index.html); ` +
       `while :; do ` +
       `caddy run --config /.vp-caddyfile --adapter caddyfile & VPPID=\$!; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
@@ -410,25 +413,30 @@ export async function writeEnvFileAndRestart(
 const PHP_ROUTER = `<?php
 $root = $_SERVER['DOCUMENT_ROOT'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+// Segurança: 404 em qualquer segmento que comece com ponto (.env, .git,
+// .htaccess, .user.ini…). O php -S NÃO esconde dotfiles sozinho — sem isto
+// eles seriam servidos como texto puro.
+if (preg_match('#(^|/)\\.[^/]#', (string) $path)) { http_response_code(404); return true; }
 if ($path !== '/' && is_file($root . $path)) return false;
 require $root . '/index.php';
 `;
+const PHP_ROUTER_B64 = Buffer.from(PHP_ROUTER, "utf8").toString("base64");
 
-/** Valida o docroot (borda do agente): só sob /var/www, sem metacaracteres. */
+/** Valida o docroot (borda do agente): só sob /app, sem metacaracteres. */
 function safePhpRoot(root: string): boolean {
-  return /^\/var\/www(\/[A-Za-z0-9._-]+)*$/.test(root);
+  return /^\/app(\/[A-Za-z0-9._-]+)*$/.test(root);
 }
 
 /**
- * Aplica o docroot do PHP (Laravel → /var/www/public) ao vivo, sem recriar:
- * grava /.vp-php-root (+ router quando pedido) e reinicia o processo php.
+ * Aplica o docroot do PHP (público = /app/www; Laravel serve /app/www) ao vivo,
+ * sem recriar: grava /.vp-php-root (+ router quando pedido) e reinicia o php.
  */
 export async function applyPhpRoot(
   containerId: string,
   root: string,
   useRouter: boolean,
 ): Promise<void> {
-  if (!safePhpRoot(root)) root = "/var/www";
+  if (!safePhpRoot(root)) root = "/app/www";
   const c = docker.getContainer(containerId);
   const routerB64 = Buffer.from(PHP_ROUTER, "utf8").toString("base64");
   const script =
@@ -628,15 +636,15 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
 
   await removeExistingByEnv(envId); // idempotência: retry não deixa container duplicado
   const binds = lxcfsBinds();
-  // Python/Estático guardam o CÓDIGO num volume nomeado → sobrevive à troca de
-  // versão (recreate). Node/PHP seguem sem volume (deploy por git). O delete
-  // job remove veloz-code-* junto.
+  // O CÓDIGO do cliente vive num único volume nomeado montado em /app para TODOS
+  // os runtimes → sobrevive a recreate/troca de versão. PHP separa público
+  // (/app/www) de código (/app) DENTRO do mesmo volume. O delete job remove
+  // veloz-code-* junto.
   const codeDir =
-    runtime.kind === "python" || runtime.kind === "dotnet"
+    runtime.kind === "node" || runtime.kind === "python" ||
+    runtime.kind === "dotnet" || runtime.kind === "static" || runtime.kind === "php"
       ? "/app"
-      : runtime.kind === "static"
-        ? "/site"
-        : null;
+      : null;
   if (codeDir) {
     await ensureNamedVolume(`veloz-code-${envId}`, envId);
     binds.push(`veloz-code-${envId}:${codeDir}`);
@@ -668,7 +676,7 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       // página "site em construção" servida pelo placeholder .NET (injeção-safe: env do Docker).
       `VP_PAGE_B64=${CONSTRUCTION_B64}`,
       // docroot do PHP na 1ª subida; depois /.vp-php-root manda.
-      `VP_PHP_ROOT=${(args.phpRoot && args.phpRoot.trim()) || "/var/www"}`,
+      `VP_PHP_ROOT=${(args.phpRoot && args.phpRoot.trim()) || "/app/www"}`,
       // variáveis gerenciadas como Env REAL (Docker não faz parsing de shell).
       ...(args.envVars ?? [])
         .filter((v) => !RESERVED_ENV.has(v.key) && !v.key.startsWith("VP_"))

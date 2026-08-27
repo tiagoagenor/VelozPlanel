@@ -61,7 +61,7 @@ export const environments = pgTable("environments", {
   dotnetCmd: text("dotnet_cmd"), // comando de start avançado (.NET, ex.: dotnet App.dll)
   phpNodeVersion: text("php_node_version"), // versão Node escolhida (envs PHP via nvm)
   phpNodeVersionFull: text("php_node_version_full"), // versão Node real resolvida (nvm)
-  phpWebRoot: text("php_web_root"), // document root do php -S (Laravel = /var/www/public)
+  phpWebRoot: text("php_web_root"), // document root do php -S (público = /app/www)
   state: text("state").notNull(), // EnvState
   containerId: text("container_id"),
   httpPort: integer("http_port"),

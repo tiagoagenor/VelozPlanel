@@ -132,10 +132,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     const env = envRows[0];
     const keys = await db.select().from(sshKeys).where(eq(sshKeys.envId, cfg.envId));
 
-    // Pasta onde o SSH abre. App PHP → /var; App Node → /app; SERVIÇO/STACK
-    // (redis/mysql/n8n/…) → "/" (não têm /app nem /var), senão o docker exec falha.
-    let workdir =
-      env?.runtimeKind === "node" || env?.runtimeKind === "python" || env?.runtimeKind === "dotnet" ? "/app" : env?.runtimeKind === "static" ? "/site" : "/var";
+    // Pasta onde o SSH abre. Todo app (php/node/python/dotnet/static) → /app;
+    // SERVIÇO/STACK (redis/mysql/n8n/…) → "/" (não têm /app), senão o exec falha.
+    let workdir = "/app";
     if (env?.typeId) {
       const et = await db.select().from(envTypes).where(eq(envTypes.id, env.typeId)).limit(1);
       if (et[0] && et[0].category !== "app") workdir = "/";
@@ -200,8 +199,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     noteSuccess(username);
+    // Todo app (php/node/python/dotnet/static) → /app; qualquer outro → "/".
     const workdir =
-      env.runtimeKind === "node" || env.runtimeKind === "python" || env.runtimeKind === "dotnet" ? "/app" : env.runtimeKind === "static" ? "/site" : "/var";
+      env.runtimeKind === "node" || env.runtimeKind === "python" || env.runtimeKind === "dotnet" ||
+      env.runtimeKind === "static" || env.runtimeKind === "php" ? "/app" : "/";
     return reply.send({ ok: true, containerId: env.containerId, workdir });
   });
 }

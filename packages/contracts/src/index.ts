@@ -700,7 +700,7 @@ export const fileEntry = z.object({
 export type FileEntry = z.infer<typeof fileEntry>;
 
 export const fileList = z.object({
-  path: z.string(), // caminho absoluto dentro do ambiente (ex.: /var/www)
+  path: z.string(), // caminho absoluto dentro do ambiente (ex.: /app/www)
   root: z.string(), // raiz servida (var/www ou /app)
   entries: z.array(fileEntry),
 });

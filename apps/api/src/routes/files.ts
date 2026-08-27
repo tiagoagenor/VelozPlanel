@@ -21,7 +21,7 @@ import type { EnvironmentRow } from "../db/schema";
 
 /**
  * Gerenciador de arquivos do ambiente. Todas as operações são confinadas à
- * RAIZ servida do runtime (php -> /var/www, node -> /app); qualquer caminho que
+ * RAIZ do ambiente (sempre /app; php público em /app/www); qualquer caminho que
  * tente escapar (via `..` ou raiz diferente) é rejeitado com 400.
  *
  * As operações reais rodam dentro do container (via Agente/dockerode). Por isso
@@ -32,20 +32,19 @@ const idParams = z.object({ id: z.string().uuid() });
 const pathQuery = z.object({ path: z.string().optional() });
 
 /**
- * Modelo de confinamento por runtime:
- *  - `confineRoot`: limite que o cliente NÃO pode ultrapassar (defesa em
- *    profundidade). Em PHP fica em `/var` porque o "core" (ex.: Laravel) mora
- *    FORA da pasta web (`/var/www`), então é preciso subir para `/var` e criar
- *    pastas irmãs de `www`. Em Node o limite continua sendo `/app`.
- *  - `defaultPath`: onde a tela abre por padrão quando não vem `path`
- *    (a pasta web servida): PHP → `/var/www`, Node → `/app`.
+ * Modelo de confinamento por runtime (tudo padronizado em /app):
+ *  - `confineRoot`: limite que o cliente NÃO pode ultrapassar. É sempre `/app`
+ *    — em PHP o código/framework mora em `/app` e o público em `/app/www` (o
+ *    cliente navega os dois sem escapar do volume).
+ *  - `defaultPath`: onde a tela abre por padrão quando não vem `path`.
+ *    PHP → `/app/www` (a pasta pública servida); demais → `/app`.
  */
-function confineRootFor(kind: RuntimeKind): string {
-  return kind === "php" ? "/var" : kind === "static" ? "/site" : "/app";
+function confineRootFor(_kind: RuntimeKind): string {
+  return "/app";
 }
 
 function defaultPathFor(kind: RuntimeKind): string {
-  return kind === "php" ? "/var/www" : kind === "static" ? "/site" : "/app";
+  return kind === "php" ? "/app/www" : "/app";
 }
 
 /**
@@ -127,7 +126,7 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const agentUrl = await agentUrlForEnv(env);
       const kind = env.runtimeKind as RuntimeKind;
       const confineRoot = confineRootFor(kind);
-      // Sem `path`, abre na pasta web servida (defaultPath, ex.: /var/www).
+      // Sem `path`, abre na pasta web servida (defaultPath, ex.: /app/www).
       const target = resolveWithinRoot(
         confineRoot,
         req.query.path,

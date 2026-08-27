@@ -192,7 +192,7 @@ export function applyNodeVersion(
   return call<{ versionFull: string | null }>(agentUrl, "POST", "/node-version", { containerId, version });
 }
 
-/** Aplica o docroot do PHP (Laravel = /var/www/public) ao vivo. */
+/** Aplica o docroot do PHP (público = /app/www) ao vivo. */
 export function applyPhpRoot(
   agentUrl: string,
   containerId: string,
