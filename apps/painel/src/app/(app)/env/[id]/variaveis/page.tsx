@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
+import { cn } from "@/lib/cn";
 
 interface Row { key: string; value: string; buildTime: boolean; dirty: boolean }
 
@@ -76,7 +77,7 @@ export default function EnvVarsPage() {
   function update(i: number, patch: Partial<Row>) {
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch, dirty: true } : r)));
   }
-  function addRow() { setRows((rs) => [...rs, { key: "", value: "", buildTime: false, dirty: true }]); }
+  function addRow() { setRows((rs) => [...rs, { key: "", value: "", buildTime: true, dirty: true }]); }
   function removeRow(i: number) { setRows((rs) => rs.filter((_, j) => j !== i)); }
 
   /** Mescla as variáveis do .env colado nas linhas atuais (sobrescreve chaves iguais). */
@@ -138,8 +139,9 @@ export default function EnvVarsPage() {
           <p className="text-sm text-text2">
             Variáveis <strong>reais</strong> do processo (não um arquivo). Ao salvar, aplicam
             no container vivo (reinicia o app); e são reaplicadas se o container for recriado.
-            Marque <strong>build</strong> para as que o build precisa (ex.: <code>NEXT_PUBLIC_*</code> — que
-            entram no bundle e são públicas).
+            O <strong>build</strong> vem ligado por padrão (a variável fica disponível ao compilar,
+            ex.: <code>NEXT_PUBLIC_*</code>). <strong>Desligue</strong> para segredos (senhas, chaves) —
+            eles ficam só no runtime, fora do processo de build.
           </p>
 
           {hasSecrets && !revealed ? (
@@ -155,9 +157,20 @@ export default function EnvVarsPage() {
               <div key={i} className="flex flex-wrap items-center gap-2">
                 <Input className="min-w-[160px] flex-1 font-mono" placeholder="CHAVE" value={r.key} onChange={(e) => update(i, { key: e.target.value })} />
                 <Input className="min-w-[200px] flex-[2] font-mono" placeholder={hasSecrets && !revealed && !r.dirty ? "••••••••" : "valor"} value={r.value} onChange={(e) => update(i, { value: e.target.value })} />
-                <label className="flex items-center gap-1 text-xs text-text2">
-                  <input type="checkbox" checked={r.buildTime} onChange={(e) => update(i, { buildTime: e.target.checked })} /> build
-                </label>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={r.buildTime}
+                  aria-label="Disponível no build"
+                  title={r.buildTime ? "Disponível no build (e no runtime) — clique para só runtime" : "Só no runtime — clique para incluir no build"}
+                  onClick={() => update(i, { buildTime: !r.buildTime })}
+                  className="flex shrink-0 items-center gap-1.5 text-xs text-text2"
+                >
+                  <span className={cn("relative inline-flex h-4 w-7 items-center rounded-full transition-colors", r.buildTime ? "bg-brand" : "bg-border")}>
+                    <span className={cn("inline-block h-3 w-3 transform rounded-full bg-surface transition-transform", r.buildTime ? "translate-x-3.5" : "translate-x-0.5")} />
+                  </span>
+                  build
+                </button>
                 <button type="button" onClick={() => removeRow(i)} aria-label="Remover" className="rounded p-1.5 text-text2 hover:bg-bg hover:text-danger"><Trash2 size={16} /></button>
               </div>
             ))}
