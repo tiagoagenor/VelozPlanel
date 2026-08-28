@@ -26,10 +26,10 @@ function parseNameservers(): Array<{ host: string; ip: string }> {
     if (host && ip) out.push({ host: host.toLowerCase(), ip });
   }
   if (out.length) return out;
-  // Default seguro (dev / sem env): ns1 no 187, ns2 no 184.
+  // Default seguro (dev / sem env): nameservers da marca (jamees.com → 187).
   return [
-    { host: "ns1.geestao.top", ip: "187.127.49.205" },
-    { host: "ns2.geestao.top", ip: "184.107.115.183" },
+    { host: "ns1.jamees.com", ip: "187.127.49.205" },
+    { host: "ns2.jamees.com", ip: "187.127.49.205" },
   ];
 }
 
