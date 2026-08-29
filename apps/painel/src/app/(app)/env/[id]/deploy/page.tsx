@@ -7,9 +7,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Rocket, GitBranch, KeyRound, Copy, Check, Loader2, Play, ExternalLink,
   CheckCircle2, XCircle, Info, Boxes, Pencil, RefreshCw, AlertTriangle, Trash2,
+  Braces, Settings, FileCode, ChevronRight,
 } from "lucide-react";
-import type { DeployConfig, DeployFramework, Environment } from "@velozplanel/contracts";
+import type { DeployFramework } from "@velozplanel/contracts";
+import { EnvChromeContext } from "../layout";
 import { FirstDeployWizard } from "./FirstDeployWizard";
+import { EnvVarsModal } from "./EnvVarsModal";
+import { StartFileModal } from "./StartFileModal";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -161,6 +165,20 @@ export default function DeployPage() {
   const [inWizard, setInWizard] = React.useState(false);
   React.useEffect(() => { if (cfg?.connectionMode === "none") setInWizard(true); }, [cfg?.connectionMode]);
 
+  // ---- Modelo A: modais de edição + cabeçalho mínimo ----
+  const [keyOpen, setKeyOpen] = React.useState(false);
+  const [startOpen, setStartOpen] = React.useState(false);
+  const [varsOpen, setVarsOpen] = React.useState(false);
+  const varsQ = useQuery({ queryKey: ["env-vars", id], queryFn: () => api.getEnvVars(id) });
+  const envChrome = React.useContext(EnvChromeContext);
+  React.useEffect(() => {
+    // Enquanto a gerência do deploy está na tela, o cabeçalho do ambiente vira
+    // mínimo (só nome + estado). Quando o wizard aparece, ele mesmo usa "hidden".
+    const managing = !!cfg && cfg.connectionMode !== "none" && !inWizard;
+    if (managing) { envChrome?.setHeaderMode("minimal"); return () => envChrome?.setHeaderMode("full"); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envChrome, cfg?.connectionMode, inWizard]);
+
   if (q.isPending || envQ.isPending) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="animate-spin text-brand-strong" /></div>;
 
   const hasConn = cfg && cfg.connectionMode !== "none";
@@ -185,6 +203,15 @@ export default function DeployPage() {
     : isHTTP ? <span className="flex items-center gap-1.5 text-sm text-warning"><AlertTriangle size={14} /> Credenciais não testadas</span>
     : null;
 
+  const lastRun = runsQ.data?.[0];
+  const accessLabel = isHTTP ? "Usuário e senha" : isSSH ? "Chave de deploy (SSH)" : "Público";
+  const startFileValue = lang === "dotnet"
+    ? (envQ.data?.dotnetCmd?.trim() ? "comando fixo" : "automático")
+    : (cfg?.framework === "django")
+      ? (envQ.data?.pythonCmd?.trim() ? "comando fixo" : "runserver :80")
+      : (envQ.data?.nodeStartFile || (lang === "python" ? "app.py" : "index.js"));
+  const showStartFile = lang === "node" || lang === "python" || lang === "dotnet";
+
   return (
     <div className="flex flex-col gap-5">
       {/* Aviso da porta — apps Node/Python/.NET precisam escutar na :80 */}
@@ -196,297 +223,320 @@ export default function DeployPage() {
             {lang === "node"
               ? <> Ex.: <code className="rounded bg-bg px-1 font-mono text-text">app.listen(process.env.PORT || 80, &quot;0.0.0.0&quot;)</code>.</>
               : lang === "dotnet"
-                ? <> No .NET, a variável <code className="rounded bg-bg px-1 font-mono text-text">ASPNETCORE_URLS=http://0.0.0.0:80</code> já vem configurada (não fixe outra porta no código).</>
+                ? <> No .NET, a variável <code className="rounded bg-bg px-1 font-mono text-text">ASPNETCORE_URLS=http://0.0.0.0:80</code> já vem configurada.</>
                 : <> Ex. Flask/FastAPI: rode em <code className="rounded bg-bg px-1 font-mono text-text">0.0.0.0:80</code> (Django já sobe assim).</>}
           </span>
         </div>
       ) : null}
-      {/* STATUS */}
-      <Card><div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="vp-accent-bar flex items-center gap-2 text-base font-semibold text-text"><Rocket size={18} className="text-brand-strong" /> Deploy {cfg?.framework === "nextjs" ? "· Next.js" : ""}</h2>
-          {envQ.data?.accessUrl ? <a href={envQ.data.accessUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border px-2.5 text-sm text-link hover:bg-bg">Abrir site <ExternalLink size={13} /></a> : null}
-        </div>
-        {badge}
-        <div>
-          <Button onClick={() => deploy.mutate()} disabled={deploy.isPending || !ready} title={!ready ? "Conecte e teste o repositório antes de publicar." : undefined}>
-            {deploy.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} {deploy.isPending ? "Fazendo deploy…" : "Fazer deploy agora"}
-          </Button>
-        </div>
-      </div></Card>
 
-      {/* Comando de start avançado — só salva; aplica no próximo deploy */}
-      {lang === "python" && envQ.data ? (
-        <PythonStartCmdCard id={id} current={envQ.data.pythonCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
-      ) : null}
-      {lang === "dotnet" && envQ.data ? (
-        <DotnetStartCmdCard id={id} current={envQ.data.dotnetCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
-      ) : null}
-
-      {/* CONEXÃO (editável) */}
-      <Card><div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between"><h3 className="flex items-center gap-2 font-semibold text-text"><GitBranch size={16} className="text-brand-strong" /> Conexão</h3>
-          {!editConn ? <Button variant="ghost" size="sm" onClick={() => setEditConn(true)}><Pencil size={14} /> Editar</Button> : null}</div>
-        {!editConn ? (
-          <div className="flex flex-col gap-1 text-sm text-text2">
-            <span>Repositório: <code className="font-mono text-xs">{cfg?.repoUrl}</code></span>
-            <span>Tipo: <strong>{isHTTP ? "HTTPS (usuário e senha)" : isSSH ? "SSH (chave)" : "Público"}</strong> · branch <strong>{cfg?.branch}</strong></span>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            <div className="flex gap-2">{(["ssh", "http"] as const).map((tp) => (<button key={tp} type="button" onClick={() => setEType(tp)} className={`rounded-lg border px-3 py-1.5 text-sm ${eType === tp ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{tp === "ssh" ? "SSH (chave)" : "HTTPS (usuário e senha)"}</button>))}</div>
-            <Input className="font-mono" value={eRepo} onChange={(e) => setERepo(e.target.value)} placeholder={eType === "ssh" ? "git@github.com:usuario/projeto.git" : "https://github.com/usuario/projeto.git"} />
-            <p className="text-xs text-text3">Trocar o tipo não apaga a chave nem os passos — só troca a seleção.</p>
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setEditConn(false)}>Cancelar</Button>
-              <Button disabled={saveConn.isPending || !eRepo.trim()} onClick={async () => { await saveConn.mutateAsync({ connectionMode: eType, repoUrl: eRepo, framework: cfg?.framework }); setEditConn(false); }}>Salvar</Button>
-            </div>
-          </div>
-        )}
-      </div></Card>
-
-      {/* BRANCH DE DEPLOY */}
-      {verified ? (
-        <Card><div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-semibold text-text"><GitBranch size={16} className="text-brand-strong" /> Branch de deploy</h3>
-            {!branchEdit ? <Button variant="ghost" size="sm" onClick={() => { setBranchEdit(true); setPickBranch(cfg?.branch ?? ""); branchesQ.refetch(); }}><Pencil size={14} /> Trocar</Button> : null}
-          </div>
-          {!branchEdit ? (
-            <span className="text-sm text-text2">Atual: <strong>{cfg?.branch}</strong></span>
-          ) : branchesQ.isFetching ? (
-            <div className="flex items-center gap-2 text-sm text-text3"><Loader2 size={14} className="animate-spin" /> Buscando branches…</div>
-          ) : branchesQ.data?.ok && branchesQ.data.branches.length ? (
-            <div className="flex flex-col gap-2">
-              <select value={pickBranch} onChange={(e) => setPickBranch(e.target.value)} className="rounded-lg border border-border bg-surface px-2 py-1 text-sm">
-                {branchesQ.data.branches.map((b) => <option key={b} value={b}>{b}{b === cfg?.branch ? " (atual)" : ""}</option>)}
-              </select>
-              <p className="text-xs text-text3">Trocar a branch não altera a chave nem os passos.</p>
-              <div className="flex justify-end gap-2">
-                <Button variant="ghost" size="sm" onClick={() => branchesQ.refetch()}><RefreshCw size={14} /> Atualizar</Button>
-                <Button variant="ghost" onClick={() => setBranchEdit(false)}>Cancelar</Button>
-                <Button disabled={saveBranch.isPending || !pickBranch || pickBranch === cfg?.branch} onClick={() => saveBranch.mutate(pickBranch)}>{saveBranch.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar branch</Button>
+      {/* ===== HERO ===== */}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <span aria-hidden="true" className="grid place-items-center rounded-2xl bg-brand-soft text-brand-strong" style={{ height: 52, width: 52 }}><Rocket size={26} /></span>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h2 className="text-xl font-bold text-text">Deploy{cfg?.framework === "nextjs" ? " · Next.js" : ""}</h2>
+                {badge}
               </div>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs text-warning">Não consegui listar as branches. Digite o nome manualmente.</p>
-              <Input className="font-mono" value={pickBranch} onChange={(e) => setPickBranch(e.target.value)} placeholder="main" />
-              <div className="flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setBranchEdit(false)}>Cancelar</Button>
-                <Button disabled={saveBranch.isPending || !pickBranch.trim()} onClick={() => saveBranch.mutate(pickBranch.trim())}>Salvar branch</Button>
-              </div>
-            </div>
-          )}
-        </div></Card>
-      ) : null}
-
-      {/* CHAVE (SSH) */}
-      {isSSH ? (
-        <Card><div className="flex flex-col gap-3">
-          <h3 className="flex items-center gap-2 font-semibold text-text"><KeyRound size={16} className="text-brand-strong" /> Chave de deploy</h3>
-          {revealedPub ? (
-            <div className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4">
-              <div className="flex items-start gap-2"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
-                <p className="text-sm text-text">Esta é a <strong>única vez</strong> que a chave pública aparece. Copie e cole no GitHub agora — depois ela não é mostrada de novo (se perder, gere outra).</p></div>
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
-                <code className="min-w-0 flex-1 truncate font-mono text-xs">{revealedPub}</code>
-                <button type="button" aria-label="Copiar" onClick={async () => { await navigator.clipboard.writeText(revealedPub); setPubCopied(true); setTimeout(() => setPubCopied(false), 1500); }} className="shrink-0 rounded p-1 text-text2 hover:text-brand-strong">{pubCopied ? <Check size={16} className="text-success" /> : <Copy size={16} />}</button>
-              </div>
-              <p className="text-xs text-text3">Cole em: <strong>GitHub → Settings → Deploy keys → Add deploy key</strong> (deixe "Allow write access" desmarcado).</p>
-              <div className="flex flex-wrap gap-2">
-                <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-link hover:bg-bg">Abrir GitHub <ExternalLink size={14} /></a>
-                <Button onClick={() => testKey.mutate()} disabled={testKey.isPending}>{testKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Já colei → Testar</Button>
-                <Button variant="ghost" onClick={() => setRevealedPub(null)}>Já guardei — fechar</Button>
-              </div>
-            </div>
-          ) : !hasKey ? (
-            <>
-              <p className="text-sm text-text2">Você ainda não tem uma chave para este ambiente.</p>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={() => genKey.mutate()} disabled={genKey.isPending}>{genKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} {genKey.isPending ? "Criando…" : "Criar chave SSH"}</Button>
-                <button type="button" className="text-sm text-link hover:underline" onClick={() => setImporting(true)}>Colar minha chave privada</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-text2">Chave criada. <strong>A chave pública não é mostrada de novo</strong> — se você não guardou, clique em "Gerar outra chave".</p>
-              <div className="text-xs text-text3">Fingerprint: <code className="font-mono">{cfg!.fingerprint}</code>{verified ? <span className="ml-2 text-success">· verificada</span> : null}</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={() => testKey.mutate()} disabled={testKey.isPending}>{testKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {verified ? "Testar novamente" : "Testar conexão"}</Button>
-                <Button variant="outline" onClick={() => setRegenOpen(true)}><RefreshCw size={14} /> Gerar outra chave</Button>
-                <button type="button" className="text-sm text-link hover:underline" onClick={() => setImporting(true)}>Colar minha chave privada</button>
-              </div>
-            </>
-          )}
-          {importing ? (
-            <div className="mt-1 flex flex-col gap-2 border-t border-border-subtle pt-3">
-              <p className="text-sm text-text2">Cole sua chave privada (sem senha). Fica guardada só no nó, nunca é exibida de volta.</p>
-              <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} spellCheck={false} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs" />
-              <div className="flex gap-2"><Button variant="ghost" onClick={() => setImporting(false)}>Cancelar</Button><Button disabled={importKey.isPending || !importText.trim()} onClick={() => importKey.mutate(importText)}>{importKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Importar chave</Button></div>
-            </div>
-          ) : null}
-        </div></Card>
-      ) : null}
-
-      {/* CREDENCIAIS (HTTPS) */}
-      {isHTTP ? (
-        <Card><div className="flex flex-col gap-3">
-          <h3 className="flex items-center gap-2 font-semibold text-text"><KeyRound size={16} className="text-brand-strong" /> Credenciais HTTPS</h3>
-          {!editHttp ? (
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-text2">Usuário: <strong>{cfg?.httpUsername || "—"}</strong> · senha ••••••••{cfg?.hasHttpCredentials ? " (salva)" : ""}</span>
-              <Button variant="ghost" size="sm" onClick={() => setEditHttp(true)}><Pencil size={14} /> Trocar</Button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs text-text3">Use um token de acesso como senha (GitHub → Settings → Developer settings → Personal access tokens).</p>
-              <Input placeholder="usuário" value={httpUser} onChange={(e) => setHttpUser(e.target.value)} />
-              <Input type="password" placeholder="senha ou token" value={httpPass} onChange={(e) => setHttpPass(e.target.value)} />
-              <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditHttp(false)}>Cancelar</Button><Button disabled={saveHttp.isPending || !httpUser.trim() || !httpPass.trim()} onClick={() => saveHttp.mutate()}>{saveHttp.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar e testar</Button></div>
-            </div>
-          )}
-        </div></Card>
-      ) : null}
-
-      {/* PASSOS */}
-      {verified ? (
-        <Card><div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h3 className="flex items-center gap-2 font-semibold text-text"><Boxes size={16} className="text-brand-strong" /> Passos do build</h3>
-            {!stepEdit ? <Button variant="ghost" size="sm" onClick={() => setStepEdit(true)}><Pencil size={14} /> Editar</Button> : null}
-          </div>
-          <p className="text-xs text-text3">Cada passo mostra em qual pasta roda. Passos de <strong>build</strong> rodam no container de build (na pasta do projeto); <strong>migrações</strong> e <strong>reiniciar</strong> rodam no site.</p>
-
-          {!stepEdit ? (
-            cfg && cfg.steps.length ? (
-              <ul className="flex flex-col gap-1.5">{cfg.steps.map((sp) => (
-                <li key={sp.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm">
-                  <span className={sp.enabled ? "text-success" : "text-text3"}>●</span>
-                  <span className="font-medium text-text">{sp.label}</span>
-                  {sp.mutatesData ? <span className="rounded bg-warning/10 px-1.5 text-[10px] font-semibold text-warning">altera dados</span> : null}
-                  <span className="ml-auto text-xs text-text3">{isAppKind(sp.kind) ? "no site" : `pasta: ${buildFolder(sp.cwd)} · build`}</span>
-                </li>))}</ul>
-            ) : <p className="text-sm text-text3">Ainda não detectamos os passos.</p>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {/* modo */}
-              <div className="flex gap-2">
-                {(["simple", "advanced"] as const).map((m) => (
-                  <button key={m} type="button" onClick={() => setStepMode(m)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${stepMode === m ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{m === "simple" ? "Simples" : "Avançado"}</button>
-                ))}
-              </div>
-              {/* pasta do projeto */}
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="subdir">Pasta do projeto (opcional)</Label>
-                <Input id="subdir" className="font-mono" value={subdir} onChange={(e) => setSubdir(e.target.value)} placeholder="ex.: apps/web (deixe vazio se está na raiz)" />
-                <p className="text-xs text-text3">{subdir.trim() ? `Os passos de build rodam em ${subdir.trim()}/ dentro do repositório.` : "Os passos de build rodam na raiz do repositório."} É onde ficam o package.json / composer.json.</p>
-              </div>
-
-              {stepMode === "simple" ? (
-                <div className="flex flex-col gap-1.5">
-                  {rows.filter((r) => r.kind !== "shell").map((r) => { const i = rows.indexOf(r); return (
-                    <label key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm">
-                      <input type="checkbox" checked={r.enabled} onChange={(e) => setRow(i, { enabled: e.target.checked })} />
-                      <span className="font-medium text-text">{r.label}</span>
-                      {r.kind === "artisan_migrate" || r.kind === "php_migrate" ? <span className="rounded bg-warning/10 px-1.5 text-[10px] font-semibold text-warning">altera dados</span> : null}
-                      <span className="ml-auto text-xs text-text3">{isAppKind(r.kind) ? "no site" : `pasta: ${buildFolder(null)} · build`}</span>
-                    </label>
-                  ); })}
-                  <div className="mt-1 flex flex-col gap-1">
-                    <Label htmlFor="extra">Comando extra (opcional)</Label>
-                    {(() => { const si = rows.findIndex((r) => r.kind === "shell"); const val = si >= 0 ? (rows[si]!.command ?? "") : ""; return (
-                      <Input id="extra" className="font-mono" value={val} placeholder="ex.: php artisan queue:restart"
-                        onChange={(e) => { const v = e.target.value; setRows((rs) => { const idx = rs.findIndex((r) => r.kind === "shell"); if (idx >= 0) { const a = [...rs]; a[idx] = { ...a[idx]!, command: v }; return a; } return v ? [...rs, { enabled: true, kind: "shell", command: v, label: "Comando personalizado", cwd: null, mutatesData: false }] : rs; }); }} />
-                    ); })()}
-                    <p className="text-xs text-text3">Rodado na pasta do projeto, no container de build, depois do build.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {rows.map((r, i) => (
-                    <div key={i} className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface p-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <input type="checkbox" checked={r.enabled} onChange={(e) => setRow(i, { enabled: e.target.checked })} title="Ativo" />
-                        <select value={r.kind} onChange={(e) => setRow(i, { kind: e.target.value, label: STEP_KINDS.find((k) => k.v === e.target.value)?.label ?? r.label })} className="rounded-lg border border-border bg-surface px-2 py-1 text-sm">
-                          {STEP_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
-                        </select>
-                        <div className="ml-auto flex items-center gap-1">
-                          <button type="button" onClick={() => moveRow(i, -1)} className="rounded p-1 text-text2 hover:bg-bg" aria-label="Subir">↑</button>
-                          <button type="button" onClick={() => moveRow(i, 1)} className="rounded p-1 text-text2 hover:bg-bg" aria-label="Descer">↓</button>
-                          <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="rounded p-1 text-text2 hover:text-danger" aria-label="Remover"><XCircle size={15} /></button>
-                        </div>
-                      </div>
-                      {r.kind === "shell" ? (
-                        <textarea value={r.command ?? ""} onChange={(e) => setRow(i, { command: e.target.value })} rows={2} spellCheck={false} placeholder="ex.: php artisan queue:restart" className="w-full rounded-lg border border-border bg-surface px-2 py-1 font-mono text-xs" />
-                      ) : null}
-                      {isAppKind(r.kind) ? (
-                        <p className="text-xs text-text3">Roda no <strong>site</strong> (/app) — a pasta do projeto não se aplica.</p>
-                      ) : (
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-xs text-text3">Pasta:</span>
-                          <Input className="h-8 max-w-[220px] font-mono text-xs" value={r.cwd ?? ""} onChange={(e) => setRow(i, { cwd: e.target.value || null })} placeholder={subdir.trim() ? `(herda ${subdir.trim()})` : "(raiz)"} />
-                          <span className="text-xs text-text3">→ pasta: {buildFolder(r.cwd)} · build</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <Button variant="ghost" size="sm" onClick={addRow} className="self-start">+ Adicionar passo</Button>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3">
-                <Button variant="ghost" size="sm" onClick={() => setDetectConfirm(true)}><RefreshCw size={14} /> Restaurar padrão</Button>
-                <span className="ml-auto flex gap-2">
-                  <Button variant="ghost" onClick={() => { setStepEdit(false); if (cfg) { setRows(cfg.steps.map((x) => ({ enabled: x.enabled, kind: x.kind, command: x.command, label: x.label, cwd: x.cwd, mutatesData: x.mutatesData }))); setSubdir(cfg.subdir ?? ""); setStepMode((cfg.mode as "simple" | "advanced") ?? "simple"); } }}>Cancelar</Button>
-                  <Button onClick={() => saveSteps.mutate()} disabled={saveSteps.isPending}>{saveSteps.isPending ? <Loader2 size={16} className="animate-spin" /> : null} Salvar passos</Button>
+              {lastRun ? (
+                <span className="flex flex-wrap items-center gap-1.5 text-[13px] text-text2">
+                  Último:
+                  {lastRun.status === "success" ? <CheckCircle2 size={13} className="text-success" /> : lastRun.status === "running" ? <Loader2 size={13} className="animate-spin text-info" /> : <XCircle size={13} className="text-danger" />}
+                  <span className={lastRun.status === "success" ? "text-success" : lastRun.status === "failed" ? "text-danger" : "text-text2"}>{lastRun.status}</span>
+                  {lastRun.commitSha ? <>· <code className="font-mono text-xs">{lastRun.commitSha.slice(0, 8)}</code></> : null}
+                  · {new Date(lastRun.startedAt).toLocaleString("pt-BR")}
                 </span>
-              </div>
+              ) : <span className="text-[13px] text-text3">Nenhum deploy ainda — publique quando quiser.</span>}
             </div>
-          )}
-        </div></Card>
-      ) : null}
-
-      {/* HISTÓRICO */}
-      <Card><div className="flex flex-col gap-3">
-        <h3 className="flex items-center gap-2 font-semibold text-text"><GitBranch size={16} className="text-brand-strong" /> Histórico</h3>
-        <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-bg/40 p-3">
-          <span className="text-xs font-medium text-text3">Quantos deploys guardar</span>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-text2">
-              Manter os últimos
-              <Input type="number" min={1} max={500} value={histLimit} disabled={histNever} onChange={(e) => setHistLimit(Math.max(1, Number(e.target.value) || 1))} className="h-8 w-20" />
-              deploys
-            </label>
-            <label className="flex items-center gap-1.5 text-sm text-text2"><input type="checkbox" checked={histNever} onChange={(e) => setHistNever(e.target.checked)} /> Nunca apagar</label>
-            <Button size="sm" onClick={() => saveHist.mutate()} disabled={saveHist.isPending}>{saveHist.isPending ? <Loader2 size={14} className="animate-spin" /> : null} Salvar</Button>
           </div>
-          <p className="text-xs text-text3">Os logs de cada deploy também ficam salvos <strong>no seu ambiente</strong>, na pasta <code>/veloz/deploys</code> (acessível por SSH/SFTP/Arquivos). Ao passar do limite, os mais antigos são apagados.</p>
-        </div>
-        {runsQ.data && runsQ.data.length ? (
-          <ul className="flex flex-col gap-1.5">{runsQ.data.map((r) => (<li key={r.id}><Link href={`/env/${id}/deploy/${r.id}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm hover:bg-bg">{r.status === "success" ? <CheckCircle2 size={15} className="text-success" /> : r.status === "running" ? <Loader2 size={15} className="animate-spin text-info" /> : <XCircle size={15} className="text-danger" />}<span className="text-text">{r.status}</span>{r.commitSha ? <code className="font-mono text-xs text-text3">{r.commitSha.slice(0, 8)}</code> : null}<span className="ml-auto text-xs text-text3">{new Date(r.startedAt).toLocaleString("pt-BR")}</span><span className="text-text3">›</span></Link></li>))}</ul>
-        ) : <p className="text-sm text-text3">Nenhum deploy ainda.</p>}
-      </div></Card>
-
-      {/* ZONA DE PERIGO — excluir só o deploy */}
-      <Card className="border-danger/30">
-        <div className="flex flex-col gap-3">
-          <h3 className="flex items-center gap-2 font-semibold text-danger"><AlertTriangle size={16} /> Zona de perigo</h3>
-          <p className="text-sm text-text2">
-            Excluir o deploy <strong>desconecta o repositório Git</strong> deste ambiente e apaga a
-            chave de acesso, os passos de build e o histórico de deploys.
-            <strong> O seu site continua no ar</strong> — os arquivos já publicados não são apagados,
-            e o ambiente (banco, domínio, SSH) não é afetado.
-          </p>
-          <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/5 p-3">
-            <div>
-              <p className="text-sm font-medium text-text">Excluir configuração de deploy</p>
-              <p className="text-xs text-text3">Você poderá reconectar do zero depois.</p>
-            </div>
-            <Button variant="danger" onClick={() => { setDelConfirm(""); setDelOpen(true); }}><Trash2 size={15} /> Excluir deploy</Button>
+          <div className="flex items-center gap-2.5">
+            {envQ.data?.accessUrl ? <a href={envQ.data.accessUrl} target="_blank" rel="noopener noreferrer" className="inline-flex h-11 items-center gap-1.5 rounded-[10px] border border-border px-3.5 text-sm text-link hover:bg-bg">Abrir site <ExternalLink size={14} /></a> : null}
+            <Button onClick={() => deploy.mutate()} disabled={deploy.isPending || !ready} title={!ready ? "Conecte e teste o repositório antes de publicar." : undefined}>
+              {deploy.isPending ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />} {deploy.isPending ? "Fazendo deploy…" : "Fazer deploy agora"}
+            </Button>
           </div>
         </div>
       </Card>
+
+      {/* ===== 2 COLUNAS ===== */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr] lg:items-start">
+        {/* ---- ESQUERDA: Passos + Histórico ---- */}
+        <div className="flex flex-col gap-5">
+          {verified ? (
+            <Card><div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h3 className="flex items-center gap-2 font-semibold text-text"><Boxes size={16} className="text-brand-strong" /> Passos do build</h3>
+                <Button variant="ghost" size="sm" onClick={() => setStepEdit(true)}><Pencil size={14} /> Editar</Button>
+              </div>
+              {cfg && cfg.steps.length ? (
+                <ul className="flex flex-col gap-1.5">{cfg.steps.map((sp) => (
+                  <li key={sp.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm">
+                    <span className={sp.enabled ? "text-success" : "text-text3"}>●</span>
+                    <span className="font-medium text-text">{sp.label}</span>
+                    {sp.mutatesData ? <span className="rounded bg-warning/10 px-1.5 text-[10px] font-semibold text-warning">altera dados</span> : null}
+                    <span className="ml-auto text-xs text-text3">{isAppKind(sp.kind) ? "no site" : `pasta: ${buildFolder(sp.cwd)} · build`}</span>
+                  </li>))}</ul>
+              ) : <p className="text-sm text-text3">Ainda não detectamos os passos.</p>}
+            </div></Card>
+          ) : null}
+
+          <Card><div className="flex flex-col gap-3">
+            <h3 className="flex items-center gap-2 font-semibold text-text"><GitBranch size={16} className="text-brand-strong" /> Histórico</h3>
+            <div className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-bg/40 p-3">
+              <span className="text-xs font-medium text-text3">Quantos deploys guardar</span>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2 text-sm text-text2">
+                  Manter os últimos
+                  <Input type="number" min={1} max={500} value={histLimit} disabled={histNever} onChange={(e) => setHistLimit(Math.max(1, Number(e.target.value) || 1))} className="h-8 w-20" />
+                  deploys
+                </label>
+                <label className="flex items-center gap-1.5 text-sm text-text2"><input type="checkbox" checked={histNever} onChange={(e) => setHistNever(e.target.checked)} /> Nunca apagar</label>
+                <Button size="sm" onClick={() => saveHist.mutate()} disabled={saveHist.isPending}>{saveHist.isPending ? <Loader2 size={14} className="animate-spin" /> : null} Salvar</Button>
+              </div>
+              <p className="text-xs text-text3">Os logs também ficam salvos <strong>no seu ambiente</strong>, em <code>/veloz/deploys</code>.</p>
+            </div>
+            {runsQ.data && runsQ.data.length ? (
+              <ul className="flex flex-col gap-1.5">{runsQ.data.map((r) => (<li key={r.id}><Link href={`/env/${id}/deploy/${r.id}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm hover:bg-bg">{r.status === "success" ? <CheckCircle2 size={15} className="text-success" /> : r.status === "running" ? <Loader2 size={15} className="animate-spin text-info" /> : <XCircle size={15} className="text-danger" />}<span className="text-text">{r.status}</span>{r.commitSha ? <code className="font-mono text-xs text-text3">{r.commitSha.slice(0, 8)}</code> : null}<span className="ml-auto text-xs text-text3">{new Date(r.startedAt).toLocaleString("pt-BR")}</span><ChevronRight size={14} className="text-text3" /></Link></li>))}</ul>
+            ) : <p className="text-sm text-text3">Nenhum deploy ainda.</p>}
+          </div></Card>
+        </div>
+
+        {/* ---- DIREITA: Configuração + Variáveis + Zona de perigo ---- */}
+        <div className="flex flex-col gap-5">
+          <Card><div className="flex flex-col">
+            <h3 className="mb-1 flex items-center gap-2 font-semibold text-text"><Settings size={16} className="text-brand-strong" /> Configuração</h3>
+            <ConfigRow icon={<GitBranch size={16} className="text-brand-strong" />} label="Repositório"
+              value={<code className="font-mono text-xs">{cfg?.repoUrl}</code>}
+              action={<Button variant="ghost" size="sm" onClick={() => setEditConn(true)}><Pencil size={14} /> Editar</Button>} />
+            {verified ? (
+              <ConfigRow icon={<GitBranch size={16} className="text-brand-strong" />} label="Branch"
+                value={<strong>{cfg?.branch}</strong>}
+                action={<Button variant="ghost" size="sm" onClick={() => { setBranchEdit(true); setPickBranch(cfg?.branch ?? ""); branchesQ.refetch(); }}><Pencil size={14} /> Trocar</Button>} />
+            ) : null}
+            <ConfigRow icon={<KeyRound size={16} className="text-brand-strong" />} label="Acesso"
+              value={<span>{accessLabel}{verified ? <span className="text-success"> · verificado</span> : null}</span>}
+              action={isPublic ? null : <Button variant="ghost" size="sm" onClick={() => isSSH ? setKeyOpen(true) : setEditHttp(true)}><Pencil size={14} /> Gerenciar</Button>} />
+            {showStartFile ? (
+              <ConfigRow last icon={<FileCode size={16} className="text-brand-strong" />} label="Arquivo de início"
+                value={<code className="font-mono text-xs">{startFileValue}</code>}
+                action={<Button variant="ghost" size="sm" onClick={() => setStartOpen(true)}><Pencil size={14} /> Editar</Button>} />
+            ) : null}
+          </div></Card>
+
+          <Card><div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h3 className="flex items-center gap-2 font-semibold text-text"><Braces size={16} className="text-brand-strong" /> Variáveis</h3>
+                {varsQ.data ? <span className="grid min-w-[22px] place-items-center rounded-full bg-brand-soft px-1.5 text-xs font-semibold text-brand-strong">{varsQ.data.vars.length}</span> : null}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setVarsOpen(true)}><Settings size={14} /> Gerenciar</Button>
+            </div>
+            {varsQ.data && varsQ.data.vars.length ? (
+              <div className="flex flex-col gap-1.5">
+                {varsQ.data.vars.slice(0, 3).map((v) => (
+                  <div key={v.key} className="flex items-center gap-2 text-[13px]">
+                    <code className="font-mono text-xs text-text">{v.key}</code>
+                    <span className="text-text3">=</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs text-text3">{v.hidden ? "•••••••• (escondida)" : v.valueMasked}</span>
+                  </div>
+                ))}
+                {varsQ.data.vars.length > 3 ? <button type="button" className="w-fit text-xs text-link hover:underline" onClick={() => setVarsOpen(true)}>+{varsQ.data.vars.length - 3} mais · ver todas</button> : null}
+              </div>
+            ) : <p className="text-sm text-text3">Nenhuma variável — clique em Gerenciar para adicionar.</p>}
+          </div></Card>
+
+          <Card className="border-danger/30"><div className="flex flex-col gap-3">
+            <h3 className="flex items-center gap-2 font-semibold text-danger"><AlertTriangle size={16} /> Zona de perigo</h3>
+            <p className="text-sm text-text2">Excluir o deploy <strong>desconecta o repositório</strong> e apaga chave, passos e histórico. <strong>O site continua no ar</strong>.</p>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/5 p-3">
+              <div>
+                <p className="text-sm font-medium text-text">Excluir configuração de deploy</p>
+                <p className="text-xs text-text3">Você poderá reconectar do zero depois.</p>
+              </div>
+              <Button variant="danger" onClick={() => { setDelConfirm(""); setDelOpen(true); }}><Trash2 size={15} /> Excluir</Button>
+            </div>
+          </div></Card>
+        </div>
+      </div>
+
+      {/* ================= MODAIS ================= */}
+      <Dialog open={editConn} onClose={() => setEditConn(false)} title="Conexão" description="Repositório e tipo de acesso.">
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">{(["ssh", "http"] as const).map((tp) => (<button key={tp} type="button" onClick={() => setEType(tp)} className={`rounded-lg border px-3 py-1.5 text-sm ${eType === tp ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{tp === "ssh" ? "SSH (chave)" : "HTTPS (usuário e senha)"}</button>))}</div>
+          <Input className="font-mono" value={eRepo} onChange={(e) => setERepo(e.target.value)} placeholder={eType === "ssh" ? "git@github.com:usuario/projeto.git" : "https://github.com/usuario/projeto.git"} />
+          <p className="text-xs text-text3">Trocar o tipo não apaga a chave nem os passos — só troca a seleção.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setEditConn(false)}>Cancelar</Button>
+            <Button disabled={saveConn.isPending || !eRepo.trim()} onClick={async () => { await saveConn.mutateAsync({ connectionMode: eType, repoUrl: eRepo, framework: cfg?.framework }); setEditConn(false); }}>{saveConn.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar</Button>
+          </div>
+        </div>
+      </Dialog>
+
+      <Dialog open={branchEdit} onClose={() => setBranchEdit(false)} title="Branch de deploy" description="A versão do seu código que vai pro ar.">
+        {branchesQ.isFetching ? (
+          <div className="flex items-center gap-2 text-sm text-text3"><Loader2 size={14} className="animate-spin" /> Buscando branches…</div>
+        ) : branchesQ.data?.ok && branchesQ.data.branches.length ? (
+          <div className="flex flex-col gap-2">
+            <select value={pickBranch} onChange={(e) => setPickBranch(e.target.value)} className="rounded-lg border border-border bg-surface px-2 py-2 text-sm">
+              {branchesQ.data.branches.map((b) => <option key={b} value={b}>{b}{b === cfg?.branch ? " (atual)" : ""}</option>)}
+            </select>
+            <p className="text-xs text-text3">Trocar a branch não altera a chave nem os passos.</p>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => branchesQ.refetch()}><RefreshCw size={14} /> Atualizar</Button>
+              <Button variant="ghost" onClick={() => setBranchEdit(false)}>Cancelar</Button>
+              <Button disabled={saveBranch.isPending || !pickBranch || pickBranch === cfg?.branch} onClick={() => saveBranch.mutate(pickBranch)}>{saveBranch.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar branch</Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-warning">Não consegui listar as branches. Digite o nome manualmente.</p>
+            <Input className="font-mono" value={pickBranch} onChange={(e) => setPickBranch(e.target.value)} placeholder="main" />
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setBranchEdit(false)}>Cancelar</Button>
+              <Button disabled={saveBranch.isPending || !pickBranch.trim()} onClick={() => saveBranch.mutate(pickBranch.trim())}>Salvar branch</Button>
+            </div>
+          </div>
+        )}
+      </Dialog>
+
+      {isSSH ? (
+        <Dialog open={keyOpen} onClose={() => setKeyOpen(false)} title="Chave de deploy" widthClass="w-[min(94vw,40rem)]">
+          <div className="flex flex-col gap-3">
+            {revealedPub ? (
+              <div className="flex flex-col gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4">
+                <div className="flex items-start gap-2"><AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
+                  <p className="text-sm text-text">Esta é a <strong>única vez</strong> que a chave pública aparece. Copie e cole no GitHub agora.</p></div>
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+                  <code className="min-w-0 flex-1 truncate font-mono text-xs">{revealedPub}</code>
+                  <button type="button" aria-label="Copiar" onClick={async () => { await navigator.clipboard.writeText(revealedPub); setPubCopied(true); setTimeout(() => setPubCopied(false), 1500); }} className="shrink-0 rounded p-1 text-text2 hover:text-brand-strong">{pubCopied ? <Check size={16} className="text-success" /> : <Copy size={16} />}</button>
+                </div>
+                <p className="text-xs text-text3">Cole em: <strong>GitHub → Settings → Deploy keys → Add deploy key</strong> (deixe "Allow write access" desmarcado).</p>
+                <div className="flex flex-wrap gap-2">
+                  <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-sm text-link hover:bg-bg">Abrir GitHub <ExternalLink size={14} /></a>
+                  <Button onClick={() => testKey.mutate()} disabled={testKey.isPending}>{testKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Já colei → Testar</Button>
+                  <Button variant="ghost" onClick={() => setRevealedPub(null)}>Já guardei — fechar</Button>
+                </div>
+              </div>
+            ) : !hasKey ? (
+              <>
+                <p className="text-sm text-text2">Você ainda não tem uma chave para este ambiente.</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button onClick={() => genKey.mutate()} disabled={genKey.isPending}>{genKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} {genKey.isPending ? "Criando…" : "Criar chave SSH"}</Button>
+                  <button type="button" className="text-sm text-link hover:underline" onClick={() => setImporting(true)}>Colar minha chave privada</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-text2">Chave criada. <strong>A chave pública não é mostrada de novo</strong> — se você não guardou, clique em "Gerar outra chave".</p>
+                <div className="text-xs text-text3">Fingerprint: <code className="font-mono">{cfg!.fingerprint}</code>{verified ? <span className="ml-2 text-success">· verificada</span> : null}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={() => testKey.mutate()} disabled={testKey.isPending}>{testKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {verified ? "Testar novamente" : "Testar conexão"}</Button>
+                  <Button variant="outline" onClick={() => setRegenOpen(true)}><RefreshCw size={14} /> Gerar outra chave</Button>
+                  <button type="button" className="text-sm text-link hover:underline" onClick={() => setImporting(true)}>Colar minha chave privada</button>
+                </div>
+              </>
+            )}
+            {importing ? (
+              <div className="mt-1 flex flex-col gap-2 border-t border-border-subtle pt-3">
+                <p className="text-sm text-text2">Cole sua chave privada (sem senha). Fica guardada só no nó, nunca é exibida de volta.</p>
+                <textarea value={importText} onChange={(e) => setImportText(e.target.value)} rows={5} spellCheck={false} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs" />
+                <div className="flex gap-2"><Button variant="ghost" onClick={() => setImporting(false)}>Cancelar</Button><Button disabled={importKey.isPending || !importText.trim()} onClick={() => importKey.mutate(importText)}>{importKey.isPending ? <Loader2 size={16} className="animate-spin" /> : <KeyRound size={16} />} Importar chave</Button></div>
+              </div>
+            ) : null}
+          </div>
+        </Dialog>
+      ) : null}
+
+      {isHTTP ? (
+        <Dialog open={editHttp} onClose={() => setEditHttp(false)} title="Credenciais HTTPS">
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-text3">Use um token de acesso como senha (GitHub → Settings → Developer settings → Personal access tokens).</p>
+            <Input placeholder="usuário" value={httpUser} onChange={(e) => setHttpUser(e.target.value)} />
+            <Input type="password" placeholder="senha ou token" value={httpPass} onChange={(e) => setHttpPass(e.target.value)} />
+            <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setEditHttp(false)}>Cancelar</Button><Button disabled={saveHttp.isPending || !httpUser.trim() || !httpPass.trim()} onClick={() => saveHttp.mutate()}>{saveHttp.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar e testar</Button></div>
+          </div>
+        </Dialog>
+      ) : null}
+
+      <Dialog open={stepEdit} onClose={() => setStepEdit(false)} title="Passos do build" description="Passos de build rodam no container de build; migrações e reiniciar rodam no site." widthClass="w-[min(94vw,48rem)]">
+        <div className="flex flex-col gap-3">
+          <div className="flex gap-2">
+            {(["simple", "advanced"] as const).map((m) => (
+              <button key={m} type="button" onClick={() => setStepMode(m)} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${stepMode === m ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{m === "simple" ? "Simples" : "Avançado"}</button>
+            ))}
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="subdir">Pasta do projeto (opcional)</Label>
+            <Input id="subdir" className="font-mono" value={subdir} onChange={(e) => setSubdir(e.target.value)} placeholder="ex.: apps/web (deixe vazio se está na raiz)" />
+            <p className="text-xs text-text3">{subdir.trim() ? `Os passos de build rodam em ${subdir.trim()}/ dentro do repositório.` : "Os passos de build rodam na raiz do repositório."} É onde ficam o package.json / composer.json.</p>
+          </div>
+          {stepMode === "simple" ? (
+            <div className="flex flex-col gap-1.5">
+              {rows.filter((r) => r.kind !== "shell").map((r) => { const i = rows.indexOf(r); return (
+                <label key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-border-subtle bg-surface px-3 py-2 text-sm">
+                  <input type="checkbox" checked={r.enabled} onChange={(e) => setRow(i, { enabled: e.target.checked })} />
+                  <span className="font-medium text-text">{r.label}</span>
+                  {r.kind === "artisan_migrate" || r.kind === "php_migrate" ? <span className="rounded bg-warning/10 px-1.5 text-[10px] font-semibold text-warning">altera dados</span> : null}
+                  <span className="ml-auto text-xs text-text3">{isAppKind(r.kind) ? "no site" : `pasta: ${buildFolder(null)} · build`}</span>
+                </label>
+              ); })}
+              <div className="mt-1 flex flex-col gap-1">
+                <Label htmlFor="extra">Comando extra (opcional)</Label>
+                {(() => { const si = rows.findIndex((r) => r.kind === "shell"); const val = si >= 0 ? (rows[si]!.command ?? "") : ""; return (
+                  <Input id="extra" className="font-mono" value={val} placeholder="ex.: php artisan queue:restart"
+                    onChange={(e) => { const v = e.target.value; setRows((rs) => { const idx = rs.findIndex((r) => r.kind === "shell"); if (idx >= 0) { const a = [...rs]; a[idx] = { ...a[idx]!, command: v }; return a; } return v ? [...rs, { enabled: true, kind: "shell", command: v, label: "Comando personalizado", cwd: null, mutatesData: false }] : rs; }); }} />
+                ); })()}
+                <p className="text-xs text-text3">Rodado na pasta do projeto, no container de build, depois do build.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {rows.map((r, i) => (
+                <div key={i} className="flex flex-col gap-2 rounded-lg border border-border-subtle bg-surface p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input type="checkbox" checked={r.enabled} onChange={(e) => setRow(i, { enabled: e.target.checked })} title="Ativo" />
+                    <select value={r.kind} onChange={(e) => setRow(i, { kind: e.target.value, label: STEP_KINDS.find((k) => k.v === e.target.value)?.label ?? r.label })} className="rounded-lg border border-border bg-surface px-2 py-1 text-sm">
+                      {STEP_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
+                    </select>
+                    <div className="ml-auto flex items-center gap-1">
+                      <button type="button" onClick={() => moveRow(i, -1)} className="rounded p-1 text-text2 hover:bg-bg" aria-label="Subir">↑</button>
+                      <button type="button" onClick={() => moveRow(i, 1)} className="rounded p-1 text-text2 hover:bg-bg" aria-label="Descer">↓</button>
+                      <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="rounded p-1 text-text2 hover:text-danger" aria-label="Remover"><XCircle size={15} /></button>
+                    </div>
+                  </div>
+                  {r.kind === "shell" ? (
+                    <textarea value={r.command ?? ""} onChange={(e) => setRow(i, { command: e.target.value })} rows={2} spellCheck={false} placeholder="ex.: php artisan queue:restart" className="w-full rounded-lg border border-border bg-surface px-2 py-1 font-mono text-xs" />
+                  ) : null}
+                  {isAppKind(r.kind) ? (
+                    <p className="text-xs text-text3">Roda no <strong>site</strong> (/app) — a pasta do projeto não se aplica.</p>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-text3">Pasta:</span>
+                      <Input className="h-8 max-w-[220px] font-mono text-xs" value={r.cwd ?? ""} onChange={(e) => setRow(i, { cwd: e.target.value || null })} placeholder={subdir.trim() ? `(herda ${subdir.trim()})` : "(raiz)"} />
+                      <span className="text-xs text-text3">→ pasta: {buildFolder(r.cwd)} · build</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+              <Button variant="ghost" size="sm" onClick={addRow} className="self-start">+ Adicionar passo</Button>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle pt-3">
+            <Button variant="ghost" size="sm" onClick={() => setDetectConfirm(true)}><RefreshCw size={14} /> Restaurar padrão</Button>
+            <span className="ml-auto flex gap-2">
+              <Button variant="ghost" onClick={() => { setStepEdit(false); if (cfg) { setRows(cfg.steps.map((x) => ({ enabled: x.enabled, kind: x.kind, command: x.command, label: x.label, cwd: x.cwd, mutatesData: x.mutatesData }))); setSubdir(cfg.subdir ?? ""); setStepMode((cfg.mode as "simple" | "advanced") ?? "simple"); } }}>Cancelar</Button>
+              <Button onClick={() => saveSteps.mutate()} disabled={saveSteps.isPending}>{saveSteps.isPending ? <Loader2 size={16} className="animate-spin" /> : null} Salvar passos</Button>
+            </span>
+          </div>
+        </div>
+      </Dialog>
+
+      {showStartFile && envQ.data ? (
+        <StartFileModal id={id} open={startOpen} onClose={() => setStartOpen(false)} env={envQ.data} framework={cfg?.framework ?? "none"} />
+      ) : null}
+
+      <EnvVarsModal id={id} open={varsOpen} onClose={() => setVarsOpen(false)} />
 
       <Dialog open={delOpen} onClose={() => { setDelOpen(false); setDelConfirm(""); }} title="Excluir a configuração de deploy?" description="Esta ação não pode ser desfeita.">
         <div className="flex flex-col gap-4">
@@ -525,88 +575,14 @@ export default function DeployPage() {
   );
 }
 
-/** Comando de start avançado (Python/Django) — SÓ SALVA; aplica no próximo deploy. */
-function PythonStartCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
-  const toast = useToast();
-  const [cmd, setCmd] = React.useState<string>(current ?? "");
-  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
-  const dirty = cmd !== (current ?? "");
-  const save = useMutation({
-    mutationFn: () => api.setPythonCmd(id, cmd.trim() === "" ? null : cmd.trim(), false),
-    onSuccess: (u) => {
-      onSaved(u);
-      toast.show("success", u.pythonCmd ? "Comando salvo — vale no próximo deploy." : "Comando removido — volta ao padrão python3 <arquivo>.");
-    },
-    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
-  });
+/** Linha de configuração: ícone + rótulo + valor + ação (abre modal). */
+function ConfigRow({ icon, label, value, action, last }: { icon: React.ReactNode; label: string; value: React.ReactNode; action?: React.ReactNode; last?: boolean }) {
   return (
-    <Card><div className="flex flex-col gap-3">
-      <h3 className="vp-accent-bar flex items-center gap-2 font-semibold text-text">Comando de start (avançado)</h3>
-      <p className="text-sm text-text2">
-        Para frameworks como <strong>Django</strong>: o comando que sobe o servidor na porta 80.
-        Deixe vazio para o padrão <code>python3 {"{arquivo de start}"}</code>. É aplicado no <strong>próximo deploy</strong>.
-      </p>
-      <input
-        value={cmd}
-        onChange={(e) => setCmd(e.target.value)}
-        spellCheck={false}
-        aria-label="Comando de start avançado do Python"
-        placeholder="python manage.py runserver 0.0.0.0:80 --insecure --noreload"
-        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
-          {save.isPending ? "Salvando…" : "Salvar"}
-        </Button>
-        <span className="text-sm text-text3">Só salva — vale a partir do próximo deploy.</span>
-      </div>
-    </div></Card>
-  );
-}
-
-/** Comando de start avançado (.NET) — SÓ SALVA; aplica no próximo deploy. */
-function DotnetStartCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
-  const toast = useToast();
-  const effQ = useQuery({ queryKey: ["dotnet-eff", id], queryFn: () => api.getDotnetEffectiveCmd(id) });
-  const effective = effQ.data?.cmd ?? "";
-  const baseline = current ?? effective;
-  const [cmd, setCmd] = React.useState<string>("");
-  const [touched, setTouched] = React.useState(false);
-  React.useEffect(() => { if (!touched) setCmd(baseline); }, [baseline, touched]);
-  const dirty = touched && cmd.trim() !== baseline.trim();
-  const save = useMutation({
-    mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim(), false),
-    onSuccess: (u) => {
-      setTouched(false);
-      onSaved(u);
-      toast.show("success", u.dotnetCmd ? "Comando salvo — vale no próximo deploy." : "Comando removido — volta ao automático.");
-    },
-    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
-  });
-  const isOverride = !!(current && current.trim());
-  return (
-    <Card><div className="flex flex-col gap-3">
-      <h3 className="vp-accent-bar flex items-center gap-2 font-semibold text-text">Comando de start (avançado)</h3>
-      <p className="text-sm text-text2">
-        {isOverride
-          ? <>Comando <strong>fixo</strong> definido por você. Edite abaixo, ou apague e salve para voltar ao automático.</>
-          : <>Modo <strong>automático</strong>: o campo mostra o comando que o ambiente roda hoje. Edite para fixar o seu (ex.: outro nome de DLL). Sobe na porta 80.</>}
-        {" "}É aplicado no <strong>próximo deploy</strong>.
-      </p>
-      <input
-        value={effQ.isPending && !touched ? "" : cmd}
-        onChange={(e) => { setTouched(true); setCmd(e.target.value); }}
-        spellCheck={false}
-        aria-label="Comando de start avançado do .NET"
-        placeholder={effQ.isPending ? "carregando…" : "dotnet app.dll"}
-        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
-          {save.isPending ? "Salvando…" : "Salvar"}
-        </Button>
-        <span className="text-sm text-text3">Só salva — vale a partir do próximo deploy.</span>
-      </div>
-    </div></Card>
+    <div className={`flex items-center gap-3 py-3 ${last ? "" : "border-b border-border-subtle"}`}>
+      <span className="shrink-0">{icon}</span>
+      <span className="w-24 shrink-0 text-[13px] text-text3">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-text">{value}</span>
+      {action ?? null}
+    </div>
   );
 }

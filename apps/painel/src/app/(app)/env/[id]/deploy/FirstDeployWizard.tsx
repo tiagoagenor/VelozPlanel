@@ -208,7 +208,7 @@ export function FirstDeployWizard({ id }: { id: string }) {
   // Esconde o cabeçalho do ambiente (breadcrumb + nome + ações) enquanto o wizard
   // está montado — deixa a experiência de 1º deploy focada, como no design.
   const envChrome = React.useContext(EnvChromeContext);
-  React.useEffect(() => { envChrome?.setHideHeader(true); return () => envChrome?.setHideHeader(false); }, [envChrome]);
+  React.useEffect(() => { envChrome?.setHeaderMode("hidden"); return () => envChrome?.setHeaderMode("full"); }, [envChrome]);
 
   const envQ = useQuery({ queryKey: ["environment", id], queryFn: () => api.getEnvironment(id) });
   const q = useQuery({ queryKey: ["deploy", id], queryFn: () => api.getDeploy(id) });

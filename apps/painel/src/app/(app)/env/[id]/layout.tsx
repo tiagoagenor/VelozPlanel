@@ -99,9 +99,11 @@ const SECTIONS: Section[] = [
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
 
-/** Deixa o conteúdo (ex.: wizard de 1º deploy) esconder o cabeçalho do ambiente
- *  (breadcrumb + nome + ações), mantendo topbar/rail/submenu — para uma tela focada. */
-export const EnvChromeContext = React.createContext<{ setHideHeader: (v: boolean) => void } | null>(null);
+/** Deixa o conteúdo controlar o cabeçalho do ambiente (breadcrumb + nome + ações),
+ *  mantendo topbar/rail/submenu. "full" = padrão; "minimal" = só nome + estado (ex.:
+ *  tela de deploy); "hidden" = nada (ex.: wizard de 1º deploy). */
+export type EnvHeaderMode = "full" | "minimal" | "hidden";
+export const EnvChromeContext = React.createContext<{ setHeaderMode: (m: EnvHeaderMode) => void } | null>(null);
 
 export default function EnvContextLayout({
   children,
@@ -122,8 +124,8 @@ export default function EnvContextLayout({
 
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmText, setConfirmText] = React.useState("");
-  const [hideHeader, setHideHeader] = React.useState(false);
-  const chromeValue = React.useMemo(() => ({ setHideHeader }), []);
+  const [headerMode, setHeaderMode] = React.useState<EnvHeaderMode>("full");
+  const chromeValue = React.useMemo(() => ({ setHeaderMode }), []);
 
   const envQuery = useQuery({
     queryKey: ["environment", id],
@@ -281,7 +283,12 @@ export default function EnvContextLayout({
 
         {/* ── Conteúdo da seção ── */}
         <div className="min-w-0">
-          {!hideHeader ? (<>
+          {headerMode === "minimal" ? (
+          <div className="mb-5 flex items-center gap-3">
+            <h1 className="truncate text-[26px] font-bold leading-tight text-text">{env?.name ?? "…"}</h1>
+            {env ? <EnvStateBadge state={env.state} /> : null}
+          </div>
+          ) : headerMode === "full" ? (<>
           {/* Breadcrumb + voltar */}
           <div className="mb-3">
             <nav aria-label="Trilha de navegação" className="flex min-w-0 items-center gap-1.5 text-[13px] text-text3">
