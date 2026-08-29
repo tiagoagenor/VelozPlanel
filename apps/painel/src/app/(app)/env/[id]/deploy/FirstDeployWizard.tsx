@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { SegmentedControl } from "@/components/ui/segmented";
 import { useToast } from "@/components/ui/toast";
+import { EnvChromeContext } from "../layout";
 
 /* ───────────── constantes / helpers ───────────── */
 
@@ -204,6 +205,10 @@ export function FirstDeployWizard({ id }: { id: string }) {
   const router = useRouter();
   const qc = useQueryClient();
   const toast = useToast();
+  // Esconde o cabeçalho do ambiente (breadcrumb + nome + ações) enquanto o wizard
+  // está montado — deixa a experiência de 1º deploy focada, como no design.
+  const envChrome = React.useContext(EnvChromeContext);
+  React.useEffect(() => { envChrome?.setHideHeader(true); return () => envChrome?.setHideHeader(false); }, [envChrome]);
 
   const envQ = useQuery({ queryKey: ["environment", id], queryFn: () => api.getEnvironment(id) });
   const q = useQuery({ queryKey: ["deploy", id], queryFn: () => api.getDeploy(id) });

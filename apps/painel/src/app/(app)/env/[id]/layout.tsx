@@ -99,6 +99,10 @@ const SECTIONS: Section[] = [
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
 
+/** Deixa o conteúdo (ex.: wizard de 1º deploy) esconder o cabeçalho do ambiente
+ *  (breadcrumb + nome + ações), mantendo topbar/rail/submenu — para uma tela focada. */
+export const EnvChromeContext = React.createContext<{ setHideHeader: (v: boolean) => void } | null>(null);
+
 export default function EnvContextLayout({
   children,
 }: {
@@ -118,6 +122,8 @@ export default function EnvContextLayout({
 
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [confirmText, setConfirmText] = React.useState("");
+  const [hideHeader, setHideHeader] = React.useState(false);
+  const chromeValue = React.useMemo(() => ({ setHideHeader }), []);
 
   const envQuery = useQuery({
     queryKey: ["environment", id],
@@ -182,7 +188,7 @@ export default function EnvContextLayout({
   if (currentSeg === "studio") return <>{children}</>;
 
   return (
-    <>
+    <EnvChromeContext.Provider value={chromeValue}>
       {/* Mobile: submenu empilhado acima do conteúdo. Desktop: submenu é `fixed`
           (fora do fluxo, colado no rail) → conteúdo ocupa a largura toda (o
           padding-esquerdo p/ reservar a faixa vem do AppShell). */}
@@ -275,6 +281,7 @@ export default function EnvContextLayout({
 
         {/* ── Conteúdo da seção ── */}
         <div className="min-w-0">
+          {!hideHeader ? (<>
           {/* Breadcrumb + voltar */}
           <div className="mb-3">
             <nav aria-label="Trilha de navegação" className="flex min-w-0 items-center gap-1.5 text-[13px] text-text3">
@@ -324,6 +331,7 @@ export default function EnvContextLayout({
               </div>
             ) : null}
           </div>
+          </>) : null}
 
           {children}
         </div>
@@ -376,7 +384,7 @@ export default function EnvContextLayout({
           </div>
         </div>
       </Dialog>
-    </>
+    </EnvChromeContext.Provider>
   );
 }
 
