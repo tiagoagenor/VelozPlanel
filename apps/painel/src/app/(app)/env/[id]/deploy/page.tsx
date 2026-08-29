@@ -6,10 +6,10 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Rocket, GitBranch, KeyRound, Copy, Check, Loader2, Play, ExternalLink,
-  CheckCircle2, XCircle, Info, ArrowRight, ArrowLeft, Sparkles, Boxes, Pencil, RefreshCw, AlertTriangle, Trash2,
+  CheckCircle2, XCircle, Info, Boxes, Pencil, RefreshCw, AlertTriangle, Trash2,
 } from "lucide-react";
-import { RUNTIME_LABEL } from "@velozplanel/contracts";
 import type { DeployConfig, DeployFramework, Environment } from "@velozplanel/contracts";
+import { FirstDeployWizard } from "./FirstDeployWizard";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -20,28 +20,6 @@ import { useToast } from "@/components/ui/toast";
 
 type Fw = DeployFramework;
 type DeployLang = "node" | "php" | "python" | "static" | "dotnet";
-const FRAMEWORKS: Record<DeployLang, { id: Fw; label: string; hint: string }[]> = {
-  node: [
-    { id: "nextjs", label: "Next.js", hint: "Detecta e roda standalone automaticamente" },
-    { id: "none", label: "Node genérico", hint: "Express, Fastify, qualquer app Node" },
-  ],
-  php: [
-    { id: "laravel", label: "Laravel", hint: "Serve public/, roda artisan e migrações" },
-    { id: "none", label: "Padrão", hint: "WordPress, PHP puro, qualquer app" },
-  ],
-  python: [
-    { id: "django", label: "Django", hint: "Detecta manage.py, instala requirements e sobe o runserver" },
-    { id: "python", label: "Python genérico", hint: "Flask, FastAPI ou script próprio (app.py)" },
-  ],
-  static: [
-    { id: "spa", label: "Site com build (React, Vue, Angular)", hint: "Roda npm install + build e publica o dist/build" },
-    { id: "static", label: "Site pronto (HTML/CSS/JS)", hint: "Publica os arquivos como estão, sem build" },
-  ],
-  dotnet: [
-    { id: "dotnet", label: ".NET / ASP.NET Core", hint: "Detecta o .csproj, roda dotnet publish e sobe a DLL" },
-  ],
-};
-
 function nodeUnsupported(err: unknown): boolean {
   return err instanceof ApiError && (err.code === "node_deploy_unsupported" || err.status === 502 || err.status === 503);
 }
@@ -61,14 +39,6 @@ export default function DeployPage() {
   const cfg = q.data;
   const lang = (envQ.data?.runtime.kind ?? "node") as DeployLang;
 
-  const [wizard, setWizard] = React.useState(false);
-  const [wStep, setWStep] = React.useState(1);
-  const [framework, setFramework] = React.useState<Fw>("none");
-  const [wRepo, setWRepo] = React.useState("");
-  const [wType, setWType] = React.useState<"ssh" | "http">("ssh");
-  const [wUser, setWUser] = React.useState("");
-  const [wPass, setWPass] = React.useState("");
-
   const invalidate = () => qc.invalidateQueries({ queryKey: ["deploy", id] });
 
   // ---- mutations ----
@@ -78,7 +48,6 @@ export default function DeployPage() {
     onSuccess: () => invalidate(),
     onError: (e) => toast.show("error", errMsg(e, "Não consegui salvar a conexão.")),
   });
-  const probe = useMutation({ mutationFn: (repoUrl: string) => api.deployProbe(id, { repoUrl }) });
   const genKey = useMutation({
     mutationFn: () => api.generateDeployKey(id),
     onSuccess: (r) => { invalidate(); setRevealedPub(r.publicKey); toast.show("success", "Chave criada. Copie a pública agora — ela aparece só uma vez."); },
@@ -107,7 +76,7 @@ export default function DeployPage() {
   });
   const delDeploy = useMutation({
     mutationFn: () => api.deleteDeploy(id),
-    onSuccess: () => { setDelOpen(false); setDelConfirm(""); setRevealedPub(null); setWizard(false); qc.invalidateQueries({ queryKey: ["deploy", id] }); qc.invalidateQueries({ queryKey: ["deploy-runs", id] }); toast.show("success", "Deploy excluído. Você pode começar de novo."); },
+    onSuccess: () => { setDelOpen(false); setDelConfirm(""); setRevealedPub(null); qc.invalidateQueries({ queryKey: ["deploy", id] }); qc.invalidateQueries({ queryKey: ["deploy-runs", id] }); toast.show("success", "Deploy excluído. Você pode começar de novo."); },
     onError: (e) => toast.show("error", errMsg(e, "Falha ao excluir.")),
   });
   const [branchEdit, setBranchEdit] = React.useState(false);
@@ -195,79 +164,9 @@ export default function DeployPage() {
   const verified = !!cfg?.connectionVerifiedAt || isPublic;
   const ready = hasConn && verified && (cfg?.steps.length ?? 0) > 0;
 
-  // ================= ESTADO VAZIO =================
-  if (!hasConn && !wizard) {
-    return (
-      <Card>
-        <div className="flex flex-col items-center gap-4 py-8 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-soft"><Rocket size={28} className="text-brand-strong" /></div>
-          <div>
-            <h2 className="text-lg font-semibold text-text">Publique seu código com um clique</h2>
-            <p className="mx-auto mt-1 max-w-md text-sm text-text2">Conecte um repositório Git. A gente detecta a linguagem, a branch e os passos.</p>
-          </div>
-          <Button onClick={() => { setWizard(true); setWStep(1); }}><Rocket size={16} /> Criar deploy</Button>
-        </div>
-      </Card>
-    );
-  }
-
-  // ================= WIZARD (só coleta repo) =================
-  if (wizard && !hasConn) {
-    return (
-      <div className="flex flex-col gap-5">
-        <div className="flex items-center gap-2 text-xs">
-          {["Tipo", "Repositório"].map((s, i) => (
-            <span key={s} className={`rounded-full px-2.5 py-1 font-medium ${wStep === i + 1 ? "bg-brand-soft text-brand-strong" : wStep > i + 1 ? "text-success" : "text-text3"}`}>{i + 1}. {s}</span>
-          ))}
-        </div>
-        {wStep === 1 ? (
-          <Card><div className="flex flex-col gap-4">
-            <h3 className="font-semibold text-text">Que tipo de projeto?</h3>
-            <div><span className="text-xs font-medium text-text3">Linguagem</span>
-              <div className="mt-1.5 flex gap-2"><span className="rounded-lg border border-brand-strong bg-brand-soft px-3 py-1.5 text-sm font-medium text-brand-strong">{RUNTIME_LABEL[lang]}</span></div>
-              <p className="mt-1 text-xs text-text3">A linguagem é a do ambiente.</p>
-            </div>
-            <div><span className="text-xs font-medium text-text3">Framework</span>
-              <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">{FRAMEWORKS[lang].map((f) => (
-                <button key={f.id} type="button" onClick={() => setFramework(f.id)} className={`flex flex-col items-start gap-0.5 rounded-xl border p-3 text-left ${framework === f.id ? "border-brand-strong bg-brand-soft" : "border-border-subtle hover:bg-bg"}`}>
-                  <span className="flex items-center gap-1.5 font-medium text-text">{f.id === "nextjs" ? <Sparkles size={15} className="text-brand-strong" /> : <Boxes size={15} className="text-text2" />}{f.label}</span>
-                  <span className="text-xs text-text3">{f.hint}</span></button>))}</div>
-            </div>
-            <div className="flex justify-between"><Button variant="ghost" onClick={() => setWizard(false)}>Cancelar</Button><Button onClick={() => setWStep(2)}>Continuar <ArrowRight size={16} /></Button></div>
-          </div></Card>
-        ) : (
-          <Card><div className="flex flex-col gap-4">
-            <h3 className="font-semibold text-text">Qual o repositório?</h3>
-            <div className="flex flex-col gap-1.5"><span className="text-xs font-medium text-text3">Tipo de conexão</span>
-              <div className="flex gap-2">{(["ssh", "http"] as const).map((tp) => (<button key={tp} type="button" onClick={() => { setWType(tp); setWRepo(""); setWUser(""); setWPass(""); }} className={`rounded-lg border px-3 py-1.5 text-sm font-medium ${wType === tp ? "border-brand-strong bg-brand-soft text-brand-strong" : "border-border-subtle text-text2 hover:bg-bg"}`}>{tp === "ssh" ? "SSH (chave)" : "HTTPS (usuário e senha)"}</button>))}</div>
-            </div>
-            <div className="flex flex-col gap-1.5"><Label htmlFor="wrepo">URL do repositório</Label>
-              <Input id="wrepo" className="font-mono" placeholder={wType === "ssh" ? "git@github.com:usuario/projeto.git" : "https://github.com/usuario/projeto.git"} value={wRepo} onChange={(e) => setWRepo(e.target.value)} />
-              <p className="text-xs text-text3">Não precisa informar a branch — a gente detecta.</p>
-            </div>
-            {wType === "http" ? (
-              <div className="flex flex-col gap-2 rounded-xl border border-border-subtle bg-bg/60 p-3">
-                <span className="text-xs font-medium text-text3">Usuário e senha (só para repositório privado)</span>
-                <Input placeholder="usuário" autoComplete="off" value={wUser} onChange={(e) => setWUser(e.target.value)} />
-                <Input type="password" placeholder="senha ou token de acesso" autoComplete="off" value={wPass} onChange={(e) => setWPass(e.target.value)} />
-                <p className="text-xs text-text3">Dica: no GitHub use um <strong>token</strong> como senha (Settings → Developer settings → Personal access tokens). Repositório público? Pode deixar em branco.</p>
-              </div>
-            ) : null}
-            <div className="flex justify-between"><Button variant="ghost" onClick={() => setWStep(1)}><ArrowLeft size={16} /> Voltar</Button>
-              <Button disabled={!wRepo.trim() || saveConn.isPending || probe.isPending} onClick={async () => {
-                let mode: "ssh" | "http" | "public" = wType;
-                if (wType === "http" && !wUser.trim() && !wPass.trim()) { try { const r = await probe.mutateAsync(wRepo); if (!r.isPrivate) mode = "public"; } catch { /* segue http */ } }
-                await saveConn.mutateAsync({ connectionMode: mode, repoUrl: wRepo, framework });
-                if (mode === "http" && wUser.trim() && wPass.trim()) {
-                  try { await api.setDeployHttpCredentials(id, { username: wUser.trim(), password: wPass.trim() }); } catch { /* mostra no card de credenciais */ }
-                }
-                setWUser(""); setWPass("");
-                setWizard(false);
-              }}>{saveConn.isPending || probe.isPending ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />} Continuar</Button></div>
-          </div></Card>
-        )}
-      </div>
-    );
+  // ================= PRIMEIRO DEPLOY (wizard guiado) =================
+  if (!hasConn) {
+    return <FirstDeployWizard id={id} />;
   }
 
   // ================= GERÊNCIA =================
