@@ -368,12 +368,12 @@ export default function DeployPage() {
             <p className="text-xs text-text3">Checa o repositório de tempos em tempos e <strong>publica sozinho</strong> quando houver commit novo na branch.</p>
             {autoOn ? (
               <div className="flex flex-col gap-2 border-t border-border-subtle pt-3">
-                <label className="flex flex-wrap items-center gap-2 text-sm text-text2">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-text2">
                   Checar a cada
-                  <Input type="number" min={1} max={1440} value={autoInterval} onChange={(e) => setAutoInterval(Math.max(1, Number(e.target.value) || 1))} onBlur={() => saveAuto.mutate({ autoEnabled: true, intervalMinutes: Math.max(1, autoInterval) })} className="h-8 w-20" />
+                  <Input type="number" min={1} max={1440} value={autoInterval} onChange={(e) => setAutoInterval(Math.max(1, Number(e.target.value) || 1))} className="h-8 w-20" />
                   minutos
-                  {saveAuto.isPending ? <Loader2 size={14} className="animate-spin text-text3" /> : null}
-                </label>
+                  <Button size="sm" onClick={() => saveAuto.mutate({ autoEnabled: true, intervalMinutes: Math.max(1, autoInterval) })} disabled={saveAuto.isPending}>{saveAuto.isPending ? <Loader2 size={14} className="animate-spin" /> : null} Salvar</Button>
+                </div>
                 <p className="text-xs text-text3">Mínimo 1 minuto. {cfg?.lastCheckAt ? `Última checagem: ${new Date(cfg.lastCheckAt).toLocaleString("pt-BR")}.` : "Ainda não checou."}{cfg?.lastRemoteSha ? ` Commit visto: ${cfg.lastRemoteSha.slice(0, 8)}.` : ""}</p>
               </div>
             ) : null}
