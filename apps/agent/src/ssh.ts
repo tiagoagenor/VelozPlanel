@@ -34,6 +34,7 @@ interface ResolveResult {
   accessScope: string;
   allowlist: string[];
   keys: string[];
+  idleTimeoutSeconds?: number; // desconexão por inatividade; 0/ausente = desativado
 }
 
 interface Logger {
@@ -156,6 +157,11 @@ export function startSshGateway(log: Logger): void {
             });
             const stream = await exec.start({ hijack: true, stdin: true, Tty: useTty });
 
+            // Desconexão por inatividade — SÓ em sessões interativas (TTY). Comandos
+            // batch (exec sem tty) não são derrubados. O valor vem do controle a cada
+            // login (super admin). Reseta a cada byte (tecla do usuário ou saída do app).
+            let clearIdle: () => void = () => {};
+
             if (useTty) {
               // Com TTY o stream é multiplexado num só canal.
               channel.pipe(stream);
@@ -171,6 +177,24 @@ export function startSshGateway(log: Logger): void {
                 exec.resize({ h: info.rows, w: info.cols }).catch(() => {});
                 if (accept) accept();
               });
+
+              const idleMs = Math.max(0, Math.floor(resolved?.idleTimeoutSeconds ?? 0)) * 1000;
+              if (idleMs > 0) {
+                let idleTimer: ReturnType<typeof setTimeout> | null = null;
+                clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
+                const touch = () => {
+                  clearIdle();
+                  idleTimer = setTimeout(() => {
+                    try { channel.write("\r\n\x1b[33mSessão encerrada por inatividade.\x1b[0m\r\n"); } catch { /* ignora */ }
+                    try { channel.end(); } catch { /* ignora */ }
+                    try { client.end(); } catch { /* ignora */ }
+                  }, idleMs);
+                };
+                channel.on("data", touch); // teclas do usuário
+                stream.on("data", touch);  // saída do app
+                channel.on("close", clearIdle);
+                touch(); // arma
+              }
             } else {
               // Sem TTY: stdout/stderr vêm multiplexados; separa nos canais.
               channel.pipe(stream);
@@ -178,6 +202,7 @@ export function startSshGateway(log: Logger): void {
             }
 
             stream.on("end", async () => {
+              clearIdle();
               let code = 0;
               try {
                 const info = await exec.inspect();

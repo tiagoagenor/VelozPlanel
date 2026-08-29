@@ -11,7 +11,7 @@ import { Writable } from "node:stream";
  *   imagens `php:*-cli` e o Alpine (BusyBox) das imagens `node:*-alpine`.
  *
  * SEGURANÇA (defesa em profundidade):
- *   A API já confina o caminho à raiz do ambiente (/var/www ou /app) antes de
+ *   A API já confina o caminho à raiz do ambiente (/app) antes de
  *   chamar o Agente. Aqui reforçamos: exigimos caminho absoluto e rejeitamos
  *   qualquer segmento `..`; nunca deixamos apagar a raiz `/`.
  */
@@ -282,7 +282,7 @@ export async function rename(
   ) {
     throw new FileError(400, "nome inválido (sem barras)");
   }
-  // Diretório pai de `path` (POSIX). Ex.: /var/www/a.txt -> /var/www
+  // Diretório pai de `path` (POSIX). Ex.: /app/www/a.txt -> /app/www
   const idx = path.lastIndexOf("/");
   const dir = idx <= 0 ? "/" : path.slice(0, idx);
   const dest = dir === "/" ? `/${newName}` : `${dir}/${newName}`;

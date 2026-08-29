@@ -90,8 +90,13 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
 
   React.useEffect(() => {
     if (!open || region) return;
-    const firstOnline = regions.find((r) => r.online) ?? regions[0];
-    if (firstOnline) setRegion(firstOnline.region);
+    // Região padrão definida pelo super admin (isDefault); senão a 1ª online.
+    const def =
+      regions.find((r) => r.isDefault && r.online) ??
+      regions.find((r) => r.isDefault) ??
+      regions.find((r) => r.online) ??
+      regions[0];
+    if (def) setRegion(def.region);
   }, [open, regions, region]);
 
   const nameError = nameTouched ? validateName(name) : null;
@@ -213,29 +218,31 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
       onClose={resetAndClose}
       title="Criar ambiente"
       description={step === 1 ? "Passo 1 de 2 — escolha o tipo" : "Passo 2 de 2 — configure"}
-      className="w-[min(94vw,54rem)]"
+      widthClass="w-[min(94vw,54rem)]"
+      scrollBody={false}
     >
-      <form onSubmit={onSubmit} className="flex flex-col gap-5">
-        <div className="min-h-[420px]">
-          {step === 1 ? (
-            <div className="flex flex-col gap-4">
-              {/* Filtro */}
-              <div className="flex gap-1">
-                {([["all", "Tudo"], ["code", "Código"], ["service", "Serviços"]] as const).map(([v, label]) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setFilter(v)}
-                    className={cn(
-                      "rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors",
-                      filter === v ? "bg-brand-soft text-brand-strong" : "text-text2 hover:bg-bg hover:text-text",
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+      <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col gap-4">
+        {step === 1 ? (
+          <>
+            {/* Filtro (fixo) */}
+            <div className="flex shrink-0 gap-1">
+              {([["all", "Tudo"], ["code", "Código"], ["service", "Serviços"]] as const).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setFilter(v)}
+                  className={cn(
+                    "rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors",
+                    filter === v ? "bg-brand-soft text-brand-strong" : "text-text2 hover:bg-bg hover:text-text",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
+            {/* Lista de ambientes (só isto rola) */}
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               {typesQ.isPending ? (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
                   {Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-[128px] animate-pulse rounded-[12px] border border-border bg-bg" />)}
@@ -267,7 +274,9 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                 </div>
               )}
             </div>
-          ) : (
+          </>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             <div className="grid gap-5 lg:grid-cols-[1fr_248px]">
               {/* Form */}
               <div className="flex flex-col gap-4">
@@ -366,17 +375,17 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                 </div>
               </aside>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {error ? (
-          <p role="alert" className="flex items-center gap-2 text-sm font-medium text-danger">
+          <p role="alert" className="flex shrink-0 items-center gap-2 text-sm font-medium text-danger">
             <AlertTriangle size={16} aria-hidden="true" /> {error}
           </p>
         ) : null}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-border pt-4">
+        {/* Rodapé (fixo, linha toda) */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-4">
           <div aria-hidden="true" className="flex items-center gap-1.5">
             <span className={cn("h-1.5 rounded-full transition-all", step === 1 ? "w-6 bg-brand" : "w-3 bg-border")} />
             <span className={cn("h-1.5 rounded-full transition-all", step === 2 ? "w-6 bg-brand" : "w-3 bg-border")} />

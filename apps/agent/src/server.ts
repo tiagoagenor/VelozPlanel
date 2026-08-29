@@ -34,6 +34,7 @@ import * as files from "./files.js";
 import { startSshGateway } from "./ssh.js";
 import { startSftpGateway } from "./sftp.js";
 import * as deploy from "./deploy.js";
+import { runSpeedtest } from "./speedtest.js";
 
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 4100);
 
@@ -154,6 +155,10 @@ const chmodBody = z.object({
 /* ─────────────── Rotas ─────────────── */
 
 app.get("/health", async () => ({ ok: true }));
+
+// Teste de velocidade de internet DESTE nó (download/upload/ping). Chamado pela
+// API (agendador de hora em hora + botão do super admin). Leva alguns segundos.
+app.post("/speedtest", async () => runSpeedtest());
 
 app.post("/provision", async (req, reply) => {
   const parsed = provisionBody.safeParse(req.body);

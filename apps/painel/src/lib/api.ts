@@ -6,6 +6,8 @@ import type {
   DatabaseWithSecret,
   DbStudioConfig,
   DbResult,
+  DbSchema,
+  DbTableMeta,
   DbRunSqlInput,
   DbRunMongoInput,
   DbRunRedisInput,
@@ -18,6 +20,7 @@ import type {
   Node,
   SessionUser,
   SslStatus,
+  AdminPanelStatus,
   SshConfig,
   SshKey,
   AddSshKeyInput,
@@ -51,6 +54,7 @@ import type {
   AuditEntry,
   WgPeer,
   AddWgPeerInput,
+  SpeedtestResult,
   Plan,
   CreatePlanInput,
   UpdatePlanInput,
@@ -201,7 +205,7 @@ export function listNodes(): Promise<Node[]> {
  */
 export function updateNode(
   id: string,
-  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null },
+  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null; region?: string },
 ): Promise<Node> {
   return request<Node>(`/nodes/${id}`, {
     method: "PATCH",
@@ -252,10 +256,32 @@ export function setStudioPassword(id: string, password: string | null): Promise<
 export function unlockStudio(id: string, password: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/environments/${id}/studio/unlock`, { method: "POST", body: { password } });
 }
+/**
+ * O agente executa 1 consulta por ambiente de cada vez (lock; paralelo → 429 db_busy).
+ * Serializa TODAS as chamadas do Studio de um mesmo ambiente numa fila FIFO por id,
+ * para o react-query poder disparar schema/dados/contagem/metadados sem colidir.
+ */
+const studioChains = new Map<string, Promise<unknown>>();
+function studioSerialize<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  const prev = studioChains.get(id) ?? Promise.resolve();
+  const run = prev.then(fn, fn); // roda fn independente do resultado anterior
+  studioChains.set(id, run.catch(() => {}));
+  return run;
+}
+
 export function studioExec(id: string, body: DbStudioExecBody): Promise<DbResult> {
-  return request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body });
+  return studioSerialize(id, () => request<DbResult>(`/environments/${id}/studio/exec`, { method: "POST", body }));
 }
 export type DbStudioExecBody = { sql: DbRunSqlInput } | { mongo: DbRunMongoInput } | { redis: DbRunRedisInput };
+
+/** Introspecção de schema (IDE): lista tabelas/views + versão. */
+export function getStudioSchema(id: string): Promise<DbSchema> {
+  return studioSerialize(id, () => request<DbSchema>(`/environments/${id}/studio/schema`));
+}
+/** Metadados de uma tabela (colunas, PK, índices, FKs, triggers, DDL). */
+export function getStudioTable(id: string, name: string): Promise<DbTableMeta> {
+  return studioSerialize(id, () => request<DbTableMeta>(`/environments/${id}/studio/table/${encodeURIComponent(name)}`));
+}
 
 export function startEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}/start`, { method: "POST" });
@@ -329,18 +355,18 @@ export function setNodeStartFile(
 }
 
 /** Define/limpa o comando de start avançado do Python (Django); aplica ao vivo. */
-export function setPythonCmd(id: string, cmd: string | null): Promise<Environment> {
+export function setPythonCmd(id: string, cmd: string | null, apply = true): Promise<Environment> {
   return request<Environment>(`/environments/${id}/python-cmd`, {
     method: "POST",
-    body: { cmd },
+    body: { cmd, apply },
   });
 }
 
 /** Define/limpa o comando avançado de start do .NET (dotnet App.dll). Aplica ao vivo. */
-export function setDotnetCmd(id: string, cmd: string | null): Promise<Environment> {
+export function setDotnetCmd(id: string, cmd: string | null, apply = true): Promise<Environment> {
   return request<Environment>(`/environments/${id}/dotnet-cmd`, {
     method: "POST",
-    body: { cmd },
+    body: { cmd, apply },
   });
 }
 
@@ -398,6 +424,21 @@ export function setForceHttps(
 export function issueSsl(id: string): Promise<SslStatus> {
   return request<SslStatus>(`/environments/${id}/ssl/issue`, {
     method: "POST",
+  });
+}
+
+/* ─────────────── Painel admin de serviço (RabbitMQ) ─────────────── */
+
+/** Estado do painel admin embutido (exposto ou não, URL, credenciais). */
+export function getAdminPanel(id: string): Promise<AdminPanelStatus> {
+  return request<AdminPanelStatus>(`/environments/${id}/admin-panel`);
+}
+
+/** Liga/desliga a exposição do painel admin num subdomínio aleatório. */
+export function setAdminPanel(id: string, enabled: boolean): Promise<AdminPanelStatus> {
+  return request<AdminPanelStatus>(`/environments/${id}/admin-panel`, {
+    method: "POST",
+    body: { enabled },
   });
 }
 
@@ -530,8 +571,8 @@ export function getEnvVars(id: string): Promise<EnvVarsConfig> {
 export function setEnvVars(id: string, input: SetEnvVarsInput): Promise<EnvVarsConfig> {
   return request<EnvVarsConfig>(`/environments/${id}/env-vars`, { method: "PUT", body: input });
 }
-export function revealEnvVars(id: string): Promise<{ vars: { key: string; value: string; buildTime: boolean }[] }> {
-  return request<{ vars: { key: string; value: string; buildTime: boolean }[] }>(`/environments/${id}/env-vars/reveal`, { method: "POST" });
+export function revealEnvVars(id: string): Promise<{ vars: { key: string; value: string; buildTime: boolean; hidden: boolean }[] }> {
+  return request<{ vars: { key: string; value: string; buildTime: boolean; hidden: boolean }[] }>(`/environments/${id}/env-vars/reveal`, { method: "POST" });
 }
 
 /* ─────────────── Métricas ─────────────── */
@@ -748,6 +789,24 @@ export function changeResources(
   });
 }
 
+export function grantSubdomainChanges(id: string, count: number): Promise<AdminEnvironment> {
+  return request<AdminEnvironment>(`/admin/environments/${id}/subdomain-grant`, {
+    method: "POST",
+    body: { count },
+  });
+}
+
+export function setDefaultRegion(region: string): Promise<{ region: string }> {
+  return request<{ region: string }>("/admin/default-region", { method: "PUT", body: { region } });
+}
+
+export function getSshSecurity(): Promise<{ idleTimeoutSeconds: number }> {
+  return request<{ idleTimeoutSeconds: number }>("/admin/ssh-security");
+}
+export function setSshIdleTimeout(idleTimeoutSeconds: number): Promise<{ idleTimeoutSeconds: number }> {
+  return request<{ idleTimeoutSeconds: number }>("/admin/ssh-security", { method: "PUT", body: { idleTimeoutSeconds } });
+}
+
 /* ── Auditoria ── */
 
 export function listAudit(limit = 200): Promise<AuditEntry[]> {
@@ -768,6 +827,18 @@ export function addWgPeer(input: AddWgPeerInput): Promise<WgPeer> {
 
 export function deleteWgPeer(id: string): Promise<void> {
   return request<void>(`/admin/wg/peers/${id}`, { method: "DELETE" });
+}
+
+/* ── Teste de velocidade (nó local, super admin) ── */
+
+export function listSpeedtests(limit?: number): Promise<SpeedtestResult[]> {
+  return request<SpeedtestResult[]>("/admin/speedtests", {
+    query: { limit: limit != null ? String(limit) : undefined },
+  });
+}
+
+export function runSpeedtest(): Promise<SpeedtestResult> {
+  return request<SpeedtestResult>("/admin/speedtests/run", { method: "POST" });
 }
 
 /* ── Créditos / saldo ── */

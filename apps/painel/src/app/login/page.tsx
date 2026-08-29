@@ -33,7 +33,8 @@ function LoginForm() {
   const qc = useQueryClient();
   const next = params.get("next") || "/";
 
-  const [tab, setTab] = React.useState<Tab>("entrar");
+  // Deep-link da aba: /login?tab=criar abre direto o cadastro (link do site).
+  const [tab, setTab] = React.useState<Tab>(params.get("tab") === "criar" ? "criar" : "entrar");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPw, setShowPw] = React.useState(false);

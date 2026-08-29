@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Braces, Plus, Trash2, Eye, Save, Loader2, Info, FileUp } from "lucide-react";
+import { Braces, Plus, Trash2, Eye, EyeOff, Lock, Save, Loader2, Info, FileUp } from "lucide-react";
 import * as api from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,10 @@ import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 
-interface Row { key: string; value: string; buildTime: boolean; dirty: boolean }
+// hidden = flag persistida (escondida no servidor). available = temos o valor em
+// texto no painel (só das não-escondidas, ou que o usuário digitou). valueDirty =
+// valor editado (só então reenvia o valor ao salvar).
+interface Row { key: string; value: string; hidden: boolean; available: boolean; valueDirty: boolean }
 
 /** Parseia um .env: ignora linhas em branco e comentadas (#), aceita `export`,
  *  aspas simples/duplas e comentário no fim de valor sem aspas. */
@@ -44,53 +47,69 @@ export default function EnvVarsPage() {
   const toast = useToast();
   const q = useQuery({ queryKey: ["env-vars", id], queryFn: () => api.getEnvVars(id) });
   const [rows, setRows] = React.useState<Row[]>([]);
-  const [revealed, setRevealed] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importText, setImportText] = React.useState("");
-  const [importBuild, setImportBuild] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
 
+  // Não-escondidas: valor exibido (auto-revela). Escondidas: o servidor NÃO manda
+  // o valor (só se vê no container) → ficam mascaradas e sem "revelar".
   React.useEffect(() => {
-    if (q.data) setRows(q.data.vars.map((v) => ({ key: v.key, value: "", buildTime: v.buildTime, dirty: false })));
+    if (!q.data) return;
+    setRows(q.data.vars.map((v) => ({ key: v.key, value: "", hidden: v.hidden, available: false, valueDirty: false })));
+    if (q.data.vars.length > 0) {
+      (async () => {
+        try {
+          const r = await api.revealEnvVars(id);
+          const byKey = new Map(r.vars.map((v) => [v.key, v]));
+          setRows((rs) => rs.map((rr) => {
+            if (rr.valueDirty) return rr;
+            const got = byKey.get(rr.key);
+            if (!got) return rr;
+            return { ...rr, hidden: got.hidden, value: got.hidden ? "" : got.value, available: !got.hidden };
+          }));
+        } catch { /* mantém mascarado se falhar */ }
+      })();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data]);
 
-  const reveal = useMutation({
-    mutationFn: () => api.revealEnvVars(id),
-    onSuccess: (r) => {
-      setRows(r.vars.map((v) => ({ key: v.key, value: v.value, buildTime: v.buildTime, dirty: false })));
-      setRevealed(true);
-    },
-    onError: () => toast.show("error", "Não foi possível revelar."),
-  });
-
   const save = useMutation({
+    // envia hidden sempre; value só das linhas EDITADAS (as intocadas vão sem
+    // value → o backend mantém o valor atual, nunca zera).
     mutationFn: () =>
-      api.setEnvVars(id, { vars: rows.filter((r) => r.key.trim()).map((r) => ({ key: r.key.trim(), value: r.value, buildTime: r.buildTime })) }),
+      api.setEnvVars(id, {
+        vars: rows.filter((r) => r.key.trim()).map((r) => ({ key: r.key.trim(), buildTime: true, hidden: r.hidden, ...(r.valueDirty ? { value: r.value } : {}) })),
+      }),
     onSuccess: (r) => {
-      qc.setQueryData(["env-vars", id], r);
+      qc.setQueryData(["env-vars", id], r); // dispara o efeito → recarrega + auto-revela
       toast.show("success", r.message ?? "Salvo.");
     },
     onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
   });
 
-  function update(i: number, patch: Partial<Row>) {
-    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch, dirty: true } : r)));
+  /** Olho da linha: esconde/mostra. Só funciona se temos o valor (available);
+   *  escondida já salva não tem valor no painel → não dá pra revelar. */
+  function toggleHidden(i: number) {
+    setRows((rs) => rs.map((r, j) => (j === i && r.available ? { ...r, hidden: !r.hidden } : r)));
   }
-  function addRow() { setRows((rs) => [...rs, { key: "", value: "", buildTime: false, dirty: true }]); }
+
+  function update(i: number, patch: Partial<Row>) {
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
+  function addRow() { setRows((rs) => [...rs, { key: "", value: "", hidden: false, available: true, valueDirty: true }]); }
   function removeRow(i: number) { setRows((rs) => rs.filter((_, j) => j !== i)); }
 
   /** Mescla as variáveis do .env colado nas linhas atuais (sobrescreve chaves iguais). */
-  function mergeImport(base: Row[], parsed: { key: string; value: string }[], markBuild: boolean): Row[] {
+  function mergeImport(base: Row[], parsed: { key: string; value: string }[]): Row[] {
     const idxByKey = new Map(base.map((r, i) => [r.key, i]));
     const out = [...base];
     for (const p of parsed) {
-      const auto = markBuild || /^(NEXT_PUBLIC_|VITE_)/.test(p.key);
       const idx = idxByKey.get(p.key);
       const cur = idx !== undefined ? out[idx] : undefined;
       if (idx !== undefined && cur) {
-        out[idx] = { ...cur, value: p.value, buildTime: markBuild ? true : cur.buildTime, dirty: true };
+        out[idx] = { ...cur, value: p.value, available: true, valueDirty: true };
       } else {
-        out.push({ key: p.key, value: p.value, buildTime: auto, dirty: true });
+        out.push({ key: p.key, value: p.value, hidden: false, available: true, valueDirty: true });
         idxByKey.set(p.key, out.length - 1);
       }
     }
@@ -105,28 +124,16 @@ export default function EnvVarsPage() {
     }
     setImporting(true);
     try {
-      // Se há segredos ainda mascarados, revela primeiro para não salvá-los vazios ao mesclar.
-      let base = rows;
-      if (hasSecrets && !revealed) {
-        const r = await api.revealEnvVars(id);
-        base = r.vars.map((v) => ({ key: v.key, value: v.value, buildTime: v.buildTime, dirty: false }));
-        setRevealed(true);
-      }
-      setRows(mergeImport(base, parsed, importBuild));
+      setRows(mergeImport(rows, parsed));
       setImportOpen(false);
       setImportText("");
-      setImportBuild(false);
       toast.show("success", `${parsed.length} variável(is) importada(s). Revise e clique em Salvar e aplicar.`);
-    } catch {
-      toast.show("error", "Não foi possível revelar os valores atuais para mesclar com segurança.");
     } finally {
       setImporting(false);
     }
   }
 
   if (q.isPending) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="animate-spin text-brand-strong" /></div>;
-
-  const hasSecrets = (q.data?.vars.length ?? 0) > 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -136,36 +143,48 @@ export default function EnvVarsPage() {
             <Braces size={18} className="text-brand-strong" /> Variáveis de ambiente
           </h2>
           <p className="text-sm text-text2">
-            Variáveis <strong>reais</strong> do processo (não um arquivo). Ao salvar, aplicam
-            no container vivo (reinicia o app); e são reaplicadas se o container for recriado.
-            Marque <strong>build</strong> para as que o build precisa (ex.: <code>NEXT_PUBLIC_*</code> — que
-            entram no bundle e são públicas).
+            Variáveis <strong>reais</strong> do processo. Ao salvar, aplicam no container vivo
+            (reinicia o app ~1s) e são reaplicadas se o container for recriado. Ficam disponíveis
+            no <strong>build</strong> e no runtime, guardadas criptografadas. Clique no olho para
+            <strong> esconder</strong> uma variável: depois de salva, o valor <strong>não é mais
+            exibido no painel</strong> (só de dentro do container) e não dá pra revelar de volta.
           </p>
 
-          {hasSecrets && !revealed ? (
-            <div>
-              <Button variant="outline" onClick={() => reveal.mutate()} disabled={reveal.isPending}>
-                <Eye size={16} /> Revelar valores para editar
-              </Button>
-            </div>
-          ) : null}
-
           <div className="flex flex-col gap-2">
-            {rows.map((r, i) => (
+            {rows.map((r, i) => {
+              const masked = r.hidden || !r.available;
+              return (
               <div key={i} className="flex flex-wrap items-center gap-2">
                 <Input className="min-w-[160px] flex-1 font-mono" placeholder="CHAVE" value={r.key} onChange={(e) => update(i, { key: e.target.value })} />
-                <Input className="min-w-[200px] flex-[2] font-mono" placeholder={hasSecrets && !revealed && !r.dirty ? "••••••••" : "valor"} value={r.value} onChange={(e) => update(i, { value: e.target.value })} />
-                <label className="flex items-center gap-1 text-xs text-text2">
-                  <input type="checkbox" checked={r.buildTime} onChange={(e) => update(i, { buildTime: e.target.checked })} /> build
-                </label>
+                <Input
+                  type={masked ? "password" : "text"}
+                  className="min-w-[200px] flex-[2] font-mono"
+                  placeholder={masked ? "•••••••• (escondida)" : "valor"}
+                  value={r.value}
+                  onChange={(e) => update(i, { value: e.target.value, valueDirty: true, available: true })}
+                />
+                {r.available ? (
+                  <button
+                    type="button"
+                    onClick={() => toggleHidden(i)}
+                    aria-label={r.hidden ? "Mostrar valor" : "Esconder valor"}
+                    title={r.hidden ? "Mostrar valor" : "Esconder valor (some ao salvar)"}
+                    className="rounded p-1.5 text-text2 hover:bg-bg hover:text-brand-strong"
+                  >
+                    {r.hidden ? <Eye size={16} /> : <EyeOff size={16} />}
+                  </button>
+                ) : (
+                  <span title="Escondida — o valor só é visto de dentro do container" className="rounded p-1.5 text-text3"><Lock size={16} /></span>
+                )}
                 <button type="button" onClick={() => removeRow(i)} aria-label="Remover" className="rounded p-1.5 text-text2 hover:bg-bg hover:text-danger"><Trash2 size={16} /></button>
               </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={addRow}><Plus size={16} /> Adicionar</Button>
-            <Button variant="outline" onClick={() => { setImportText(""); setImportBuild(false); setImportOpen(true); }}><FileUp size={16} /> Importar .env</Button>
+            <Button variant="outline" onClick={() => { setImportText(""); setImportOpen(true); }}><FileUp size={16} /> Importar .env</Button>
             <Button onClick={() => save.mutate()} disabled={save.isPending}>
               {save.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               {save.isPending ? "Salvando…" : "Salvar e aplicar"}
@@ -194,11 +213,7 @@ export default function EnvVarsPage() {
             placeholder={"APP_NAME=Meu App\nAPP_ENV=production\n# comentário — ignorado\nDB_HOST=127.0.0.1\nDB_PASSWORD=\"senha com espaço\""}
             className="w-full resize-y rounded-lg border border-border bg-bg p-3 font-mono text-sm text-text outline-none focus:border-brand-strong"
           />
-          <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-1.5 text-sm text-text2">
-              <input type="checkbox" checked={importBuild} onChange={(e) => setImportBuild(e.target.checked)} />
-              Marcar todas como <strong>build</strong>
-            </label>
+          <div className="flex items-center justify-end gap-2">
             <span className="text-xs text-text3">{parseEnv(importText).length} variável(is) detectada(s)</span>
           </div>
           <div className="flex justify-end gap-2">

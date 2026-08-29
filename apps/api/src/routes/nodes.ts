@@ -5,7 +5,7 @@ import { count, eq } from "drizzle-orm";
 import { node as nodeSchema, updateNodeInput, apiError } from "@velozplanel/contracts";
 import type { Node, NodeStatus } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { nodes, environments } from "../db/schema";
+import { nodes, environments, platformSettings } from "../db/schema";
 import { requireAdmin, ApiHttpError } from "../auth";
 
 export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
@@ -59,11 +59,15 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
     },
     async (req): Promise<Node> => {
       await requireAdmin(req);
-      const patch: Partial<{ publicHost: string | null; httpHost: string | null; alertMessage: string | null; agentUrl: string | null }> = {};
+      const before = (await db.select().from(nodes).where(eq(nodes.id, req.params.id)).limit(1))[0];
+      if (!before) throw new ApiHttpError(404, "not_found", "nó não encontrado");
+      const patch: Partial<{ publicHost: string | null; httpHost: string | null; alertMessage: string | null; agentUrl: string | null; region: string }> = {};
       if (req.body.publicHost !== undefined) patch.publicHost = req.body.publicHost;
       if (req.body.httpHost !== undefined) patch.httpHost = req.body.httpHost;
       if (req.body.alertMessage !== undefined) patch.alertMessage = req.body.alertMessage;
       if (req.body.agentUrl !== undefined) patch.agentUrl = req.body.agentUrl;
+      const newRegion = req.body.region?.trim();
+      if (newRegion) patch.region = newRegion;
       const updated = await db
         .update(nodes)
         .set(patch)
@@ -71,6 +75,10 @@ export async function nodeRoutes(fastify: FastifyInstance): Promise<void> {
         .returning();
       const n = updated[0];
       if (!n) throw new ApiHttpError(404, "not_found", "nó não encontrado");
+      // Se renomeou a região que era a padrão do wizard, a padrão acompanha.
+      if (newRegion && newRegion !== before.region) {
+        await db.update(platformSettings).set({ defaultRegion: newRegion }).where(eq(platformSettings.defaultRegion, before.region));
+      }
       const [c] = await db
         .select({ c: count() })
         .from(environments)

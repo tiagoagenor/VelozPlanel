@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { eq, count, and, isNull } from "drizzle-orm";
+import { eq, count, and, isNull, sql } from "drizzle-orm";
 import {
   environment as environmentSchema,
   createEnvironmentInput,
@@ -25,6 +25,7 @@ import type {
   RuntimeKind,
   EnvState,
   EnvCategory,
+  DiskUsage,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs } from "../db/schema";
@@ -36,6 +37,7 @@ import * as agent from "../agent";
 import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode } from "../nodes";
 import { allocateAddress, ownerNetworkFor } from "../ipam";
 import { connectionInfo } from "../services";
+import { loadPanelRow, panelUrl, panelKindFor } from "../service-panel";
 import * as cpIngress from "../cp-ingress";
 import { isSubReserved, isSubTaken } from "../subdomain";
 import { setSubdomainInput } from "@velozplanel/contracts";
@@ -77,9 +79,16 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     accessUrl = `https://${r.domain}`;
   } else if (r.autoSubdomain) {
     accessUrl = `https://${r.autoSubdomain}.jamees.top`;
-  } else if (r.httpPort && r.nodeId) {
+  } else if (r.httpPort && r.nodeId && !panelKindFor(r.typeId)) {
+    // Serviços com painel (rabbitmq embutido) publicam porta só para o painel
+    // (exposto por subdomínio no toggle); não é um "site" para abrir por IP:porta.
     const host = await httpHostForNode(r.nodeId);
     if (host) accessUrl = `http://${host}:${r.httpPort}`;
+  }
+  // Serviços com painel (rabbitmq / phpMyAdmin / Adminer): o endereço "Principal" é a
+  // URL PÚBLICA do painel (<sub>.jamees.top), quando ligado.
+  if (!accessUrl && panelKindFor(r.typeId)) {
+    accessUrl = panelUrl(await loadPanelRow(r.id));
   }
   const { category, connection } = await serviceView(r);
   // Região do nó + IP interno na rede do dono (serviços/stacks).
@@ -112,6 +121,7 @@ export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
     httpPort: r.httpPort,
     domain: r.domain,
     autoSubdomain: r.autoSubdomain,
+    subdomainChangesLeft: r.subdomainChangesLeft,
     runtimeVersionFull: r.runtimeVersionFull,
     startupScript: r.startupScript,
     nodeStartFile: r.nodeStartFile,
@@ -333,15 +343,29 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         response: { 200: diskUsageSchema, 401: apiError, 403: apiError, 404: apiError },
       },
     },
-    async (req): Promise<{ diskBytes: number }> => {
+    async (req): Promise<DiskUsage> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
-      if (env.state !== "running" || !env.containerId) return { diskBytes: 0 };
-      try {
-        return await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
-      } catch {
-        return { diskBytes: 0 };
+      // Só mede da máquina quando ligada (o `du` nos volumes exige o container de pé).
+      // Ao medir, SALVA o valor; assim, pausado/desligado, devolvemos o último salvo.
+      if (env.state === "running" && env.containerId) {
+        try {
+          const { diskBytes } = await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
+          const measuredAt = new Date();
+          await db
+            .update(environments)
+            .set({ diskBytes, diskMeasuredAt: measuredAt })
+            .where(eq(environments.id, env.id));
+          return { diskBytes, measuredAt: measuredAt.toISOString(), live: true };
+        } catch {
+          /* nó indisponível — cai no último valor salvo abaixo */
+        }
       }
+      return {
+        diskBytes: env.diskBytes ?? 0,
+        measuredAt: env.diskMeasuredAt ? env.diskMeasuredAt.toISOString() : null,
+        live: false,
+      };
     },
   );
 
@@ -425,10 +449,21 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+      // Captura o tamanho do disco ANTES de parar (o container ainda está de pé, então o
+      // `du` nos volumes funciona). Fica salvo para exibir enquanto pausado. Best-effort.
+      let diskPatch: { diskBytes?: number; diskMeasuredAt?: Date } = {};
+      if (env.state === "running" && env.containerId) {
+        try {
+          const { diskBytes } = await agent.diskUsage(await agentUrlForEnv(env), env.containerId);
+          diskPatch = { diskBytes, diskMeasuredAt: new Date() };
+        } catch {
+          /* nó indisponível — mantém o último valor salvo */
+        }
+      }
       if (env.containerId) await agent.stop(await agentUrlForEnv(env), env.containerId);
       const updated = await db
         .update(environments)
-        .set({ state: "paused" })
+        .set({ state: "paused", ...diskPatch })
         .where(eq(environments.id, env.id))
         .returning();
       return await toEnvironment(updated[0] ?? env);
@@ -591,12 +626,21 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       const sub = req.body.subdomain; // já normalizado/validado (formato) pelo zod
+      const isAdmin = user.role === "admin";
+      const old = env.autoSubdomain;
+      const changed = (old ?? "").toLowerCase() !== sub.toLowerCase();
+      // Cliente comum só troca enquanto tiver saldo de alterações (admin libera mais).
+      if (changed && !isAdmin && env.subdomainChangesLeft <= 0) {
+        throw new ApiHttpError(403, "subdomain_limit", "Você já personalizou este endereço. Peça ao suporte para liberar uma nova troca.");
+      }
       if (await isSubReserved(sub)) throw new ApiHttpError(409, "subdomain_reserved", `“${sub}” é reservado; escolha outro.`);
       if (await isSubTaken(sub, env.id)) throw new ApiHttpError(409, "subdomain_taken", `“${sub}” já está em uso; escolha outro.`);
-      const old = env.autoSubdomain;
+      const patch: Record<string, unknown> = { autoSubdomain: sub };
+      // Consome 1 alteração só quando um cliente comum de fato muda o valor.
+      if (changed && !isAdmin) patch.subdomainChangesLeft = sql`GREATEST(${environments.subdomainChangesLeft} - 1, 0)`;
       let updated;
       try {
-        updated = await db.update(environments).set({ autoSubdomain: sub }).where(eq(environments.id, env.id)).returning();
+        updated = await db.update(environments).set(patch).where(eq(environments.id, env.id)).returning();
       } catch {
         throw new ApiHttpError(409, "subdomain_taken", "esse subdomínio acabou de ser tomado; tente outro.");
       }
@@ -698,7 +742,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         .where(eq(environments.id, env.id))
         .returning();
       const row = updated[0] ?? env;
-      if (row.containerId && row.state === "running") {
+      if ((req.body.apply ?? true) && row.containerId && row.state === "running") {
         const agentUrl = await agentUrlForEnv(row);
         try {
           await agent.applyPythonCmd(agentUrl, row.containerId, cmd);
@@ -734,7 +778,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         .where(eq(environments.id, env.id))
         .returning();
       const row = updated[0] ?? env;
-      if (row.containerId && row.state === "running") {
+      if ((req.body.apply ?? true) && row.containerId && row.state === "running") {
         const agentUrl = await agentUrlForEnv(row);
         try {
           await agent.applyDotnetCmd(agentUrl, row.containerId, cmd);

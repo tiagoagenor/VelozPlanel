@@ -40,7 +40,7 @@ export interface ProvisionArgs {
   dotnetCmd?: string | null; // comando de start avançado (.NET, ex.: dotnet App.dll)
   phpNodeVersion?: string | null; // versão Node (via nvm) para ambientes PHP
   envVars?: EnvVarPair[]; // variáveis de ambiente gerenciadas (Env real do Docker)
-  phpRoot?: string | null; // docroot do php -S (Laravel = /var/www/public)
+  phpRoot?: string | null; // docroot do php -S (público = /app/www)
   // Rede por-dono: quando presente, o app nasce na bridge do dono (IP fixo) em vez
   // da docker0 — assim app e serviços/bancos do MESMO dono se alcançam. A porta
   // publicada (PortBindings) e o supervisor continuam iguais.
@@ -144,7 +144,7 @@ HTTPServer(("0.0.0.0", 80), H).serve_forever()
 /** Estático: Caddyfile com fallback SPA (try_files → index.html) e arquivos
  *  ocultos escondidos. Sem aspas simples. */
 const CADDYFILE = `:80 {
-	root * /site
+	root * /app
 	encode gzip
 	try_files {path} {path}/ /index.html
 	file_server {
@@ -265,19 +265,22 @@ const LOAD_ENV =
 function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
   const setup = setupPrefix(startupScript);
   if (runtime.kind === "php") {
-    // Supervisor: docroot vem de /.vp-php-root (senão VP_PHP_ROOT, senão /var/www).
-    // Laravel serve /var/www/public com um router (URLs limpas). Guard: se o
-    // ROOT ainda não existir (antes do 1º deploy), cai para /var/www → :80 sempre sobe.
+    // Supervisor PHP: docroot público = /app/www. O código/framework/.env vive em
+    // /app (FORA do docroot → nunca é servido) — separação de segurança dentro do
+    // volume /app padronizado. docroot vem de /.vp-php-root (senão VP_PHP_ROOT,
+    // senão /app/www). Guard: se o ROOT não existir ainda, cai para /app/www.
     const script =
       setup +
-      `touch /.veloz-env-capable; mkdir -p /var/www; ` +
+      `touch /.veloz-env-capable; mkdir -p /app/www; ` +
       `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `while :; do ` +
       LOAD_ENV +
-      `ROOT="\$(cat /.vp-php-root 2>/dev/null || printf '%s' "\${VP_PHP_ROOT:-/var/www}")"; ` +
-      `[ -d "\$ROOT" ] || ROOT=/var/www; ` +
-      `[ -f /var/www/index.php ] || printf '%s' '${PHP_INDEX}' > /var/www/index.php; ` +
-      `if [ -f /.vp-php-router.php ]; then RT=/.vp-php-router.php; else RT=""; fi; ` +
+      `ROOT="\$(cat /.vp-php-root 2>/dev/null || printf '%s' "\${VP_PHP_ROOT:-/app/www}")"; ` +
+      `[ -d "\$ROOT" ] || ROOT=/app/www; ` +
+      `[ -f /app/www/index.php ] || printf '%s' '${PHP_INDEX}' > /app/www/index.php; ` +
+      // Router SEMPRE presente (esconde dotfiles + URLs limpas), para todo PHP.
+      `[ -f /.vp-php-router.php ] || (printf '%s' '${PHP_ROUTER_B64}' | base64 -d > /.vp-php-router.php); ` +
+      `RT=/.vp-php-router.php; ` +
       `cd "\$ROOT"; php -S 0.0.0.0:80 -t "\$ROOT" \$RT & VPPID=\$!; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
       `done`;
@@ -307,14 +310,14 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
     return ["sh", "-c", script];
   }
   if (runtime.kind === "static") {
-    // ESTÁTICO: Caddy file-server na :80 com fallback SPA. docroot /site.
+    // ESTÁTICO: Caddy file-server na :80 com fallback SPA. docroot /app.
     // O container usa Entrypoint=/bin/sh (ver createContainer) → Cmd = ["-c", …].
     const script =
       setup +
-      `mkdir -p /site; ` +
+      `mkdir -p /app; ` +
       `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `[ -f /.vp-caddyfile ] || printf '%s' '${CADDYFILE}' > /.vp-caddyfile; ` +
-      `[ -f /site/index.html ] || (printf '%s' '${STATIC_INDEX_B64}' | base64 -d > /site/index.html); ` +
+      `[ -f /app/index.html ] || (printf '%s' '${STATIC_INDEX_B64}' | base64 -d > /app/index.html); ` +
       `while :; do ` +
       `caddy run --config /.vp-caddyfile --adapter caddyfile & VPPID=\$!; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
@@ -410,25 +413,30 @@ export async function writeEnvFileAndRestart(
 const PHP_ROUTER = `<?php
 $root = $_SERVER['DOCUMENT_ROOT'];
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+// Segurança: 404 em qualquer segmento que comece com ponto (.env, .git,
+// .htaccess, .user.ini…). O php -S NÃO esconde dotfiles sozinho — sem isto
+// eles seriam servidos como texto puro.
+if (preg_match('#(^|/)\\.[^/]#', (string) $path)) { http_response_code(404); return true; }
 if ($path !== '/' && is_file($root . $path)) return false;
 require $root . '/index.php';
 `;
+const PHP_ROUTER_B64 = Buffer.from(PHP_ROUTER, "utf8").toString("base64");
 
-/** Valida o docroot (borda do agente): só sob /var/www, sem metacaracteres. */
+/** Valida o docroot (borda do agente): só sob /app, sem metacaracteres. */
 function safePhpRoot(root: string): boolean {
-  return /^\/var\/www(\/[A-Za-z0-9._-]+)*$/.test(root);
+  return /^\/app(\/[A-Za-z0-9._-]+)*$/.test(root);
 }
 
 /**
- * Aplica o docroot do PHP (Laravel → /var/www/public) ao vivo, sem recriar:
- * grava /.vp-php-root (+ router quando pedido) e reinicia o processo php.
+ * Aplica o docroot do PHP (público = /app/www; Laravel serve /app/www) ao vivo,
+ * sem recriar: grava /.vp-php-root (+ router quando pedido) e reinicia o php.
  */
 export async function applyPhpRoot(
   containerId: string,
   root: string,
   useRouter: boolean,
 ): Promise<void> {
-  if (!safePhpRoot(root)) root = "/var/www";
+  if (!safePhpRoot(root)) root = "/app/www";
   const c = docker.getContainer(containerId);
   const routerB64 = Buffer.from(PHP_ROUTER, "utf8").toString("base64");
   const script =
@@ -560,14 +568,15 @@ export async function restartDotnet(containerId: string): Promise<void> {
 function lxcfsBinds(): string[] {
   if (!process.env.VP_LXCFS) return [];
   const base = "/var/lib/lxcfs/proc";
+  // :ro — o cliente só LÊ esses arquivos (htop/free); escrever neles não faz sentido.
   return [
-    `${base}/cpuinfo:/proc/cpuinfo`,
-    `${base}/meminfo:/proc/meminfo`,
-    `${base}/stat:/proc/stat`,
-    `${base}/uptime:/proc/uptime`,
-    `${base}/loadavg:/proc/loadavg`,
-    `${base}/diskstats:/proc/diskstats`,
-    `${base}/swaps:/proc/swaps`,
+    `${base}/cpuinfo:/proc/cpuinfo:ro`,
+    `${base}/meminfo:/proc/meminfo:ro`,
+    `${base}/stat:/proc/stat:ro`,
+    `${base}/uptime:/proc/uptime:ro`,
+    `${base}/loadavg:/proc/loadavg:ro`,
+    `${base}/diskstats:/proc/diskstats:ro`,
+    `${base}/swaps:/proc/swaps:ro`,
   ];
 }
 
@@ -627,15 +636,15 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
 
   await removeExistingByEnv(envId); // idempotência: retry não deixa container duplicado
   const binds = lxcfsBinds();
-  // Python/Estático guardam o CÓDIGO num volume nomeado → sobrevive à troca de
-  // versão (recreate). Node/PHP seguem sem volume (deploy por git). O delete
-  // job remove veloz-code-* junto.
+  // O CÓDIGO do cliente vive num único volume nomeado montado em /app para TODOS
+  // os runtimes → sobrevive a recreate/troca de versão. PHP separa público
+  // (/app/www) de código (/app) DENTRO do mesmo volume. O delete job remove
+  // veloz-code-* junto.
   const codeDir =
-    runtime.kind === "python" || runtime.kind === "dotnet"
+    runtime.kind === "node" || runtime.kind === "python" ||
+    runtime.kind === "dotnet" || runtime.kind === "static" || runtime.kind === "php"
       ? "/app"
-      : runtime.kind === "static"
-        ? "/site"
-        : null;
+      : null;
   if (codeDir) {
     await ensureNamedVolume(`veloz-code-${envId}`, envId);
     binds.push(`veloz-code-${envId}:${codeDir}`);
@@ -667,7 +676,7 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       // página "site em construção" servida pelo placeholder .NET (injeção-safe: env do Docker).
       `VP_PAGE_B64=${CONSTRUCTION_B64}`,
       // docroot do PHP na 1ª subida; depois /.vp-php-root manda.
-      `VP_PHP_ROOT=${(args.phpRoot && args.phpRoot.trim()) || "/var/www"}`,
+      `VP_PHP_ROOT=${(args.phpRoot && args.phpRoot.trim()) || "/app/www"}`,
       // variáveis gerenciadas como Env REAL (Docker não faz parsing de shell).
       ...(args.envVars ?? [])
         .filter((v) => !RESERVED_ENV.has(v.key) && !v.key.startsWith("VP_"))
@@ -680,6 +689,11 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       NanoCpus: Math.round(limits.vcpu * 1e9),
       RestartPolicy: { Name: "unless-stopped" }, // site volta após crash/OOM (D4)
       Init: true, // init do Docker (tini) como PID 1 → sinais/SIGTERM e reap limpos
+      // Paridade com os containers de serviço: mata ARP-spoof L2 na bridge do dono
+      // e bloqueia escalada via setuid. `ping` segue funcionando (ICMP datagram via
+      // net.ipv4.ping_group_range, padrão do Docker moderno — não precisa de NET_RAW).
+      CapDrop: ["NET_RAW", "NET_ADMIN"],
+      SecurityOpt: ["no-new-privileges"],
       Binds: binds.length ? binds : undefined, // LXCFS (htop/free veem o plano)
       CpusetCpus: cpuset || undefined, // cores visíveis = ceil(vcpu) (htop/nproc corretos)
       // HostPort "" => Docker escolhe uma porta efêmera livre no host.
@@ -817,7 +831,10 @@ export interface ServiceProvisionResult {
  * (nada publicado no host), endurecido. Readiness por exec (não por porta).
  */
 export async function provisionService(args: ServiceProvisionArgs): Promise<ServiceProvisionResult> {
-  await removeExistingByEnv(args.envId); // idempotência em retry (mesmo vp.env)
+  // Sidecar de ferramenta (role "tool:<kind>"): limpa só a instância anterior DELE
+  // (por env+role), para NÃO remover o banco (mesmo vp.env). Serviços/apps: por env.
+  const scopedRole = args.role && args.role.startsWith("tool:") ? args.role : undefined;
+  await removeExistingByEnv(args.envId, scopedRole); // idempotência em retry
   await ensureImage(args.image);
   await ensureNetwork(args.network.name, args.network.subnet, args.network.gateway, args.ownerId);
 
@@ -981,9 +998,13 @@ export async function attachNetwork(
 }
 
 /** Remove qualquer container existente deste ambiente (idempotência do provision em retry). */
-async function removeExistingByEnv(envId: string): Promise<void> {
+async function removeExistingByEnv(envId: string, role?: string): Promise<void> {
   try {
-    const list = await docker.listContainers({ all: true, filters: { label: [`vp.env=${envId}`] } });
+    // Com `role`, limpa só os containers daquele papel (ex.: um sidecar de ferramenta),
+    // sem remover os demais containers do MESMO ambiente (ex.: o banco).
+    const label = [`vp.env=${envId}`];
+    if (role) label.push(`vp.role=${role}`);
+    const list = await docker.listContainers({ all: true, filters: { label } });
     for (const c of list) await docker.getContainer(c.Id).remove({ force: true }).catch(() => {});
   } catch {
     /* ignora */
@@ -1050,15 +1071,35 @@ export async function remove(containerId: string): Promise<void> {
   await container.remove({ force: true });
 }
 
-/** Uso de disco do container = tamanho da camada de escrita (SizeRw). */
+/** Uso de disco do ambiente = camada de escrita (SizeRw) + volumes veloz-* montados. */
 export async function diskUsage(containerId: string): Promise<{ diskBytes: number }> {
-  // `size: true` faz o Docker calcular SizeRw (camada de escrita). Não está na
-  // tipagem do dockerode, por isso o cast.
-  const inspectWithSize = docker.getContainer(containerId).inspect as unknown as (
+  // `size: true` faz o Docker calcular SizeRw (camada de escrita); Mounts traz os volumes.
+  // Não está na tipagem do dockerode, por isso o cast.
+  const container = docker.getContainer(containerId);
+  const inspectWithSize = container.inspect as unknown as (
     opts: { size: boolean },
-  ) => Promise<{ SizeRw?: number }>;
-  const info = await inspectWithSize.call(docker.getContainer(containerId), { size: true });
-  return { diskBytes: Math.max(0, Math.round(info.SizeRw ?? 0)) };
+  ) => Promise<{
+    SizeRw?: number;
+    Mounts?: { Type?: string; Name?: string; Destination?: string }[];
+  }>;
+  const info = await inspectWithSize.call(container, { size: true });
+  let total = Math.max(0, Math.round(info.SizeRw ?? 0));
+  // SizeRw NÃO inclui volumes nomeados. Soma os volumes do VelozPanel: veloz-data (dados
+  // de serviço: postgres/mysql/rabbitmq…) e veloz-code (código de python/dotnet/estático),
+  // via `du -sk` (KB, compatível GNU e busybox/Alpine) dentro do container.
+  const volDests = (info.Mounts ?? [])
+    .filter((m) => m.Type === "volume" && (m.Name ?? "").startsWith("veloz-") && m.Destination)
+    .map((m) => m.Destination!);
+  for (const dest of volDests) {
+    try {
+      const out = await execCapture(containerId, ["du", "-sk", dest]);
+      const kb = parseInt(out.trim().split(/\s+/)[0] ?? "", 10);
+      if (Number.isFinite(kb)) total += kb * 1024;
+    } catch {
+      /* du indisponível ou container parado — ignora esse volume (fica só o SizeRw) */
+    }
+  }
+  return { diskBytes: total };
 }
 
 export async function stats(containerId: string): Promise<StatsResult> {

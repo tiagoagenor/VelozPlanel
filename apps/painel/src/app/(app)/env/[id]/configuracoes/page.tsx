@@ -72,6 +72,25 @@ export default function EnvSettingsPage() {
     setStartup(env?.startupScript ?? "");
   }, [env?.startupScript]);
   const startupDirty = startup !== (env?.startupScript ?? "");
+
+  // Recriar o container com a MESMA versão — re-roda os comandos de inicialização.
+  // Só para ambientes de app (serviços/stacks são provisionados por outro caminho).
+  const isApp = !env?.category || env.category === "app";
+  const [recreateOpen, setRecreateOpen] = React.useState(false);
+  const recreate = useMutation({
+    mutationFn: () => api.changeRuntime(id, { kind, version: env!.runtime.version }),
+    onSuccess: (updated) => {
+      qc.setQueryData(["environment", id], updated);
+      qc.invalidateQueries({ queryKey: ["environments"] });
+      qc.invalidateQueries({ queryKey: ["metrics", id] });
+      setRecreateOpen(false);
+      toast.show("success", "Container recriado — os comandos de inicialização foram executados.");
+    },
+    onError: (err) => {
+      setRecreateOpen(false);
+      toast.show("error", err instanceof Error ? err.message : "Não foi possível recriar o container.");
+    },
+  });
   const saveStartup = useMutation({
     mutationFn: () => api.setStartupScript(id, startup.trim() === "" ? null : startup),
     onSuccess: (updated) => {
@@ -275,15 +294,6 @@ export default function EnvSettingsPage() {
         </Card>
       )}
 
-      {/* Comando de start avançado — só Python (Django/gunicorn) */}
-      {env.runtime.kind === "python" && (
-        <PythonCmdCard id={id} current={env.pythonCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
-      )}
-
-      {env.runtime.kind === "dotnet" && (
-        <DotnetCmdCard id={id} current={env.dotnetCmd} onSaved={(u) => qc.setQueryData(["environment", id], u)} />
-      )}
-
       {/* Node.js via nvm — só ambientes PHP */}
       {env.runtime.kind === "php" && (
         <Card>
@@ -324,7 +334,9 @@ export default function EnvSettingsPage() {
         </Card>
       )}
 
-      {/* Comandos de inicialização */}
+      {/* Comandos de inicialização — só apps: em serviços (mysql/postgres/…) o
+          container usa o entrypoint da imagem oficial e o script nunca roda. */}
+      {isApp ? (
       <Card>
         <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">
           Comandos de inicialização
@@ -350,11 +362,58 @@ export default function EnvSettingsPage() {
           >
             {saveStartup.isPending ? "Salvando…" : "Salvar"}
           </Button>
+          {isApp ? (
+            <Button
+              variant="outline"
+              onClick={() => setRecreateOpen(true)}
+              disabled={startupDirty || saveStartup.isPending || recreate.isPending}
+              title={startupDirty ? "Salve os comandos antes de recriar" : undefined}
+            >
+              <RefreshCw size={16} aria-hidden="true" />
+              {recreate.isPending ? "Recriando…" : "Recriar container"}
+            </Button>
+          ) : null}
           <span className="text-sm text-text3">
-            Para valer agora, recrie o container (reaplique a versão acima).
+            {startupDirty
+              ? "Salve primeiro; depois recrie o container para os comandos valerem."
+              : "Os comandos rodam quando o container é recriado."}
           </span>
         </div>
       </Card>
+      ) : null}
+
+      <Dialog
+        open={recreateOpen}
+        onClose={() => setRecreateOpen(false)}
+        title="Recriar o container?"
+        description="O container é destruído e criado de novo com a mesma versão. O ambiente fica indisponível por alguns segundos e os comandos de inicialização rodam de novo."
+      >
+        <div className="flex flex-col gap-4">
+          {kind === "node" || kind === "php" ? (
+            <p className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">
+              <AlertTriangle size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span>
+                O código fica em volume e é preservado. Exceção: se este container é{" "}
+                <strong>antigo</strong> (criado antes do suporte a volume em{" "}
+                {labelKind(kind)}), os arquivos serão perdidos <strong>nesta</strong>{" "}
+                recriação — refaça o deploy depois. Das próximas em diante, nada se perde.
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm text-text2">
+              O código do app fica em volume e é preservado.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setRecreateOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => recreate.mutate()} disabled={recreate.isPending}>
+              {recreate.isPending ? "Recriando…" : "Recriar container"}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       <Dialog
         open={confirmOpen}
@@ -390,107 +449,4 @@ export default function EnvSettingsPage() {
 
 function labelKind(kind: RuntimeKind): string {
   return RUNTIME_LABEL[kind];
-}
-
-/** Comando de start avançado (Python/Django). Vazio = python3 app.py. */
-function PythonCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
-  const toast = useToast();
-  const [cmd, setCmd] = React.useState<string>(current ?? "");
-  React.useEffect(() => { setCmd(current ?? ""); }, [current]);
-  const dirty = cmd !== (current ?? "");
-  const save = useMutation({
-    mutationFn: () => api.setPythonCmd(id, cmd.trim() === "" ? null : cmd.trim()),
-    onSuccess: (u) => {
-      onSaved(u);
-      toast.show("success", u.pythonCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou ao padrão python3 app.py.");
-    },
-    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
-  });
-  return (
-    <Card>
-      <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
-      <p className="mb-3 text-sm text-text2">
-        Para frameworks como <strong>Django</strong>: informe o comando que sobe o servidor na porta 80.
-        Deixe vazio para rodar o padrão <code>python3 {"{arquivo de start}"}</code>.
-      </p>
-      <input
-        value={cmd}
-        onChange={(e) => setCmd(e.target.value)}
-        spellCheck={false}
-        aria-label="Comando de start avançado do Python"
-        placeholder="python manage.py runserver 0.0.0.0:80 --insecure --noreload"
-        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
-      />
-      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
-        <li>Django: no <code>settings.py</code>, use <code>ALLOWED_HOSTS = [&quot;*&quot;]</code>.</li>
-        <li>Instale as dependências no <strong>Terminal</strong>: <code>pip install -r requirements.txt</code> (Postgres: <code>psycopg2-binary</code>).</li>
-        <li>Rode as migrações: <code>python manage.py migrate</code>.</li>
-      </ul>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
-          {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
-        </Button>
-        <span className="text-sm text-text3">Reinicia na hora, sem recriar o container.</span>
-      </div>
-    </Card>
-  );
-}
-
-function DotnetCmdCard({ id, current, onSaved }: { id: string; current: string | null; onSaved: (u: Environment) => void }) {
-  const toast = useToast();
-  // Comando que o container está rodando AGORA (override salvo, DLL publicada,
-  // DLL de build do exemplo, ou o projeto) — "como funciona hoje".
-  const effQ = useQuery({ queryKey: ["dotnet-eff", id], queryFn: () => api.getDotnetEffectiveCmd(id) });
-  const effective = effQ.data?.cmd ?? "";
-  // O que roda hoje: se há override salvo é ele; senão o comando efetivo detectado.
-  const baseline = current ?? effective;
-
-  const [cmd, setCmd] = React.useState<string>("");
-  const [touched, setTouched] = React.useState(false);
-  // Enquanto o usuário não mexe, o campo espelha o comando real (atualiza quando carrega).
-  React.useEffect(() => { if (!touched) setCmd(baseline); }, [baseline, touched]);
-
-  const dirty = touched && cmd.trim() !== baseline.trim();
-  const save = useMutation({
-    mutationFn: () => api.setDotnetCmd(id, cmd.trim() === "" ? null : cmd.trim()),
-    onSuccess: (u) => {
-      setTouched(false);
-      onSaved(u);
-      toast.show("success", u.dotnetCmd ? "Comando salvo — app reiniciado." : "Comando removido — voltou ao automático.");
-    },
-    onError: (err) => toast.show("error", err instanceof ApiError && err.message ? err.message : "Falha ao salvar."),
-  });
-  const isOverride = !!(current && current.trim());
-  return (
-    <Card>
-      <h2 className="vp-accent-bar mb-1 text-base font-semibold text-text">Comando de start (avançado)</h2>
-      <p className="mb-3 text-sm text-text2">
-        {isOverride
-          ? <>Este ambiente usa um comando <strong>fixo</strong> que você definiu. Edite abaixo, ou apague e salve para voltar ao automático.</>
-          : <>Modo <strong>automático</strong>: o campo mostra o comando que o ambiente está rodando <strong>agora</strong>. Edite só se quiser fixar um comando próprio (ex.: outro nome de DLL ou argumentos). Ele sobe o servidor na porta 80.</>}
-      </p>
-      <input
-        value={effQ.isPending && !touched ? "" : cmd}
-        onChange={(e) => { setTouched(true); setCmd(e.target.value); }}
-        spellCheck={false}
-        aria-label="Comando de start avançado do .NET"
-        placeholder={effQ.isPending ? "carregando…" : "dotnet app.dll"}
-        className="w-full rounded-lg border border-border bg-surface p-3 font-mono text-sm text-text placeholder:text-text3 focus:border-brand-strong"
-      />
-      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-text3">
-        <li>Hoje, no <strong>modo exemplo</strong> (antes do deploy), o app roda pelo build em <code>/app/bin/Debug/&lt;versão&gt;/</code> — por isso o comando aponta pra lá.</li>
-        <li>Depois do <strong>deploy</strong>, o <code>dotnet publish</code> coloca a DLL direto em <code>/app</code> e o comando vira <code>dotnet app.dll</code> (troque pelo nome da sua DLL, se diferente).</li>
-        <li>O app precisa escutar na porta 80 — <code>ASPNETCORE_URLS</code>/<code>ASPNETCORE_HTTP_PORTS</code> já vêm configuradas.</li>
-        <li>Apague o campo e salve para voltar ao <strong>automático</strong>.</li>
-      </ul>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
-          {save.isPending ? "Reiniciando…" : "Salvar e reiniciar"}
-        </Button>
-        <span className="text-sm text-text3">
-          {dirty ? "Reinicia na hora, sem recriar o container." : isOverride ? "Comando fixo ativo." : "Comando atual (automático) — edite para fixar o seu."}
-        </span>
-      </div>
-    </Card>
-  );
 }

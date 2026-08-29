@@ -7,12 +7,14 @@ import {
   dbRunMongoInput,
   dbRunRedisInput,
   dbStudioConfig as dbStudioConfigSchema,
+  dbSchema as dbSchemaSchema,
+  dbTableMeta as dbTableMetaSchema,
   setStudioPasswordInput,
   unlockStudioInput,
   apiError,
   isSqlEngine,
 } from "@velozplanel/contracts";
-import type { DbStudioConfig, StudioEngine, DbResult, SessionUser } from "@velozplanel/contracts";
+import type { DbStudioConfig, StudioEngine, DbResult, DbSchema, DbTableMeta, SessionUser } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { envTools } from "../db/schema";
 import {
@@ -26,6 +28,8 @@ import {
 import { loadEnvironmentForUser } from "./environments";
 import { agentUrlForEnv } from "../nodes";
 import * as agent from "../agent";
+import { introspectSchema, introspectTable, isSafeIdent } from "../studio-introspect";
+import type { SqlEngine } from "../studio-introspect";
 
 const idParams = z.object({ id: z.string().uuid() });
 const STUDIO_KIND = "jstudio";
@@ -75,6 +79,36 @@ async function buildConfig(req: FastifyRequest, env: EnvRow, user: SessionUser):
     database: DEFAULT_DB,
     unlocked,
   };
+}
+
+/** Gate comum das rotas SQL do Studio (introspecção). Retorna env + engine SQL. */
+async function gateSqlStudio(req: FastifyRequest): Promise<{ env: EnvRow; engine: SqlEngine }> {
+  const user = await requireUser(req);
+  const id = (req.params as { id: string }).id;
+  const env = await loadEnvironmentForUser(id, user);
+  const engine = engineForEnv(env);
+  if (!engine) throw new ApiHttpError(400, "nao_e_banco", "este ambiente não é um banco de dados");
+  if (!isSqlEngine(engine)) throw new ApiHttpError(400, "engine_incompativel", "introspecção só para bancos SQL");
+  const row = await loadStudioRow(env.id);
+  if (!row?.enabled) throw new ApiHttpError(403, "studio_desligado", "ative o Data Studio para usá-lo");
+  if (row.passwordHash && user.role !== "admin" && !verifyStudioUnlock(req.cookies[studioCookie(env.id)], env.id)) {
+    throw new ApiHttpError(401, "studio_bloqueado", "desbloqueie o Data Studio com a senha");
+  }
+  if (env.state !== "running" || !env.containerId) {
+    throw new ApiHttpError(409, "ambiente_parado", "inicie o ambiente para usar o Data Studio");
+  }
+  return { env, engine };
+}
+
+/** Executa um SELECT read-only no banco do ambiente (para introspecção). */
+async function runReadSql(env: EnvRow, engine: SqlEngine, sql: string): Promise<DbResult> {
+  const agentUrl = await agentUrlForEnv(env);
+  return agent.dbExec(agentUrl, {
+    containerId: env.containerId!,
+    envId: env.id,
+    engine,
+    sql: { sql, write: false },
+  });
 }
 
 export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
@@ -211,6 +245,29 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
     );
     return reply.code(200).send(result);
   });
+
+  // GET schema — lista tabelas/views + versão (introspecção read-only; só bancos SQL).
+  app.get(
+    "/environments/:id/studio/schema",
+    { schema: { params: idParams, response: { 200: dbSchemaSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError, 409: apiError } } },
+    async (req): Promise<DbSchema> => {
+      const { env, engine } = await gateSqlStudio(req);
+      return introspectSchema(engine, DEFAULT_DB, (sql) => runReadSql(env, engine, sql));
+    },
+  );
+
+  // GET table/:name — metadados de uma tabela (colunas, PK, índices, FKs, triggers, DDL).
+  const tableParams = z.object({ id: z.string().uuid(), name: z.string().min(1).max(128) });
+  app.get(
+    "/environments/:id/studio/table/:name",
+    { schema: { params: tableParams, response: { 200: dbTableMetaSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError, 409: apiError } } },
+    async (req): Promise<DbTableMeta> => {
+      const { env, engine } = await gateSqlStudio(req);
+      const name = req.params.name;
+      if (!isSafeIdent(name)) throw new ApiHttpError(400, "nome_invalido", "nome de tabela inválido");
+      return introspectTable(engine, name, (sql) => runReadSql(env, engine, sql));
+    },
+  );
 
   // GET redis/subscribe — proxy do stream SSE de pub/sub (gate posse/running/senha/engine=redis).
   const subQuery = z.object({

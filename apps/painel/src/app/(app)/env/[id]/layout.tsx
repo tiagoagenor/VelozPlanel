@@ -34,6 +34,7 @@ import {
   ScrollText,
   Archive,
   Table2,
+  AppWindow,
   Play,
   Pause,
   RotateCw,
@@ -60,6 +61,7 @@ interface Section {
   soon?: boolean;
   dbOnly?: boolean; // só aparece em ambientes-serviço de banco (Jamees Studio)
   appOnly?: boolean; // não faz sentido em ambientes-serviço (só apps/stacks)
+  panelOnly?: boolean; // só em serviços com painel web (rabbitmq/mysql/mariadb/postgres)
 }
 
 const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb", "redis"]);
@@ -69,6 +71,12 @@ function isDbServiceEnv(env: { category?: string | null; type?: string | null } 
 /** Ambiente-serviço (redis/mysql/…): esconde as abas de app (Domínio/Arquivos/Deploy/…). */
 function isServiceEnv(env: { category?: string | null } | undefined): boolean {
   return env?.category === "service";
+}
+// Serviços com painel web: rabbitmq (management embutido) e bancos SQL (phpMyAdmin/Adminer sidecar).
+const PANEL_TYPES = new Set(["rabbitmq", "mysql", "mariadb", "postgres"]);
+/** Mostra a aba "Painel admin" (rabbitmq management / phpMyAdmin / Adminer). */
+function hasServicePanel(env: { category?: string | null; type?: string | null } | undefined): boolean {
+  return env?.category === "service" && !!env?.type && PANEL_TYPES.has(env.type);
 }
 
 // Todas as seções são telas REAIS e funcionais — só "Backups" é placeholder
@@ -86,6 +94,7 @@ const SECTIONS: Section[] = [
   { seg: "deploy", label: "Deploy", icon: Rocket, appOnly: true },
   { seg: "variaveis", label: "Variáveis", icon: Braces, appOnly: true },
   { seg: "studio", label: "Data Studio", icon: Table2, dbOnly: true },
+  { seg: "painel", label: "Painel admin", icon: AppWindow, panelOnly: true },
   { seg: "logs", label: "Logs", icon: ScrollText },
   { seg: "backups", label: "Backups", icon: Archive, soon: true },
 ];
@@ -168,6 +177,10 @@ export default function EnvContextLayout({
   const transitioning = env?.state === "provisioning" || env?.state === "deleting";
   const busy = pause.isPending || start.isPending || remove.isPending || transitioning;
 
+  // Data Studio (IDE): ocupa a área toda — sem submenu de seções nem cabeçalho.
+  // O "Voltar para ambiente" e o chrome ficam por conta da própria página do Studio.
+  if (currentSeg === "studio") return <>{children}</>;
+
   return (
     <>
       {/* Mobile: submenu empilhado acima do conteúdo. Desktop: submenu é `fixed`
@@ -199,7 +212,10 @@ export default function EnvContextLayout({
             )}
           >
               {SECTIONS.filter(
-                (s) => (!s.dbOnly || isDbServiceEnv(env)) && (!s.appOnly || !isServiceEnv(env)),
+                (s) =>
+                  (!s.dbOnly || isDbServiceEnv(env)) &&
+                  (!s.appOnly || !isServiceEnv(env)) &&
+                  (!s.panelOnly || hasServicePanel(env)),
               ).map((s) => {
                 const active = s.seg === currentSeg;
                 const brevePill = (

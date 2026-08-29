@@ -10,6 +10,78 @@ export function genSecret(): string {
   return randomBytes(18).toString("base64url");
 }
 
+/**
+ * Serviços com PAINEL WEB embutido no próprio container: a porta HTTP desse painel.
+ * Ex.: a imagem `rabbitmq:3-management` serve a UI de management na 15672. Essa é a
+ * porta que publicamos no host (via WireGuard) para reverse-proxear no subdomínio do
+ * painel — NÃO a porta de dados do serviço (AMQP 5672, que fica só na bridge interna).
+ */
+export const SERVICE_UI_PORTS: Record<string, number> = {
+  rabbitmq: 15672,
+};
+
+/** Porta do painel web embutido do tipo de serviço, ou null se não tem painel. */
+export function serviceUiPort(typeId: string): number | null {
+  return SERVICE_UI_PORTS[typeId] ?? null;
+}
+
+/**
+ * Ferramentas de UI que rodam como SIDECAR (container próprio) apontando para o banco:
+ * phpMyAdmin (mysql/mariadb), Adminer (postgres). Diferente do painel embutido do
+ * RabbitMQ — aqui sobe um container separado no enable e remove no disable.
+ * Login por FORMULÁRIO (não injeta usuário/senha): o cliente entra com as credenciais
+ * do banco (que o painel mostra); o servidor já vem pré-preenchido.
+ */
+export interface ToolSpec {
+  kind: "phpmyadmin" | "adminer"; // env_tools.kind
+  image: string; // imagem do sidecar (versão travada)
+  port: number; // porta HTTP interna da ferramenta (publicada no host)
+  label: string; // nome exibido
+  /** Env do container da ferramenta, dado o alvo (IP interno do banco + porta + URL pública). */
+  env: (t: { ip: string; port: number; publicUrl: string }) => { key: string; value: string }[];
+}
+
+export const SERVICE_TOOLS: Record<string, ToolSpec> = {
+  mysql: {
+    kind: "phpmyadmin",
+    image: "phpmyadmin:5",
+    port: 80,
+    label: "phpMyAdmin",
+    env: (t) => [
+      { key: "PMA_HOST", value: t.ip },
+      { key: "PMA_PORT", value: String(t.port) },
+      { key: "PMA_ABSOLUTE_URI", value: t.publicUrl }, // atrás do proxy do CP
+      // sem PMA_USER/PMA_PASSWORD ⇒ phpMyAdmin mostra o formulário de login (seguro).
+    ],
+  },
+  mariadb: {
+    kind: "phpmyadmin",
+    image: "phpmyadmin:5",
+    port: 80,
+    label: "phpMyAdmin",
+    env: (t) => [
+      { key: "PMA_HOST", value: t.ip },
+      { key: "PMA_PORT", value: String(t.port) },
+      { key: "PMA_ABSOLUTE_URI", value: t.publicUrl },
+    ],
+  },
+  postgres: {
+    kind: "adminer",
+    image: "adminer:4",
+    port: 8080,
+    label: "Adminer",
+    env: (t) => [
+      { key: "ADMINER_DEFAULT_SERVER", value: t.ip }, // pré-preenche o servidor no login
+      // Adminer sempre mostra o formulário (System=PostgreSQL, usuário/senha/base).
+    ],
+  },
+};
+
+/** Ferramenta de UI (sidecar) do tipo de serviço, ou null se não tem. */
+export function serviceTool(typeId: string): ToolSpec | null {
+  return SERVICE_TOOLS[typeId] ?? null;
+}
+
 export interface ServiceCreds {
   rootPassword: string;
   user: string;

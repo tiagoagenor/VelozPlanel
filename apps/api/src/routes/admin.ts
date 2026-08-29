@@ -1,13 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { count, eq, desc } from "drizzle-orm";
+import { count, eq, desc, sql } from "drizzle-orm";
 import {
   adminUser as adminUserSchema,
   createUserInput,
   updateUserInput,
   adminEnvironment as adminEnvSchema,
   resourceChangeInput,
+  grantSubdomainChangesInput,
+  setDefaultRegionInput,
+  sshSecuritySettings,
+  setSshSecurityInput,
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
@@ -263,6 +267,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
         runtime: { kind: e.runtimeKind as RuntimeKind, version: e.runtimeVersion },
         state: e.state as EnvState,
         createdAt: e.createdAt.toISOString(),
+        subdomainChangesLeft: e.subdomainChangesLeft,
       }));
   };
 
@@ -311,6 +316,63 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       const updated = list.find((e) => e.id === env.id);
       if (!updated) throw new ApiHttpError(500, "internal_error", "erro ao recarregar ambiente");
       return updated;
+    },
+  );
+
+  // Libera N trocas adicionais de subdomínio para o cliente do ambiente.
+  app.post(
+    "/admin/environments/:id/subdomain-grant",
+    { schema: { params: idParams, body: grantSubdomainChangesInput, response: { 200: adminEnvSchema, 401: apiError, 403: apiError, 404: apiError } } },
+    async (req): Promise<AdminEnvironment> => {
+      const actor = await requireAdmin(req);
+      const rows = await db.select().from(environments).where(eq(environments.id, req.params.id)).limit(1);
+      const env = rows[0];
+      if (!env) throw new ApiHttpError(404, "not_found", "ambiente não encontrado");
+      const { count: n } = req.body;
+      await db
+        .update(environments)
+        .set({ subdomainChangesLeft: sql`${environments.subdomainChangesLeft} + ${n}` })
+        .where(eq(environments.id, env.id));
+      await recordAudit(actor, "env.subdomain_grant", `${env.name}`, `+${n} troca(s) de subdomínio`, req);
+      const list = await listEnvs();
+      const updated = list.find((e) => e.id === env.id);
+      if (!updated) throw new ApiHttpError(500, "internal_error", "erro ao recarregar ambiente");
+      return updated;
+    },
+  );
+
+  // Define a região pré-selecionada no wizard de criar ambiente.
+  app.put(
+    "/admin/default-region",
+    { schema: { body: setDefaultRegionInput, response: { 200: z.object({ region: z.string() }), 401: apiError, 403: apiError } } },
+    async (req): Promise<{ region: string }> => {
+      const actor = await requireAdmin(req);
+      await db.insert(platformSettings).values({ id: 1 }).onConflictDoNothing();
+      await db.update(platformSettings).set({ defaultRegion: req.body.region }).where(eq(platformSettings.id, 1));
+      await recordAudit(actor, "settings.default_region", req.body.region, "", req);
+      return { region: req.body.region };
+    },
+  );
+
+  // Segurança do acesso SSH/SFTP: desconexão por inatividade (0 = desativado).
+  app.get(
+    "/admin/ssh-security",
+    { schema: { response: { 200: sshSecuritySettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ idleTimeoutSeconds: number }> => {
+      await requireAdmin(req);
+      const rows = await db.select({ v: platformSettings.sshIdleTimeoutSeconds }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1);
+      return { idleTimeoutSeconds: rows[0]?.v ?? 900 };
+    },
+  );
+  app.put(
+    "/admin/ssh-security",
+    { schema: { body: setSshSecurityInput, response: { 200: sshSecuritySettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ idleTimeoutSeconds: number }> => {
+      const actor = await requireAdmin(req);
+      await db.insert(platformSettings).values({ id: 1 }).onConflictDoNothing();
+      await db.update(platformSettings).set({ sshIdleTimeoutSeconds: req.body.idleTimeoutSeconds }).where(eq(platformSettings.id, 1));
+      await recordAudit(actor, "settings.ssh_idle_timeout", String(req.body.idleTimeoutSeconds), "", req);
+      return { idleTimeoutSeconds: req.body.idleTimeoutSeconds };
     },
   );
 

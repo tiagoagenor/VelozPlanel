@@ -18,6 +18,7 @@ import {
   ExternalLink,
   Copy,
   CircleCheck,
+  HardDrive,
 } from "lucide-react";
 import { RUNTIME_LABEL, runtimeHasVersions, type MetricSample, type Environment } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -60,6 +61,8 @@ export default function EnvOverviewPage() {
     staleTime: 15_000,
   });
   const diskBytes = diskQuery.data?.diskBytes ?? null;
+  const diskLive = diskQuery.data?.live ?? true; // false = valor salvo (pausado/desligado)
+  const diskMeasuredAt = diskQuery.data?.measuredAt ?? null;
 
   const envQuery = useQuery({
     queryKey: ["environment", id],
@@ -75,8 +78,14 @@ export default function EnvOverviewPage() {
   const env = envQuery.data;
   const { byId: plansById } = usePlans();
   const plan = env ? plansById.get(env.plan) ?? null : null;
+  // Disco: usado (SizeRw + volumes) sobre a cota do plano (GiB). % pode passar de 100 (estouro).
+  const diskPct =
+    diskBytes != null && plan ? (diskBytes / (plan.diskGb * 1024 ** 3)) * 100 : null;
 
   const samples: MetricSample[] = metricsQuery.data?.samples ?? [];
+  // Pausado/parado: o container não coleta métricas — não exibimos CPU/memória
+  // (mostraria dados velhos). O Disco continua (usa o último valor salvo).
+  const isRunning = env?.state === "running";
   const timestamps = samples.map((s) => s.ts);
   const cpu = samples.map((s) => s.cpuPct);
   const mem = samples.map((s) => s.memBytes);
@@ -186,24 +195,84 @@ export default function EnvOverviewPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-baseline gap-2">
             <h2 className="text-lg font-semibold text-text">Monitoramento</h2>
-            <span className="flex items-center gap-1.5 text-[13px] text-text3">
-              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
-              coletando · a cada 5s
-            </span>
+            {isRunning ? (
+              <span className="flex items-center gap-1.5 text-[13px] text-text3">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />
+                coletando · a cada 5s
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-[13px] text-text3">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-border-strong" />
+                pausado
+              </span>
+            )}
           </div>
-          <SegmentedControl<MetricWindow>
-            label="Intervalo dos gráficos"
-            value={metricWindow}
-            onChange={setMetricWindow}
-            options={[
-              { value: "15m", label: "15 min" },
-              { value: "1h", label: "1 h" },
-              { value: "24h", label: "24 h" },
-            ]}
-          />
+          {isRunning ? (
+            <SegmentedControl<MetricWindow>
+              label="Intervalo dos gráficos"
+              value={metricWindow}
+              onChange={setMetricWindow}
+              options={[
+                { value: "15m", label: "15 min" },
+                { value: "1h", label: "1 h" },
+                { value: "24h", label: "24 h" },
+              ]}
+            />
+          ) : null}
         </div>
 
-        {samples.length > 0 ? (
+        {/* Disco (sem gráfico) — usado / cota do plano, para todos os ambientes */}
+        <Card>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-[13.5px] text-text2">
+                <HardDrive size={15} aria-hidden="true" className="text-brand-strong" />
+                Disco
+              </p>
+              <p className="mt-1 font-display text-[1.5rem] font-bold leading-none tabular-nums text-text">
+                {diskBytes == null ? "—" : formatBytes(diskBytes)}
+                <span className="ml-1.5 text-[0.9rem] font-normal text-text3">
+                  / {plan ? `${plan.diskGb} GB` : "—"}
+                </span>
+              </p>
+            </div>
+            {diskPct != null ? (
+              <span
+                className={cn(
+                  "shrink-0 text-[13px] font-medium tabular-nums",
+                  diskPct >= 90 ? "text-danger" : diskPct >= 75 ? "text-warning" : "text-text2",
+                )}
+              >
+                {diskPct.toFixed(0)}%
+              </span>
+            ) : null}
+          </div>
+          {diskPct != null ? (
+            <div
+              className="mt-3 h-2 w-full overflow-hidden rounded-full bg-border"
+              role="progressbar"
+              aria-valuenow={Math.round(Math.min(100, diskPct))}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Uso de disco"
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  diskPct >= 90 ? "bg-danger" : diskPct >= 75 ? "bg-warning" : "bg-brand",
+                )}
+                style={{ width: `${Math.min(100, diskPct)}%` }}
+              />
+            </div>
+          ) : null}
+          {!diskLive && diskMeasuredAt ? (
+            <p className="mt-2 text-[11.5px] text-text3">
+              Último valor medido · {formatDateTime(diskMeasuredAt)}
+            </p>
+          ) : null}
+        </Card>
+
+        {isRunning && samples.length > 0 ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
             <button
               type="button"
@@ -233,7 +302,8 @@ export default function EnvOverviewPage() {
           </div>
         ) : null}
 
-        {samples.length === 0 ? (
+        {isRunning ? (
+          samples.length === 0 ? (
           <Card>
             <p className="text-text2">Sem amostras ainda. O coletor grava a cada 5s enquanto o ambiente está ativo.</p>
           </Card>
@@ -274,6 +344,13 @@ export default function EnvOverviewPage() {
               ]}
             />
           </>
+          )
+        ) : (
+          <Card>
+            <p className="text-text2">
+              Monitoramento de CPU e memória pausado — o ambiente está parado. Inicie para retomar a coleta.
+            </p>
+          </Card>
         )}
       </div>
     </div>

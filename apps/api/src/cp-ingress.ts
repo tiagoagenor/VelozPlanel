@@ -10,9 +10,14 @@ import path from "node:path";
 
 const DIR = process.env.CP_INGRESS_DIR ?? "/caddy-managed";
 export const SUB_ZONE = "jamees.top";
+// Zona usada pelos PAINÉIS de serviço (ex.: RabbitMQ management): subdomínio
+// aleatório sob jamees.top — mesma zona dos ambientes (wildcard *.jamees.top no
+// PowerDNS + cert automático). Os nomes não colidem: a geração checa tanto
+// environments.auto_subdomain quanto env_tools.subdomain.
+export const TOOL_ZONE = "jamees.top";
 
-export function subFqdn(sub: string): string {
-  return `${sub}.${SUB_ZONE}`;
+export function subFqdn(sub: string, zone: string = SUB_ZONE): string {
+  return `${sub}.${zone}`;
 }
 
 function safeHost(h: string): boolean {
@@ -30,8 +35,8 @@ export function wgIpFromAgentUrl(agentUrl: string | null | undefined): string | 
 }
 
 /** Publica/atualiza o vhost do subdomínio apontando para o upstream (IP:porta na WG). */
-export async function putSite(sub: string, upstream: string): Promise<void> {
-  const host = subFqdn(sub);
+export async function putSite(sub: string, upstream: string, zone: string = SUB_ZONE): Promise<void> {
+  const host = subFqdn(sub, zone);
   if (!safeHost(host) || !safeUpstream(upstream)) return;
   const block = `${host} {\n\tencode gzip zstd\n\treverse_proxy ${upstream}\n}\n`;
   await fs.mkdir(DIR, { recursive: true });
@@ -39,8 +44,8 @@ export async function putSite(sub: string, upstream: string): Promise<void> {
 }
 
 /** Remove o vhost do subdomínio (libera o nome e para de renovar o cert). */
-export async function removeSite(sub: string): Promise<void> {
-  const host = subFqdn(sub);
+export async function removeSite(sub: string, zone: string = SUB_ZONE): Promise<void> {
+  const host = subFqdn(sub, zone);
   if (!safeHost(host)) return;
   await fs.rm(path.join(DIR, `${host}.caddy`), { force: true }).catch(() => {});
 }

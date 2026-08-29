@@ -28,9 +28,12 @@ const SQL_ENGINE: Record<
 };
 
 /** Monta o plano para um statement SQL já classificado. */
+// character_set_results permitidos (interpolados no comando → allowlist obrigatória).
+const MYSQL_CHARSETS = new Set(["utf8mb4", "utf8", "latin1", "binary", "ascii", "cp1252"]);
+
 export function buildSqlExec(
   engine: "mysql" | "mariadb" | "postgres",
-  input: { sql: string; write?: boolean; database?: string },
+  input: { sql: string; write?: boolean; database?: string; charset?: string },
 ): ExecPlan {
   const cls = classifySql(engine, input.sql);
   const write = input.write === true;
@@ -48,9 +51,12 @@ export function buildSqlExec(
     const wrapped = readOnly
       ? `${setTimeout}START TRANSACTION READ ONLY; ${cls.sql}; COMMIT`
       : `${cls.sql}; SELECT ROW_COUNT() AS affected_rows`;
+    // --default-character-set: sem isso o cliente cai em latin1 e o servidor converte o
+    // texto utf8mb4 → latin1 na saída (acentos viram bytes "binários"). Padrão utf8mb4.
+    const charset = input.charset && MYSQL_CHARSETS.has(input.charset) ? input.charset : "utf8mb4";
     const script =
       `export MYSQL_PWD="$${cfg.pwEnv}"; ` +
-      `exec ${cfg.bin} -uroot --batch --database "$VP_DB" -e "$VP_SQL"`;
+      `exec ${cfg.bin} -uroot --default-character-set=${charset} --batch --database "$VP_DB" -e "$VP_SQL"`;
     return {
       engine,
       cmd: ["sh", "-c", script],

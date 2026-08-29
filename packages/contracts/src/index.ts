@@ -229,6 +229,7 @@ export const environment = z.object({
   httpPort: z.number().int().nullable(), // porta publicada no host de dev
   domain: z.string().nullable(), // domínio próprio configurado pelo cliente
   autoSubdomain: z.string().nullable(), // endereço temporário <sub>.jamees.top
+  subdomainChangesLeft: z.number().int(), // quantas vezes o cliente ainda pode trocar o subdomínio (0 = travado até o admin liberar)
   runtimeVersionFull: z.string().nullable(), // versão real resolvida no container (ex.: 24.19.0)
   startupScript: z.string().nullable(), // comandos rodados 1x na criação do container
   nodeStartFile: z.string().nullable(), // arquivo que inicia o app Node/Python (server.js/app.py); null = default
@@ -277,12 +278,14 @@ export type SetNodeStartFileInput = z.infer<typeof setNodeStartFileInput>;
 /** Define/limpa o comando avançado de start do Python (Django/gunicorn). "" limpa. */
 export const setPythonCmdInput = z.object({
   cmd: z.string().max(500).nullable(),
+  apply: z.boolean().optional().default(true), // false = só salva (aplica no próximo deploy)
 });
 export type SetPythonCmdInput = z.infer<typeof setPythonCmdInput>;
 
 /** Define/limpa o comando avançado de start do .NET (ex.: dotnet App.dll). "" limpa. */
 export const setDotnetCmdInput = z.object({
   cmd: z.string().max(500).nullable(),
+  apply: z.boolean().optional().default(true), // false = só salva (aplica no próximo deploy)
 });
 export type SetDotnetCmdInput = z.infer<typeof setDotnetCmdInput>;
 
@@ -521,6 +524,7 @@ export const envVar = z.object({
   buildTime: z.boolean(),
   hasValue: z.boolean(),
   valueMasked: z.string(),
+  hidden: z.boolean(), // escondida = valor NUNCA sai do servidor (só se vê no container)
 });
 export type EnvVar = z.infer<typeof envVar>;
 
@@ -537,8 +541,9 @@ export const setEnvVarsInput = z.object({
             (k) => !RESERVED_ENV_KEYS.includes(k) && !k.startsWith("VP_"),
             "chave reservada pelo sistema",
           ),
-        value: z.string().max(32768),
-        buildTime: z.boolean().default(false),
+        value: z.string().max(32768).optional(), // omitido = mantém o valor atual (não altera o segredo)
+        buildTime: z.boolean().default(true),
+        hidden: z.boolean().default(false), // esconder o valor de vez (não revelável no painel)
       }),
     )
     .max(100),
@@ -633,6 +638,7 @@ export const updateNodeInput = z.object({
     .nullable()
     .optional(),
   alertMessage: z.string().max(500).nullable().optional(),
+  region: z.string().trim().min(1).max(64).optional(), // nome da região (rótulo/chave)
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
 
@@ -641,8 +647,19 @@ export const regionOption = z.object({
   region: z.string(),
   alert: z.string().nullable(), // aviso do super admin (ex.: "instável")
   online: z.boolean(), // há nó online com Agente nessa região
+  isDefault: z.boolean(), // região pré-selecionada no wizard (definida pelo super admin)
 });
 export type RegionOption = z.infer<typeof regionOption>;
+
+/** Super admin define a região pré-selecionada no wizard de criar ambiente. */
+export const setDefaultRegionInput = z.object({ region: z.string().min(1).max(64) });
+export type SetDefaultRegionInput = z.infer<typeof setDefaultRegionInput>;
+
+/** Segurança do acesso SSH/SFTP (super admin). idleTimeoutSeconds: 0 = desativado. */
+export const sshSecuritySettings = z.object({ idleTimeoutSeconds: z.number().int().min(0).max(86400) });
+export type SshSecuritySettings = z.infer<typeof sshSecuritySettings>;
+export const setSshSecurityInput = z.object({ idleTimeoutSeconds: z.number().int().min(0).max(86400) });
+export type SetSshSecurityInput = z.infer<typeof setSshSecurityInput>;
 
 /* ─────────────── Métricas ─────────────── */
 
@@ -660,9 +677,11 @@ export const metricSeries = z.object({
 });
 export type MetricSeries = z.infer<typeof metricSeries>;
 
-/** Uso de disco atual do ambiente (medido sob demanda no nó). */
+/** Uso de disco do ambiente. Medido ao vivo quando ligado; senão, último valor salvo. */
 export const diskUsage = z.object({
   diskBytes: z.number().int().nonnegative(),
+  measuredAt: z.string().datetime().nullable(), // quando o valor foi medido (null = nunca)
+  live: z.boolean(), // true = medido agora (ligado); false = valor salvo (pausado/desligado)
 });
 export type DiskUsage = z.infer<typeof diskUsage>;
 
@@ -697,7 +716,7 @@ export const fileEntry = z.object({
 export type FileEntry = z.infer<typeof fileEntry>;
 
 export const fileList = z.object({
-  path: z.string(), // caminho absoluto dentro do ambiente (ex.: /var/www)
+  path: z.string(), // caminho absoluto dentro do ambiente (ex.: /app/www)
   root: z.string(), // raiz servida (var/www ou /app)
   entries: z.array(fileEntry),
 });
@@ -806,6 +825,26 @@ export type SslStatus = z.infer<typeof sslStatus>;
 
 export const forceHttpsInput = z.object({ forceHttps: z.boolean() });
 export type ForceHttpsInput = z.infer<typeof forceHttpsInput>;
+
+/* ─────────────── Painel admin de serviço (ex.: RabbitMQ management) ─────────────── */
+
+// Alguns serviços têm um painel web embutido (RabbitMQ management na 15672). O dono
+// pode LIGAR/DESLIGAR a exposição desse painel num subdomínio ALEATÓRIO sob jamees.top.
+export const adminPanelStatus = z.object({
+  envId: z.string().uuid(),
+  supported: z.boolean(), // true para serviços com painel (rabbitmq/mysql/mariadb/postgres)
+  enabled: z.boolean(),
+  tool: z.string().nullable(), // nome da ferramenta: "phpMyAdmin" | "Adminer" | "RabbitMQ Management"
+  url: z.string().nullable(), // https://<aleatório>.jamees.top quando ligado
+  user: z.string().nullable(), // usuário de login do painel (ex.: vp_user)
+  password: z.string().nullable(), // senha de login (o painel mascara)
+  database: z.string().nullable(), // banco inicial do serviço (ex.: "app"); dá pra criar outros
+  message: z.string().nullable(), // nota honesta sobre estado/limitação
+});
+export type AdminPanelStatus = z.infer<typeof adminPanelStatus>;
+
+export const setAdminPanelInput = z.object({ enabled: z.boolean() });
+export type SetAdminPanelInput = z.infer<typeof setAdminPanelInput>;
 
 /* ─────────────── SSH / SFTP (acesso ao ambiente) ─────────────── */
 
@@ -989,8 +1028,15 @@ export const adminEnvironment = z.object({
   runtime: runtimeSpec,
   state: envState,
   createdAt: z.string().datetime(),
+  subdomainChangesLeft: z.number().int(), // trocas de subdomínio ainda disponíveis
 });
 export type AdminEnvironment = z.infer<typeof adminEnvironment>;
+
+/** Admin libera N trocas adicionais de subdomínio para um ambiente. */
+export const grantSubdomainChangesInput = z.object({
+  count: z.number().int().min(1).max(20),
+});
+export type GrantSubdomainChangesInput = z.infer<typeof grantSubdomainChangesInput>;
 
 /** Alterar vCPU/RAM a quente (requisito nº 9) — motivo obrigatório, vai para auditoria. */
 export const resourceChangeInput = z.object({
@@ -1362,6 +1408,26 @@ export const DNS_TTL_OPTIONS: Array<{ label: string; seconds: number }> = [
   { label: "12 horas", seconds: 43200 },
   { label: "1 dia", seconds: 86400 },
 ];
+
+/* ─────────────── Teste de velocidade (super admin) ─────────────── */
+
+export const speedtestSource = z.enum(["cron", "manual"]);
+export type SpeedtestSource = z.infer<typeof speedtestSource>;
+
+/** Uma execução do teste de banda de internet de um nó. */
+export const speedtestResult = z.object({
+  id: z.string(),
+  nodeId: z.string().nullable(),
+  nodeName: z.string(),
+  downloadMbps: z.number(),
+  uploadMbps: z.number(),
+  pingMs: z.number().nullable(),
+  ok: z.boolean(),
+  error: z.string().nullable(),
+  source: speedtestSource,
+  createdAt: z.string(),
+});
+export type SpeedtestResult = z.infer<typeof speedtestResult>;
 
 /* ─────────────── Erro padronizado da API ─────────────── */
 

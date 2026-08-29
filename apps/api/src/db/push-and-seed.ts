@@ -61,6 +61,10 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS mem_mb_override integer`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS auto_subdomain text`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS environments_auto_subdomain_uq ON environments(lower(auto_subdomain))`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS subdomain_changes_left integer NOT NULL DEFAULT 1`;
+  // Uso de disco persistido: último valor medido (com a máquina ligada) + quando.
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS disk_bytes bigint`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS disk_measured_at timestamptz`;
   // Subdomínios reservados (jamees.top) — ninguém seleciona.
   await sql`
     CREATE TABLE IF NOT EXISTS reserved_subdomains (
@@ -235,6 +239,8 @@ async function createSchema(): Promise<void> {
     )
   `;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_vars_env_key_idx ON env_vars(env_id, key)`;
+  await sql`ALTER TABLE env_vars ALTER COLUMN build_time SET DEFAULT true`; // toda var = build por padrão
+  await sql`ALTER TABLE env_vars ADD COLUMN IF NOT EXISTS hidden boolean NOT NULL DEFAULT false`;
 
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`;
 
@@ -412,6 +418,8 @@ async function createSchema(): Promise<void> {
   `;
   // Jamees Studio: senha opcional do painel (hash bcrypt; null = sem senha).
   await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS password_hash text`;
+  // Painel de serviço (rabbitmq): subdomínio aleatório fixo sob jamees.com.
+  await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS subdomain text`;
   // 1 linha por (env, ferramenta) — idempotência do flag liga/desliga.
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_tools_env_kind_uq ON env_tools(env_id, kind)`;
 
@@ -466,6 +474,9 @@ async function createSchema(): Promise<void> {
   await sql`INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS billing_free_minutes integer NOT NULL DEFAULT 1`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS domain_price_month_cents integer NOT NULL DEFAULT 100`;
+  await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS default_region text`;
+  await sql`UPDATE platform_settings SET default_region='local' WHERE default_region IS NULL`;
+  await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS ssh_idle_timeout_seconds integer NOT NULL DEFAULT 900`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_vcpu_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_ram_gb_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_disk_gb_month_cents integer NOT NULL DEFAULT 25`;
@@ -489,6 +500,21 @@ async function createSchema(): Promise<void> {
       first_run_at   timestamptz NOT NULL,
       last_run_at    timestamptz NOT NULL
     )`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS speedtest_runs (
+      id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      node_id       uuid REFERENCES nodes(id) ON DELETE SET NULL,
+      node_name     text NOT NULL,
+      download_mbps double precision NOT NULL DEFAULT 0,
+      upload_mbps   double precision NOT NULL DEFAULT 0,
+      ping_ms       double precision,
+      ok            boolean NOT NULL DEFAULT true,
+      error         text,
+      source        text NOT NULL DEFAULT 'cron',
+      created_at    timestamptz NOT NULL DEFAULT now()
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS speedtest_runs_created_idx ON speedtest_runs (created_at DESC)`;
 }
 
 async function seed(): Promise<void> {
@@ -716,10 +742,38 @@ async function bootstrapPdns(): Promise<void> {
     await psql.unsafe(`GRANT ALL ON SCHEMA public TO ${pdnsUser}`);
     await psql.unsafe(`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${pdnsUser}`);
     await psql.unsafe(`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${pdnsUser}`);
+    // Role somente-leitura do CLI `jamees` também no banco pdns (SELECT).
+    const exists = await psql`SELECT 1 FROM pg_roles WHERE rolname = 'jamees_ro'`;
+    if (exists.length > 0) {
+      await psql.unsafe(`GRANT USAGE ON SCHEMA public TO jamees_ro`);
+      await psql.unsafe(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO jamees_ro`);
+      await psql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO jamees_ro`);
+    }
     console.log("[db:push] pdns: schema gpgsql aplicado + grants.");
   } finally {
     await psql.end({ timeout: 5 }).catch(() => {});
   }
+}
+
+/**
+ * Role Postgres SOMENTE-LEITURA dedicado ao CLI `jamees` (comando `db query`).
+ * NOSUPERUSER + default_transaction_read_only + statement_timeout: mesmo que a
+ * validação de SELECT do CLI afrouxe, o role não escreve nem lê arquivo/exec.
+ * LOGIN (o CLI conecta por `docker exec psql -U jamees_ro`, socket local trust).
+ * Idempotente. Grants em velozpanel aqui; em pdns dentro do bootstrapPdns.
+ */
+async function ensureReadOnlyRole(): Promise<void> {
+  const role = "jamees_ro";
+  const exists = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${role}`;
+  if (exists.length === 0) {
+    await sql.unsafe(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`);
+    console.log(`[db:push] role somente-leitura ${role} criada.`);
+  }
+  await sql.unsafe(`ALTER ROLE ${role} SET statement_timeout = '15000ms'`);
+  await sql.unsafe(`ALTER ROLE ${role} SET default_transaction_read_only = on`);
+  await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${role}`);
+  await sql.unsafe(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${role}`);
+  await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${role}`);
 }
 
 async function main(): Promise<void> {
@@ -727,6 +781,8 @@ async function main(): Promise<void> {
   await createSchema();
   console.log("[db:push] seed…");
   await seed();
+  console.log("[db:push] role somente-leitura (CLI)…");
+  await ensureReadOnlyRole();
   console.log("[db:push] bootstrap pdns…");
   await bootstrapPdns();
   console.log("[db:push] pronto.");

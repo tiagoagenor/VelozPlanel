@@ -61,11 +61,10 @@ function appWorkdir(env: EnvironmentRow): string {
     case "node":
     case "python":
     case "dotnet":
-      return "/app";
     case "static":
-      return "/site";
+      return "/app";
     default:
-      return "/var/www"; // php
+      return "/app/www"; // php: docroot público (o código/framework fica em /app)
   }
 }
 
@@ -134,7 +133,6 @@ function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackage
       s.push({ kind: "npm_ci", label: "Instalar dependências JS (npm)", command: null, enabled: true });
       s.push({ kind: "npm_build", label: "Build de assets (npm run build)", command: null, enabled: true });
     }
-    s.push({ kind: "laravel_fix_index", label: "Validar/corrigir index.php", command: null, enabled: true });
     s.push({ kind: "artisan_storage_link", label: "Link de storage (storage:link)", command: null, enabled: true });
     s.push({ kind: "artisan_clear", label: "Limpar caches (optimize:clear)", command: null, enabled: true });
     s.push({ kind: "artisan_optimize", label: "Cache de config/rotas/views", command: null, enabled: true });
@@ -151,7 +149,7 @@ function defaultSteps(det: { framework: string; hasComposer: boolean; hasPackage
       s.push({ kind: "npm_ci", label: "Instalar dependências (npm)", command: null, enabled: true });
       s.push({ kind: "npm_build", label: "Build do site (npm run build)", command: null, enabled: true });
     }
-    // "site pronto": só baixar o código; o place copia direto para /site.
+    // "site pronto": só baixar o código; o place copia direto para /app.
     return s;
   }
   if (kind === "dotnet") {
@@ -202,7 +200,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       const upd = await db.update(deployConfigs).set(set).where(eq(deployConfigs.envId, env.id)).returning();
       // Preset Laravel: docroot public/ (aplicado ao vivo só após o 1º deploy).
       if (b.framework === "laravel" && env.runtimeKind === "php") {
-        await db.update(environments).set({ phpWebRoot: "/var/www" }).where(eq(environments.id, env.id));
+        await db.update(environments).set({ phpWebRoot: "/app/www" }).where(eq(environments.id, env.id));
       }
       // Preset Next.js escolhido no wizard: arquivo de start + env vars básicas.
       if (b.framework === "nextjs" && env.runtimeKind === "node") {
@@ -342,7 +340,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       if (steps.length) await db.insert(deploySteps).values(steps.map((s, i) => ({ envId: env.id, ord: i, kind: s.kind, command: s.command, label: s.label, enabled: s.enabled, mutatesData: s.mutatesData ?? false })));
       await db.update(deployConfigs).set({ framework: det.framework, runModel: det.runModel }).where(eq(deployConfigs.envId, env.id));
       if (det.framework === "laravel" && env.runtimeKind === "php") {
-        await db.update(environments).set({ phpWebRoot: "/var/www" }).where(eq(environments.id, env.id));
+        await db.update(environments).set({ phpWebRoot: "/app/www" }).where(eq(environments.id, env.id));
       }
       // Next.js: pré-configura PORT/HOSTNAME/NODE_ENV + arquivo de start (muito simples).
       if (det.framework === "nextjs" && env.runtimeKind === "node") {

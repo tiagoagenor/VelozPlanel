@@ -41,6 +41,7 @@ import { metricsRoutes } from "./routes/metrics";
 import { filesRoutes } from "./routes/files";
 import { databasesRoutes } from "./routes/databases";
 import { sslRoutes } from "./routes/ssl";
+import { adminPanelRoutes } from "./routes/admin-panel";
 import { sshRoutes } from "./routes/ssh";
 import { sftpRoutes } from "./routes/sftp";
 import { deployRoutes } from "./routes/deploy";
@@ -51,10 +52,12 @@ import { internalRoutes } from "./routes/internal";
 import { dnsRoutes } from "./routes/dns";
 import { domainsRoutes } from "./routes/domains";
 import { dbConsoleRoutes } from "./routes/db-console";
+import { speedtestRoutes } from "./routes/speedtest";
 import { startMetricsCollector } from "./metrics-collector";
 import { startBillingScheduler } from "./billing";
 import { startProvisionWorker } from "./worker";
 import { startDnsVerifier } from "./dns-verifier";
+import { startSpeedtestScheduler } from "./speedtest";
 
 const PORT = Number(process.env.PORT ?? 4000);
 // Origens do painel autorizadas no CORS. Configurável por env `VP_PANEL_ORIGINS`
@@ -145,6 +148,7 @@ async function main(): Promise<void> {
       await v1.register(filesRoutes);
       await v1.register(databasesRoutes);
       await v1.register(sslRoutes);
+      await v1.register(adminPanelRoutes);
       await v1.register(sshRoutes);
       await v1.register(sftpRoutes);
       await v1.register(deployRoutes);
@@ -155,6 +159,7 @@ async function main(): Promise<void> {
       await v1.register(dnsRoutes);
       await v1.register(domainsRoutes);
       await v1.register(dbConsoleRoutes);
+      await v1.register(speedtestRoutes);
     },
     { prefix: "/api/v1" },
   );
@@ -163,6 +168,7 @@ async function main(): Promise<void> {
   const stopBilling = startBillingScheduler(app.log);
   const stopWorker = startProvisionWorker(app.log);
   const stopDnsVerifier = startDnsVerifier(app.log);
+  const stopSpeedtest = startSpeedtestScheduler(app.log);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`recebido ${signal}, encerrando…`);
@@ -170,6 +176,7 @@ async function main(): Promise<void> {
     stopBilling();
     stopWorker();
     stopDnsVerifier();
+    stopSpeedtest();
     await app.close();
     process.exit(0);
   };

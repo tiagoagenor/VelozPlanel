@@ -6,7 +6,7 @@ import { plan as planSchema, balance as balanceSchema, envType as envTypeSchema,
 import type { Plan, Balance, EnvType, RegionOption } from "@velozplanel/contracts";
 import { requireUser } from "../auth";
 import { db } from "../db/client";
-import { creditTransactions, environments, envTypes, nodes, dnsZonesMeta } from "../db/schema";
+import { creditTransactions, environments, envTypes, nodes, dnsZonesMeta, platformSettings } from "../db/schema";
 import { listPlans, rowToPlan, getPlan } from "../plans";
 import { breakdownCredits } from "../credits";
 import { getSettings } from "../billing";
@@ -31,15 +31,20 @@ export async function plansRoutes(fastify: FastifyInstance): Promise<void> {
     { schema: { response: { 200: z.array(regionOptionSchema), 401: apiError } } },
     async (req): Promise<RegionOption[]> => {
       await requireUser(req);
-      const rows = await db.select().from(nodes);
+      const [rows, settings] = await Promise.all([
+        db.select().from(nodes),
+        db.select({ defaultRegion: platformSettings.defaultRegion }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1),
+      ]);
+      const def = settings[0]?.defaultRegion ?? null;
       const byRegion = new Map<string, RegionOption>();
       for (const n of rows) {
-        const cur = byRegion.get(n.region) ?? { region: n.region, alert: null, online: false };
+        const cur = byRegion.get(n.region) ?? { region: n.region, alert: null, online: false, isDefault: false };
         if (!cur.alert && n.alertMessage) cur.alert = n.alertMessage;
         if (n.status === "online" && n.agentUrl && n.agentUrl.trim()) cur.online = true;
         byRegion.set(n.region, cur);
       }
-      return [...byRegion.values()].sort((a, b) => a.region.localeCompare(b.region));
+      const list = [...byRegion.values()].map((r) => ({ ...r, isDefault: r.region === def }));
+      return list.sort((a, b) => a.region.localeCompare(b.region));
     },
   );
 

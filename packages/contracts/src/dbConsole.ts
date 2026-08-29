@@ -91,6 +91,10 @@ export const dbMongoOp = z.enum([
 export type DbMongoOp = z.infer<typeof dbMongoOp>;
 
 /** Entrada de execução SQL (mysql/mariadb/postgres). */
+/** character_set_results da conexão mysql/mariadb (ignorado no postgres). */
+export const sqlCharset = z.enum(["utf8mb4", "utf8", "latin1", "binary", "ascii", "cp1252"]);
+export type SqlCharset = z.infer<typeof sqlCharset>;
+
 export const dbRunSqlInput = z.object({
   sql: z.string().trim().min(1).max(200_000),
   write: z.boolean().optional().default(false),
@@ -98,6 +102,7 @@ export const dbRunSqlInput = z.object({
     .string()
     .regex(/^[A-Za-z0-9_$-]{1,64}$/)
     .optional(),
+  charset: sqlCharset.optional(),
 });
 export type DbRunSqlInput = z.infer<typeof dbRunSqlInput>;
 
@@ -142,3 +147,70 @@ export type SetStudioPasswordInput = z.infer<typeof setStudioPasswordInput>;
 
 export const unlockStudioInput = z.object({ password: z.string().min(1).max(200) });
 export type UnlockStudioInput = z.infer<typeof unlockStudioInput>;
+
+/* ─────────────── Introspecção de schema (Data Studio / IDE) ─────────────── */
+
+/** Uma coluna de tabela. `type` já vem formatado por engine (ex.: "varchar(255)", "int4"). */
+export const dbColumn = z.object({
+  name: z.string(),
+  type: z.string(),
+  nullable: z.boolean(),
+  default: z.string().nullable(),
+  isPrimaryKey: z.boolean(),
+  isUnique: z.boolean(), // participa de índice único não-PK
+});
+export type DbColumn = z.infer<typeof dbColumn>;
+
+export const dbIndex = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  unique: z.boolean(),
+  primary: z.boolean(),
+});
+export type DbIndex = z.infer<typeof dbIndex>;
+
+export const dbForeignKey = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  refTable: z.string(),
+  refColumns: z.array(z.string()),
+});
+export type DbForeignKey = z.infer<typeof dbForeignKey>;
+
+export const dbTrigger = z.object({
+  name: z.string(),
+  timing: z.string(), // BEFORE | AFTER | INSTEAD OF
+  event: z.string(), // INSERT | UPDATE | DELETE
+});
+export type DbTrigger = z.infer<typeof dbTrigger>;
+
+/** Uma tabela ou view no navegador de schema. */
+export const dbTableRef = z.object({
+  name: z.string(),
+  type: z.enum(["table", "view"]),
+  rows: z.number().nullable(), // estimativa (pode ser null)
+});
+export type DbTableRef = z.infer<typeof dbTableRef>;
+
+/** Schema do banco: engine, versão e a lista de tabelas/views. */
+export const dbSchema = z.object({
+  database: z.string(),
+  engine: studioEngine,
+  version: z.string().nullable(), // ex.: "PostgreSQL 16.2" / "8.0.36"
+  tables: z.array(dbTableRef),
+});
+export type DbSchema = z.infer<typeof dbSchema>;
+
+/** Metadados completos de uma tabela (para as abas Estrutura e SQL). */
+export const dbTableMeta = z.object({
+  name: z.string(),
+  type: z.enum(["table", "view"]),
+  columns: z.array(dbColumn),
+  primaryKey: z.array(z.string()), // colunas da PK (para gerar UPDATE ... WHERE)
+  indexes: z.array(dbIndex),
+  foreignKeys: z.array(dbForeignKey),
+  triggers: z.array(dbTrigger),
+  createSql: z.string().nullable(), // DDL da tabela (aba SQL)
+  rows: z.number().nullable(),
+});
+export type DbTableMeta = z.infer<typeof dbTableMeta>;

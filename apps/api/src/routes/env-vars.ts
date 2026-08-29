@@ -34,7 +34,7 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
       return {
-        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask() })),
+        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask(), hidden: r.hidden })),
         applied: true,
         message: null,
       };
@@ -50,28 +50,29 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       const env = await loadEnvironmentForUser(req.params.id, user);
       const vars = req.body.vars;
 
+      // value omitido = mantém o segredo atual (o painel só manda valor de linhas
+      // editadas; assim o segredo nunca sai do servidor sem o usuário revelar).
+      const existing = await db.select().from(envVars).where(eq(envVars.envId, env.id));
+      const exByKey = new Map(existing.map((r) => [r.key, r]));
+      const finalRows = vars.map((v) => {
+        const enc = v.value !== undefined
+          ? encryptSecret(v.value)
+          : (exByKey.get(v.key)?.valueEncrypted ?? encryptSecret(""));
+        return { envId: env.id, key: v.key, valueEncrypted: enc, buildTime: v.buildTime ?? true, hidden: v.hidden ?? false };
+      });
+
       await db.delete(envVars).where(eq(envVars.envId, env.id));
-      if (vars.length) {
-        await db.insert(envVars).values(
-          vars.map((v) => ({
-            envId: env.id,
-            key: v.key,
-            valueEncrypted: encryptSecret(v.value),
-            buildTime: v.buildTime ?? false,
-          })),
-        );
-      }
+      if (finalRows.length) await db.insert(envVars).values(finalRows);
+
+      // aplicação ao vivo precisa do valor real (decifra os mantidos).
+      const applyVars = finalRows.map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted) }));
 
       let applied = false;
       let message: string | null = "Salvo.";
       if (env.containerId && env.state === "running") {
         try {
           const agentUrl = await agentUrlForEnv(env);
-          const r = await agent.applyEnvVars(
-            agentUrl,
-            env.containerId,
-            vars.map((v) => ({ key: v.key, value: v.value })),
-          );
+          const r = await agent.applyEnvVars(agentUrl, env.containerId, applyVars);
           applied = r.applied;
           message = r.applied
             ? "Aplicado — o app foi reiniciado com as variáveis."
@@ -83,7 +84,7 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
       }
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
       return {
-        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask() })),
+        vars: rows.map((r) => ({ key: r.key, buildTime: r.buildTime, hasValue: true, valueMasked: mask(), hidden: r.hidden })),
         applied,
         message,
       };
@@ -93,14 +94,15 @@ export async function envVarsRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /reveal — devolve os valores em texto UMA vez (no-store, sem cache).
   app.post(
     "/environments/:id/env-vars/reveal",
-    { schema: { params: idParams, response: { 200: z.object({ vars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean() })) }), 401: apiError, 403: apiError, 404: apiError } } },
+    { schema: { params: idParams, response: { 200: z.object({ vars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean(), hidden: z.boolean() })) }), 401: apiError, 403: apiError, 404: apiError } } },
     async (req, reply) => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
       reply.header("cache-control", "no-store");
       reply.header("pragma", "no-cache");
       const rows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
-      return { vars: rows.map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted), buildTime: r.buildTime })) };
+      // Escondida: o valor NUNCA sai do servidor (só é visto de dentro do container).
+      return { vars: rows.map((r) => ({ key: r.key, value: r.hidden ? "" : decryptSecret(r.valueEncrypted), buildTime: r.buildTime, hidden: r.hidden })) };
     },
   );
 }

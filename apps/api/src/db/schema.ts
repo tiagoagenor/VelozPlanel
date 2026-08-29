@@ -61,16 +61,19 @@ export const environments = pgTable("environments", {
   dotnetCmd: text("dotnet_cmd"), // comando de start avançado (.NET, ex.: dotnet App.dll)
   phpNodeVersion: text("php_node_version"), // versão Node escolhida (envs PHP via nvm)
   phpNodeVersionFull: text("php_node_version_full"), // versão Node real resolvida (nvm)
-  phpWebRoot: text("php_web_root"), // document root do php -S (Laravel = /var/www/public)
+  phpWebRoot: text("php_web_root"), // document root do php -S (público = /app/www)
   state: text("state").notNull(), // EnvState
   containerId: text("container_id"),
   httpPort: integer("http_port"),
   domain: text("domain"),
   autoSubdomain: text("auto_subdomain"), // endereço temporário <sub>.jamees.top (único)
+  subdomainChangesLeft: integer("subdomain_changes_left").notNull().default(1), // quantas vezes o cliente ainda pode trocar o subdomínio; admin libera mais
   vcpuOverride: doublePrecision("vcpu_override"), // admin alterou vCPU (senão usa o do plano)
   memMbOverride: integer("mem_mb_override"), // admin alterou RAM
   lastChargedAt: timestamp("last_charged_at", { withTimezone: true }), // último débito de cobrança
   errorMessage: text("error_message"), // mensagem de falha do job (provision/delete) — mostrada no painel
+  diskBytes: bigint("disk_bytes", { mode: "number" }), // último uso de disco medido (SizeRw + volumes)
+  diskMeasuredAt: timestamp("disk_measured_at", { withTimezone: true }), // quando o disco foi medido
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -250,7 +253,8 @@ export const envVars = pgTable(
       .references(() => environments.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     valueEncrypted: text("value_encrypted").notNull(), // "v1:" + base64(iv|tag|ciphertext)
-    buildTime: boolean("build_time").notNull().default(false),
+    buildTime: boolean("build_time").notNull().default(true), // toda var vai pro build+runtime (revertível)
+    hidden: boolean("hidden").notNull().default(false), // valor escondido: nunca sai do servidor (só no container)
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -367,6 +371,7 @@ export const envTools = pgTable("env_tools", {
   targetIp: text("target_ip"), // IP interno que o proxy alcança (a própria ferramenta)
   targetPort: integer("target_port"),
   passwordHash: text("password_hash"), // Jamees Studio: senha opcional (bcrypt); null = sem senha
+  subdomain: text("subdomain"), // painel de serviço: subdomínio aleatório fixo sob jamees.com
 });
 export type EnvToolRow = typeof envTools.$inferSelect;
 
@@ -475,6 +480,10 @@ export const platformSettings = pgTable("platform_settings", {
   // ao deletar (protege delete acidental/instantâneo). 0 = sem cortesia.
   billingFreeMinutes: integer("billing_free_minutes").notNull().default(1),
   suspendOnZero: boolean("suspend_on_zero").notNull().default(true),
+  defaultRegion: text("default_region"), // região pré-selecionada no wizard de criação (super admin)
+  // Desconexão automática do SSH/SFTP por inatividade (super admin). Segundos.
+  // 0 = desativado. Lido a cada login pelo gateway (vale para novas sessões).
+  sshIdleTimeoutSeconds: integer("ssh_idle_timeout_seconds").notNull().default(900),
   domainPriceMonthCents: integer("domain_price_month_cents").notNull().default(100), // R$1,00/domínio/mês
   // Taxas por recurso — alimentam a calculadora "Calcular pela taxa" dos planos.
   // NÃO entram na cobrança (a cobrança usa o preço gravado do plano). Exceção:
@@ -506,6 +515,21 @@ export const billingRunHours = pgTable("billing_run_hours", {
   lastRunAt: timestamp("last_run_at", { withTimezone: true }).notNull(),
 });
 export type BillingRunHourRow = typeof billingRunHours.$inferSelect;
+
+/** Execuções do teste de velocidade de internet por nó (cron 1x/h + manual do admin). */
+export const speedtestRuns = pgTable("speedtest_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  nodeId: uuid("node_id"), // FK lógica p/ nodes (SET NULL se o nó sumir)
+  nodeName: text("node_name").notNull(), // nome do nó no momento do teste
+  downloadMbps: doublePrecision("download_mbps").notNull().default(0),
+  uploadMbps: doublePrecision("upload_mbps").notNull().default(0),
+  pingMs: doublePrecision("ping_ms"),
+  ok: boolean("ok").notNull().default(true),
+  error: text("error"),
+  source: text("source").notNull().default("cron"), // "cron" | "manual"
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type SpeedtestRunRow = typeof speedtestRuns.$inferSelect;
 
 /** Subdomínios (de jamees.top) que nenhum cliente pode selecionar. */
 export const reservedSubdomains = pgTable("reserved_subdomains", {

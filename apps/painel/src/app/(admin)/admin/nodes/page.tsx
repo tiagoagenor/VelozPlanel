@@ -65,6 +65,9 @@ export default function AdminNodesPage() {
         </p>
       </header>
 
+      <DefaultRegionCard />
+      <SshSecurityCard />
+
       {nodesQuery.isPending ? (
         <div className="vp-card-shadow h-40 animate-pulse rounded-xl border border-border-subtle bg-surface" />
       ) : nodesQuery.isError ? (
@@ -222,6 +225,7 @@ function EditPublicHostDialog({
   const [value, setValue] = React.useState("");
   const [httpValue, setHttpValue] = React.useState("");
   const [alertValue, setAlertValue] = React.useState("");
+  const [regionValue, setRegionValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
 
   // Pré-preenche com o valor atual sempre que abrir para um nó.
@@ -230,15 +234,17 @@ function EditPublicHostDialog({
       setValue(node.publicHost ?? "");
       setHttpValue(node.httpHost ?? "");
       setAlertValue(node.alertMessage ?? "");
+      setRegionValue(node.region ?? "");
       setError(null);
     }
   }, [node]);
 
   const mutation = useMutation({
-    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null }) =>
+    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null; region?: string }) =>
       api.updateNode(node!.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      qc.invalidateQueries({ queryKey: ["regions"] });
       toast.show("success", "Nó atualizado.");
       onClose();
     },
@@ -256,10 +262,13 @@ function EditPublicHostDialog({
     const pub = value.trim();
     const http = httpValue.trim();
     const alert = alertValue.trim();
+    const region = regionValue.trim();
+    if (region === "") { setError("A região não pode ficar vazia."); return; }
     const patch = {
       publicHost: pub === "" ? null : pub,
       httpHost: http === "" ? null : http,
       alertMessage: alert === "" ? null : alert,
+      region,
     };
     const parsed = updateNodeInput.safeParse(patch);
     if (!parsed.success) {
@@ -273,6 +282,7 @@ function EditPublicHostDialog({
       publicHost: parsed.data.publicHost ?? null,
       httpHost: parsed.data.httpHost ?? null,
       alertMessage: parsed.data.alertMessage ?? null,
+      region: parsed.data.region,
     });
   }
 
@@ -286,6 +296,22 @@ function EditPublicHostDialog({
       description={PUBLIC_HOST_HELP}
     >
       <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="node-region">Região</Label>
+          <Input
+            id="node-region"
+            value={regionValue}
+            onChange={(e) => setRegionValue(e.target.value)}
+            placeholder="ex.: local, ca, São Paulo"
+            aria-describedby="node-region-help"
+            autoComplete="off"
+          />
+          <p id="node-region-help" className="text-xs text-text3">
+            Nome mostrado no seletor ao criar ambiente. Se renomear a região que é
+            a padrão, a padrão acompanha o novo nome.
+          </p>
+        </div>
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="node-public-host">Host público (SSH/SFTP, DNS)</Label>
           <Input
@@ -359,5 +385,111 @@ function EditPublicHostDialog({
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** Super admin escolhe a região pré-selecionada no wizard de criar ambiente. */
+function DefaultRegionCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const regionsQuery = useQuery({ queryKey: ["regions"], queryFn: api.listRegions });
+  const regions = regionsQuery.data ?? [];
+  const current = regions.find((r) => r.isDefault)?.region ?? "";
+
+  const save = useMutation({
+    mutationFn: (region: string) => api.setDefaultRegion(region),
+    onSuccess: (_r, region) => {
+      qc.invalidateQueries({ queryKey: ["regions"] });
+      toast.show("success", `Região padrão: ${region}.`);
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
+  });
+
+  return (
+    <Card className="mb-6 flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="vp-accent-bar text-base font-semibold text-text">Região padrão</h2>
+          <p className="mt-0.5 text-sm text-text2">
+            Região já selecionada no wizard de criar ambiente (o cliente pode trocar).
+          </p>
+        </div>
+        <select
+          value={current}
+          disabled={regionsQuery.isPending || save.isPending || regions.length === 0}
+          onChange={(e) => save.mutate(e.target.value)}
+          aria-label="Região padrão"
+          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-brand-strong"
+        >
+          {regions.length === 0 ? <option value="">—</option> : null}
+          {regions.map((r) => (
+            <option key={r.region} value={r.region}>
+              {r.region}{r.online ? "" : " (offline)"}
+            </option>
+          ))}
+        </select>
+      </div>
+    </Card>
+  );
+}
+
+/** Desconexão automática do SSH por inatividade (super admin). 0 = desativado. */
+function SshSecurityCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["ssh-security"], queryFn: api.getSshSecurity });
+  // Editado em MINUTOS (mais amigável); guardado em segundos.
+  const [minutes, setMinutes] = React.useState<string>("");
+  React.useEffect(() => {
+    if (q.data) setMinutes(String(Math.round((q.data.idleTimeoutSeconds ?? 0) / 60)));
+  }, [q.data]);
+
+  const currentMin = q.data ? Math.round((q.data.idleTimeoutSeconds ?? 0) / 60) : null;
+  const parsed = Number(minutes);
+  const valid = minutes.trim() !== "" && Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 0 && parsed <= 1440;
+  const dirty = valid && currentMin !== null && parsed !== currentMin;
+
+  const save = useMutation({
+    mutationFn: () => api.setSshIdleTimeout(parsed * 60),
+    onSuccess: (r) => {
+      qc.setQueryData(["ssh-security"], r);
+      toast.show("success", r.idleTimeoutSeconds === 0 ? "Desconexão por inatividade desativada." : `Desconecta após ${Math.round(r.idleTimeoutSeconds / 60)} min de inatividade.`);
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao salvar."),
+  });
+
+  return (
+    <Card className="mb-6 flex flex-col gap-3">
+      <div>
+        <h2 className="vp-accent-bar text-base font-semibold text-text">Segurança do acesso SSH</h2>
+        <p className="mt-0.5 text-sm text-text2">
+          Desconecta a sessão SSH do cliente após um tempo <strong>sem atividade</strong> (sem digitar
+          nem receber saída). Vale para <strong>novas conexões</strong>. Use <code>0</code> para desativar.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="ssh-idle">Inatividade até desconectar (minutos)</Label>
+          <Input
+            id="ssh-idle"
+            type="number"
+            min={0}
+            max={1440}
+            step={1}
+            inputMode="numeric"
+            className="w-40"
+            value={minutes}
+            disabled={q.isPending || save.isPending}
+            onChange={(e) => setMinutes(e.target.value)}
+          />
+        </div>
+        <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+        <span className="pb-2 text-sm text-text3">
+          {currentMin === null ? "" : currentMin === 0 ? "Atual: desativado." : `Atual: ${currentMin} min.`}
+        </span>
+      </div>
+    </Card>
   );
 }
