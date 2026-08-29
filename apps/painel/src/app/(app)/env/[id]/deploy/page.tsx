@@ -154,6 +154,13 @@ export default function DeployPage() {
 
   React.useEffect(() => { if (cfg) { setERepo(cfg.repoUrl ?? ""); setEType(cfg.connectionMode === "http" ? "http" : "ssh"); setHttpUser(cfg.httpUsername ?? ""); } }, [cfg?.repoUrl, cfg?.connectionMode, cfg?.httpUsername]);
 
+  // "Trava" do wizard de primeiro deploy: ao entrar sem conexão, o wizard fica
+  // montado por toda a sessão — mesmo depois que o passo 2 salva a conexão (que
+  // torna hasConn=true). Sem isso, salvar a conexão desmontava o wizard e jogava
+  // o usuário na tela de gerência no meio do fluxo.
+  const [inWizard, setInWizard] = React.useState(false);
+  React.useEffect(() => { if (cfg?.connectionMode === "none") setInWizard(true); }, [cfg?.connectionMode]);
+
   if (q.isPending || envQ.isPending) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="animate-spin text-brand-strong" /></div>;
 
   const hasConn = cfg && cfg.connectionMode !== "none";
@@ -165,7 +172,9 @@ export default function DeployPage() {
   const ready = hasConn && verified && (cfg?.steps.length ?? 0) > 0;
 
   // ================= PRIMEIRO DEPLOY (wizard guiado) =================
-  if (!hasConn) {
+  // !hasConn cobre o primeiro acesso; inWizard mantém o wizard montado depois
+  // que o passo 2 salva a conexão (senão cairia na gerência no meio do fluxo).
+  if (!hasConn || inWizard) {
     return <FirstDeployWizard id={id} />;
   }
 
