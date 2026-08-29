@@ -61,8 +61,12 @@ export function EnvVarsModal({ id, open, onClose }: { id: string; open: boolean;
   const [importMode, setImportMode] = React.useState(false);
   const [importText, setImportText] = React.useState("");
 
+  // Só monta as linhas + revela os valores quando o modal ESTÁ ABERTO. O reveal
+  // (descriptografa segredos no cliente) nunca dispara com o modal fechado —
+  // mesmo que o cache ["env-vars", id] já esteja quente pelo preview da tela.
+  // Reabrir zera edições não salvas (estado fresco a cada abertura).
   React.useEffect(() => {
-    if (!q.data) return;
+    if (!open || !q.data) return;
     setRows(q.data.vars.map((v) => ({ key: v.key, value: "", hidden: v.hidden, available: false, valueDirty: false })));
     if (q.data.vars.length > 0) {
       (async () => {
@@ -79,7 +83,7 @@ export function EnvVarsModal({ id, open, onClose }: { id: string; open: boolean;
       })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q.data]);
+  }, [open, q.data]);
 
   const save = useMutation({
     mutationFn: () =>

@@ -368,7 +368,7 @@ export default function DeployPage() {
           <p className="text-xs text-text3">Trocar o tipo não apaga a chave nem os passos — só troca a seleção.</p>
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setEditConn(false)}>Cancelar</Button>
-            <Button disabled={saveConn.isPending || !eRepo.trim()} onClick={async () => { await saveConn.mutateAsync({ connectionMode: eType, repoUrl: eRepo, framework: cfg?.framework }); setEditConn(false); }}>{saveConn.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar</Button>
+            <Button disabled={saveConn.isPending || !eRepo.trim()} onClick={async () => { try { await saveConn.mutateAsync({ connectionMode: eType, repoUrl: eRepo, framework: cfg?.framework }); setEditConn(false); } catch { /* onError já mostra o toast */ } }}>{saveConn.isPending ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Salvar</Button>
           </div>
         </div>
       </Dialog>

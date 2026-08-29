@@ -43,8 +43,13 @@ export function StartFileModal({
       : (env.dotnetCmd ?? effQ.data?.cmd ?? "");
   const [val, setVal] = React.useState(initial);
   const [touched, setTouched] = React.useState(false);
-  React.useEffect(() => { if (open) { setVal(initial); setTouched(false); } // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, env.nodeStartFile, env.pythonCmd, env.dotnetCmd, effQ.data?.cmd]);
+  // Estado fresco a cada abertura.
+  React.useEffect(() => { setVal(initial); setTouched(false); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  // Sincroniza o baseline (comando efetivo do .NET / campos do env) ENQUANTO o
+  // usuário não digitou — sem descartar o que ele digitou.
+  React.useEffect(() => { if (open && !touched) setVal(initial); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [env.nodeStartFile, env.pythonCmd, env.dotnetCmd, effQ.data?.cmd]);
 
   const save = useMutation({
     mutationFn: () => {
