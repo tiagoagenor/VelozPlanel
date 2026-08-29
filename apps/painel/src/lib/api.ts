@@ -54,6 +54,7 @@ import type {
   AuditEntry,
   WgPeer,
   AddWgPeerInput,
+  SpeedtestResult,
   Plan,
   CreatePlanInput,
   UpdatePlanInput,
@@ -826,6 +827,18 @@ export function addWgPeer(input: AddWgPeerInput): Promise<WgPeer> {
 
 export function deleteWgPeer(id: string): Promise<void> {
   return request<void>(`/admin/wg/peers/${id}`, { method: "DELETE" });
+}
+
+/* ── Teste de velocidade (nó local, super admin) ── */
+
+export function listSpeedtests(limit?: number): Promise<SpeedtestResult[]> {
+  return request<SpeedtestResult[]>("/admin/speedtests", {
+    query: { limit: limit != null ? String(limit) : undefined },
+  });
+}
+
+export function runSpeedtest(): Promise<SpeedtestResult> {
+  return request<SpeedtestResult>("/admin/speedtests/run", { method: "POST" });
 }
 
 /* ── Créditos / saldo ── */

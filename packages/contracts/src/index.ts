@@ -1409,6 +1409,26 @@ export const DNS_TTL_OPTIONS: Array<{ label: string; seconds: number }> = [
   { label: "1 dia", seconds: 86400 },
 ];
 
+/* ─────────────── Teste de velocidade (super admin) ─────────────── */
+
+export const speedtestSource = z.enum(["cron", "manual"]);
+export type SpeedtestSource = z.infer<typeof speedtestSource>;
+
+/** Uma execução do teste de banda de internet de um nó. */
+export const speedtestResult = z.object({
+  id: z.string(),
+  nodeId: z.string().nullable(),
+  nodeName: z.string(),
+  downloadMbps: z.number(),
+  uploadMbps: z.number(),
+  pingMs: z.number().nullable(),
+  ok: z.boolean(),
+  error: z.string().nullable(),
+  source: speedtestSource,
+  createdAt: z.string(),
+});
+export type SpeedtestResult = z.infer<typeof speedtestResult>;
+
 /* ─────────────── Erro padronizado da API ─────────────── */
 
 export const apiError = z.object({

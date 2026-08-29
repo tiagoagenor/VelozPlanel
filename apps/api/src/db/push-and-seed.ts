@@ -500,6 +500,21 @@ async function createSchema(): Promise<void> {
       first_run_at   timestamptz NOT NULL,
       last_run_at    timestamptz NOT NULL
     )`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS speedtest_runs (
+      id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      node_id       uuid REFERENCES nodes(id) ON DELETE SET NULL,
+      node_name     text NOT NULL,
+      download_mbps double precision NOT NULL DEFAULT 0,
+      upload_mbps   double precision NOT NULL DEFAULT 0,
+      ping_ms       double precision,
+      ok            boolean NOT NULL DEFAULT true,
+      error         text,
+      source        text NOT NULL DEFAULT 'cron',
+      created_at    timestamptz NOT NULL DEFAULT now()
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS speedtest_runs_created_idx ON speedtest_runs (created_at DESC)`;
 }
 
 async function seed(): Promise<void> {

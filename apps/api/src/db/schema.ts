@@ -516,6 +516,21 @@ export const billingRunHours = pgTable("billing_run_hours", {
 });
 export type BillingRunHourRow = typeof billingRunHours.$inferSelect;
 
+/** Execuções do teste de velocidade de internet por nó (cron 1x/h + manual do admin). */
+export const speedtestRuns = pgTable("speedtest_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  nodeId: uuid("node_id"), // FK lógica p/ nodes (SET NULL se o nó sumir)
+  nodeName: text("node_name").notNull(), // nome do nó no momento do teste
+  downloadMbps: doublePrecision("download_mbps").notNull().default(0),
+  uploadMbps: doublePrecision("upload_mbps").notNull().default(0),
+  pingMs: doublePrecision("ping_ms"),
+  ok: boolean("ok").notNull().default(true),
+  error: text("error"),
+  source: text("source").notNull().default("cron"), // "cron" | "manual"
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type SpeedtestRunRow = typeof speedtestRuns.$inferSelect;
+
 /** Subdomínios (de jamees.top) que nenhum cliente pode selecionar. */
 export const reservedSubdomains = pgTable("reserved_subdomains", {
   name: text("name").primaryKey(), // sempre minúsculo

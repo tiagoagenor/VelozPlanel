@@ -117,6 +117,20 @@ export function removeVolume(agentUrl: string, name: string): Promise<void> {
   return call<void>(agentUrl, "POST", "/volume/remove", { name });
 }
 
+/* ── Teste de velocidade de internet do nó ── */
+export interface SpeedtestAgentResult {
+  downloadMbps: number;
+  uploadMbps: number;
+  pingMs: number | null;
+  bytesDown: number;
+  bytesUp: number;
+  server: string;
+}
+export function speedtest(agentUrl: string): Promise<SpeedtestAgentResult> {
+  // O teste transfere dezenas de MB por direção; margem generosa de timeout.
+  return call<SpeedtestAgentResult>(agentUrl, "POST", "/speedtest", undefined, 180_000);
+}
+
 /* ── Ingress por domínio (Caddy do nó) ── */
 export function ingressAvailable(agentUrl: string): Promise<{ available: boolean }> {
   return call<{ available: boolean }>(agentUrl, "GET", "/ingress/available", undefined, 8_000);
