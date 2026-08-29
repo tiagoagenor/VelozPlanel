@@ -2,11 +2,13 @@ import type { FastifyInstance } from "fastify";
 import { timingSafeEqual } from "node:crypto";
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client";
-import { sshConfigs, sshKeys, sftpConfigs, environments, envTypes, envAddresses, platformSettings } from "../db/schema";
+import { sshConfigs, sshKeys, sftpConfigs, environments, envTypes, envAddresses, platformSettings, nodes } from "../db/schema";
 import { hashPassword, verifyPassword } from "../auth";
 import { allocateAddress, releaseAddresses } from "../ipam";
 import { agentUrlForEnv } from "../nodes";
 import * as agent from "../agent";
+import { listRRsets } from "../dns-service";
+import { listZones, getZone, replaceRRsets, deleteRRset, fqdnOf, canonicalizeContent, serialOf } from "../dns-pdns";
 
 /**
  * Rotas internas máquina-a-máquina (NÃO usam cookie de sessão). Usadas pelo
@@ -152,6 +154,88 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       keys: keys.map((k) => k.publicKey),
       idleTimeoutSeconds: ps[0]?.v ?? 900,
     };
+  });
+
+  /* ──────────────────────────────────────────────────────────────────────
+   * Rotas para o CLI `jamees` (operador, via WireGuard). Token-only (sem
+   * cookie), bloqueadas publicamente pelo Caddy. Reusam a lógica já existente.
+   * ────────────────────────────────────────────────────────────────────── */
+
+  // Resolve o ambiente para o alvo operacional (join environments->nodes).
+  fastify.get("/internal/env/:id/target", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const { id } = req.params as { id: string };
+    const rows = await db
+      .select({
+        containerId: environments.containerId,
+        state: environments.state,
+        nodeName: nodes.name,
+        agentUrl: nodes.agentUrl,
+        publicHost: nodes.publicHost,
+        httpHost: nodes.httpHost,
+      })
+      .from(environments)
+      .leftJoin(nodes, eq(nodes.id, environments.nodeId))
+      .where(eq(environments.id, id))
+      .limit(1);
+    const e = rows[0];
+    if (!e) return reply.code(404).send({ error: "not_found" });
+    const sc = await db.select().from(sshConfigs).where(eq(sshConfigs.envId, id)).limit(1);
+    return {
+      containerId: e.containerId,
+      state: e.state,
+      nodeName: e.nodeName,
+      agentUrl: e.agentUrl,
+      publicHost: e.publicHost,
+      httpHost: e.httpHost,
+      sshEnabled: sc[0]?.enabled ?? false,
+    };
+  });
+
+  // Liga/desliga a flag de SSH de um ambiente (mesmo update do PUT /environments/:id/ssh).
+  // NUNCA implica que o gateway aceita conexão — isso depende da infra do gateway.
+  fastify.post("/internal/env/:id/ssh", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const { id } = req.params as { id: string };
+    const enabled = (req.body as { enabled?: boolean } | undefined)?.enabled === true;
+    const existing = await db.select().from(sshConfigs).where(eq(sshConfigs.envId, id)).limit(1);
+    if (existing[0]) {
+      await db.update(sshConfigs).set({ enabled }).where(eq(sshConfigs.envId, id));
+    } else {
+      const username = "env_" + id.replace(/-/g, "");
+      await db.insert(sshConfigs).values({ envId: id, username, enabled, authMode: "key", accessScope: "full", allowlist: [] });
+    }
+    return { envId: id, sshEnabled: enabled, gatewayActive: false, warning: "gateway SSH não provisionado no núcleo — a sessão não funcionará ainda" };
+  });
+
+  // DNS — lista/edição de zonas autoritativas (reusa dns-pdns/dns-service).
+  fastify.get("/internal/dns/zones", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    return { zones: await listZones() };
+  });
+  fastify.get("/internal/dns/rrsets", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const zone = (req.query as { zone?: string }).zone;
+    if (!zone) return reply.code(400).send({ error: "zone_required" });
+    return { zone, rrsets: await listRRsets(zone) };
+  });
+  fastify.put("/internal/dns/rrset", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const b = req.body as { zone: string; name: string; type: string; ttl: number; records: string[] };
+    if (!b?.zone || !b?.name || !b?.type || !Array.isArray(b?.records)) return reply.code(400).send({ error: "bad_request" });
+    const fqdn = fqdnOf(b.zone, b.name);
+    const records = b.records.map((c) => ({ content: canonicalizeContent(b.type, c, b.zone), disabled: false }));
+    await replaceRRsets(b.zone, [{ name: fqdn, type: b.type, ttl: b.ttl ?? 300, records }]);
+    const z = await getZone(b.zone);
+    return { zone: b.zone, name: fqdn, type: b.type, ttl: b.ttl ?? 300, records: b.records, serialAfter: serialOf(z) };
+  });
+  fastify.delete("/internal/dns/rrset", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const b = req.body as { zone: string; name: string; type: string };
+    if (!b?.zone || !b?.name || !b?.type) return reply.code(400).send({ error: "bad_request" });
+    await deleteRRset(b.zone, b.name, b.type);
+    const z = await getZone(b.zone);
+    return { zone: b.zone, name: fqdnOf(b.zone, b.name), type: b.type, deleted: true, serialAfter: serialOf(z) };
   });
 
   // POST /internal/sftp/verify — verifica a SENHA do SFTP para um username e,

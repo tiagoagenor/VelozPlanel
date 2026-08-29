@@ -727,10 +727,38 @@ async function bootstrapPdns(): Promise<void> {
     await psql.unsafe(`GRANT ALL ON SCHEMA public TO ${pdnsUser}`);
     await psql.unsafe(`GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${pdnsUser}`);
     await psql.unsafe(`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${pdnsUser}`);
+    // Role somente-leitura do CLI `jamees` também no banco pdns (SELECT).
+    const exists = await psql`SELECT 1 FROM pg_roles WHERE rolname = 'jamees_ro'`;
+    if (exists.length > 0) {
+      await psql.unsafe(`GRANT USAGE ON SCHEMA public TO jamees_ro`);
+      await psql.unsafe(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO jamees_ro`);
+      await psql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO jamees_ro`);
+    }
     console.log("[db:push] pdns: schema gpgsql aplicado + grants.");
   } finally {
     await psql.end({ timeout: 5 }).catch(() => {});
   }
+}
+
+/**
+ * Role Postgres SOMENTE-LEITURA dedicado ao CLI `jamees` (comando `db query`).
+ * NOSUPERUSER + default_transaction_read_only + statement_timeout: mesmo que a
+ * validação de SELECT do CLI afrouxe, o role não escreve nem lê arquivo/exec.
+ * LOGIN (o CLI conecta por `docker exec psql -U jamees_ro`, socket local trust).
+ * Idempotente. Grants em velozpanel aqui; em pdns dentro do bootstrapPdns.
+ */
+async function ensureReadOnlyRole(): Promise<void> {
+  const role = "jamees_ro";
+  const exists = await sql`SELECT 1 FROM pg_roles WHERE rolname = ${role}`;
+  if (exists.length === 0) {
+    await sql.unsafe(`CREATE ROLE ${role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`);
+    console.log(`[db:push] role somente-leitura ${role} criada.`);
+  }
+  await sql.unsafe(`ALTER ROLE ${role} SET statement_timeout = '15000ms'`);
+  await sql.unsafe(`ALTER ROLE ${role} SET default_transaction_read_only = on`);
+  await sql.unsafe(`GRANT USAGE ON SCHEMA public TO ${role}`);
+  await sql.unsafe(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${role}`);
+  await sql.unsafe(`ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO ${role}`);
 }
 
 async function main(): Promise<void> {
@@ -738,6 +766,8 @@ async function main(): Promise<void> {
   await createSchema();
   console.log("[db:push] seed…");
   await seed();
+  console.log("[db:push] role somente-leitura (CLI)…");
+  await ensureReadOnlyRole();
   console.log("[db:push] bootstrap pdns…");
   await bootstrapPdns();
   console.log("[db:push] pronto.");
