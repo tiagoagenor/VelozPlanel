@@ -58,6 +58,7 @@ import { startBillingScheduler } from "./billing";
 import { startProvisionWorker } from "./worker";
 import { startDnsVerifier } from "./dns-verifier";
 import { startSpeedtestScheduler } from "./speedtest";
+import { startDeployScheduler } from "./deploy-scheduler";
 
 const PORT = Number(process.env.PORT ?? 4000);
 // Origens do painel autorizadas no CORS. Configurável por env `VP_PANEL_ORIGINS`
@@ -169,6 +170,7 @@ async function main(): Promise<void> {
   const stopWorker = startProvisionWorker(app.log);
   const stopDnsVerifier = startDnsVerifier(app.log);
   const stopSpeedtest = startSpeedtestScheduler(app.log);
+  const stopDeploy = startDeployScheduler(app.log);
 
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`recebido ${signal}, encerrando…`);
@@ -177,6 +179,7 @@ async function main(): Promise<void> {
     stopWorker();
     stopDnsVerifier();
     stopSpeedtest();
+    stopDeploy();
     await app.close();
     process.exit(0);
   };

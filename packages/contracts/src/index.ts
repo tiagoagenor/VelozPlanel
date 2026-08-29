@@ -383,6 +383,8 @@ export const deployConfig = z.object({
   needsReconnect: z.boolean(),
   autoEnabled: z.boolean(),
   intervalMinutes: z.number().int(),
+  lastCheckAt: z.string().datetime().nullable(), // última vez que o auto-deploy checou o repo
+  lastRemoteSha: z.string().nullable(), // último commit visto na branch (dedup do auto-deploy)
   deployStrategy: deployStrategy,
   framework: deployFramework,
   runModel: deployRunModel,
@@ -474,7 +476,7 @@ export type SetDeployStepsInput = z.infer<typeof setDeployStepsInput>;
 /** Liga/desliga o deploy automático e define o intervalo (mín. 5 min). */
 export const setDeployAutoInput = z.object({
   autoEnabled: z.boolean(),
-  intervalMinutes: z.number().int().min(5).max(1440),
+  intervalMinutes: z.number().int().min(1).max(1440), // mín. 1 min para não fazer polling agressivo demais
 });
 export type SetDeployAutoInput = z.infer<typeof setDeployAutoInput>;
 

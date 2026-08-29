@@ -290,6 +290,24 @@ export async function listBranches(
   }
 }
 
+/** Último commit (SHA) da branch remota, sem clonar — para o polling do auto-deploy.
+ *  Reusa a auth do deploy (deploy key SSH / credential helper HTTP) num container
+ *  efêmero. É barato (1 ref), mas sobe/derruba um container a cada checagem. */
+export async function remoteSha(
+  envId: string, image: string, repoUrl: string, branch: string, http?: HttpCreds,
+): Promise<{ ok: boolean; sha: string | null }> {
+  const c = await startBuildContainer(envId, image, [], http);
+  try {
+    await execIn(c.id, ["sh", "-c", "mkdir -p /workspace/.ssh && ssh-keyscan -t ed25519 github.com gitlab.com bitbucket.org > /workspace/.ssh/known_hosts 2>/dev/null || true"]);
+    const r = await execIn(c.id, ["sh", "-c", `timeout 25 git ls-remote -- '${repoUrl}' 'refs/heads/${branch}' 2>&1; echo "RC=$?"`]);
+    if (!/RC=0/.test(r.out)) return { ok: false, sha: null };
+    const m = /^([0-9a-f]{40})\s/m.exec(r.out);
+    return { ok: true, sha: m ? m[1]! : null };
+  } finally {
+    await killContainer(c);
+  }
+}
+
 /** Detecta o stack a partir do checkout no volume. `kind` = runtime do ambiente. */
 export async function detectStack(
   envId: string,

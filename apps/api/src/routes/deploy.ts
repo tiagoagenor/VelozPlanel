@@ -21,7 +21,7 @@ import {
 import type { DeployConfig, DeployStep, DeployRun } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { deployConfigs, deploySteps, deployRuns, envVars, environments } from "../db/schema";
-import type { DeployConfigRow, DeployStepRow, EnvironmentRow } from "../db/schema";
+import type { DeployConfigRow, DeployStepRow, DeployRunRow, EnvironmentRow } from "../db/schema";
 import { ApiHttpError, requireUser } from "../auth";
 import { loadEnvironmentForUser } from "./environments";
 import * as agent from "../agent";
@@ -35,7 +35,7 @@ const runParams = z.object({ id: z.string().uuid(), runId: z.string().uuid() });
  *  NÃO é a imagem do app (que já roda). Estático builda SPA em Node (o app é
  *  caddy, sem node); Python builda na base própria (python-slim não tem git). */
 const STATIC_BUILD_NODE = "22"; // Node LTS fixo para buildar SPA de estáticos
-function baseImage(env: EnvironmentRow): string {
+export function baseImage(env: EnvironmentRow): string {
   switch (env.runtimeKind) {
     case "php":
       return `velozplanel/php:${env.runtimeVersion}`;
@@ -69,7 +69,7 @@ function appWorkdir(env: EnvironmentRow): string {
 }
 
 /** Credenciais HTTPS decifradas, se o modo for http. */
-function httpCredsFor(cfg: DeployConfigRow): { username: string; password: string } | undefined {
+export function httpCredsFor(cfg: DeployConfigRow): { username: string; password: string } | undefined {
   if (cfg.connectionMode === "http" && cfg.httpUsername && cfg.httpPasswordEnc) {
     return { username: cfg.httpUsername, password: decryptSecret(cfg.httpPasswordEnc) };
   }
@@ -111,6 +111,8 @@ async function toConfig(cfg: DeployConfigRow): Promise<DeployConfig> {
     connectionVerifiedAt: cfg.connectionVerifiedAt ? cfg.connectionVerifiedAt.toISOString() : null,
     needsReconnect: cfg.needsReconnect,
     autoEnabled: cfg.autoEnabled, intervalMinutes: cfg.intervalMinutes,
+    lastCheckAt: cfg.lastCheckAt ? cfg.lastCheckAt.toISOString() : null,
+    lastRemoteSha: cfg.lastRemoteSha,
     deployStrategy: cfg.deployStrategy as DeployConfig["deployStrategy"],
     framework: cfg.framework as DeployConfig["framework"],
     runModel: cfg.runModel as DeployConfig["runModel"],
@@ -120,6 +122,59 @@ async function toConfig(cfg: DeployConfigRow): Promise<DeployConfig> {
     gatewayActive: true,
     message: notes.join(" ") || null,
   };
+}
+
+/** Dispara um deploy_run (build no nó) SEM depender de um `user` — usado pelo
+ *  handler manual (wrapper com requireUser) e pelo agendador de auto-deploy. Os
+ *  guards (repo conectado, ambiente running) ficam no chamador. */
+export async function startDeployRun(env: EnvironmentRow, cfg: DeployConfigRow, trigger: "manual" | "auto"): Promise<DeployRunRow> {
+  const steps = await db.select().from(deploySteps).where(eq(deploySteps.envId, env.id)).orderBy(deploySteps.ord);
+  const evRows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
+  const buildEnv = evRows.filter((r) => r.buildTime).map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted) }));
+  const runIns = await db.insert(deployRuns).values({ envId: env.id, trigger, status: "running" }).returning();
+  const run = runIns[0]!;
+  const agentUrl = await agentUrlForEnv(env);
+  try {
+    await agent.startDeploy(agentUrl, {
+      envId: env.id, image: baseImage(env), appContainerId: env.containerId!, workdir: appWorkdir(env),
+      repoUrl: cfg.repoUrl!, branch: cfg.branch,
+      steps: steps.map((s) => ({ kind: s.kind, command: s.command, cwd: s.cwd, enabled: s.enabled })),
+      buildEnv, framework: cfg.framework, runModel: cfg.runModel, http: httpCredsFor(cfg), subdir: cfg.subdir,
+      runId: run.id, nodeStartFile: env.nodeStartFile, historyLimit: cfg.historyLimit,
+      runtimeKind: env.runtimeKind, pythonCmd: env.pythonCmd, dotnetCmd: env.dotnetCmd,
+    });
+  } catch (err) {
+    await db.update(deployRuns).set({ status: "failed", log: String(err), finishedAt: new Date() }).where(eq(deployRuns.id, run.id));
+    throw err;
+  }
+  await db.update(deployConfigs).set({ lastRunId: run.id, lastRunStatus: "running", lastRunAt: new Date() }).where(eq(deployConfigs.envId, env.id));
+  return run;
+}
+
+/** Fecha um run "running" consultando o log do agente: persiste status/commit,
+ *  atualiza lastGoodSha no sucesso e poda o histórico. Usado pelo GET log e pelo
+ *  agendador de auto-deploy. */
+export async function reconcileRun(env: EnvironmentRow, run: DeployRunRow): Promise<{ log: string | null; status: string }> {
+  if (run.status !== "running") return { log: run.log, status: run.status };
+  try {
+    const agentUrl = await agentUrlForEnv(env);
+    const live = await agent.deployLog(agentUrl, run.id);
+    if (!live.done) return { log: live.log, status: "running" };
+    await db.update(deployRuns).set({ status: live.status, log: live.log, commitSha: live.commitSha, exitCode: live.exitCode, finishedAt: new Date() }).where(eq(deployRuns.id, run.id));
+    const patch: Record<string, unknown> = { lastRunStatus: live.status };
+    if (live.status === "success" && live.commitSha) patch.lastGoodSha = live.commitSha;
+    await db.update(deployConfigs).set(patch).where(eq(deployConfigs.envId, env.id));
+    const cfgH = (await db.select().from(deployConfigs).where(eq(deployConfigs.envId, env.id)).limit(1))[0];
+    const lim = cfgH?.historyLimit ?? 10;
+    if (lim > 0) {
+      const keep = await db.select({ id: deployRuns.id }).from(deployRuns).where(eq(deployRuns.envId, env.id)).orderBy(desc(deployRuns.startedAt)).limit(lim);
+      const keepIds = keep.map((k) => k.id);
+      if (keepIds.length) await db.delete(deployRuns).where(and(eq(deployRuns.envId, env.id), notInArray(deployRuns.id, keepIds)));
+    }
+    return { log: live.log, status: live.status };
+  } catch {
+    return { log: run.log, status: run.status };
+  }
 }
 
 /** Passos padrão a partir da detecção do stack. */
@@ -417,30 +472,12 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       if (!cfg.repoUrl) throw new ApiHttpError(400, "no_repo", "conecte um repositório antes de fazer deploy");
       if (!env.containerId || env.state !== "running") throw new ApiHttpError(400, "not_running", "o ambiente precisa estar rodando");
 
-      const steps = await db.select().from(deploySteps).where(eq(deploySteps.envId, env.id)).orderBy(deploySteps.ord);
-      const evRows = await db.select().from(envVars).where(eq(envVars.envId, env.id));
-      const buildEnv = evRows.filter((r) => r.buildTime).map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted) }));
-
-      const runIns = await db.insert(deployRuns).values({ envId: env.id, trigger: "manual", status: "running" }).returning();
-      const run = runIns[0]!;
-
-      const agentUrl = await agentUrlForEnv(env);
-      // Dispara o deploy em BACKGROUND no nó (streaming do log) e retorna JÁ.
+      let run: DeployRunRow;
       try {
-        await agent.startDeploy(agentUrl, {
-          envId: env.id, image: baseImage(env), appContainerId: env.containerId, workdir: appWorkdir(env),
-          repoUrl: cfg.repoUrl, branch: cfg.branch,
-          steps: steps.map((s) => ({ kind: s.kind, command: s.command, cwd: s.cwd, enabled: s.enabled })),
-          buildEnv, framework: cfg.framework, runModel: cfg.runModel, http: httpCredsFor(cfg), subdir: cfg.subdir,
-          runId: run.id, nodeStartFile: env.nodeStartFile, historyLimit: cfg.historyLimit,
-          runtimeKind: env.runtimeKind, pythonCmd: env.pythonCmd, dotnetCmd: env.dotnetCmd,
-        });
-      } catch (err) {
-        await db.update(deployRuns).set({ status: "failed", log: String(err), finishedAt: new Date() }).where(eq(deployRuns.id, run.id));
+        run = await startDeployRun(env, cfg, "manual");
+      } catch {
         throw new ApiHttpError(502, "deploy_failed", "falha ao iniciar o deploy no nó");
       }
-      await db.update(deployConfigs).set({ lastRunId: run.id, lastRunStatus: "running", lastRunAt: new Date() }).where(eq(deployConfigs.envId, env.id));
-
       return { id: run.id, trigger: "manual", status: "running", exitCode: null, failedStepKind: null, commitSha: null, commitMessage: null, startedAt: run.startedAt.toISOString(), finishedAt: null };
     });
 
@@ -461,31 +498,7 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
       const rows = await db.select().from(deployRuns).where(eq(deployRuns.id, req.params.runId)).limit(1);
       const r = rows[0];
       if (!r || r.envId !== env.id) throw new ApiHttpError(404, "not_found", "execução não encontrada");
-      if (r.status === "running") {
-        try {
-          const agentUrl = await agentUrlForEnv(env);
-          const live = await agent.deployLog(agentUrl, r.id);
-          if (live.done) {
-            await db.update(deployRuns).set({ status: live.status, log: live.log, commitSha: live.commitSha, exitCode: live.exitCode, finishedAt: new Date() }).where(eq(deployRuns.id, r.id));
-            const patch: Record<string, unknown> = { lastRunStatus: live.status };
-            if (live.status === "success" && live.commitSha) patch.lastGoodSha = live.commitSha;
-            await db.update(deployConfigs).set(patch).where(eq(deployConfigs.envId, env.id));
-            // Poda o histórico no banco para o limite configurado (0 = nunca apaga).
-            const cfgH = (await db.select().from(deployConfigs).where(eq(deployConfigs.envId, env.id)).limit(1))[0];
-            const lim = cfgH?.historyLimit ?? 10;
-            if (lim > 0) {
-              const keep = await db.select({ id: deployRuns.id }).from(deployRuns).where(eq(deployRuns.envId, env.id)).orderBy(desc(deployRuns.startedAt)).limit(lim);
-              const keepIds = keep.map((k) => k.id);
-              if (keepIds.length) await db.delete(deployRuns).where(and(eq(deployRuns.envId, env.id), notInArray(deployRuns.id, keepIds)));
-            }
-            return { log: live.log, status: live.status };
-          }
-          return { log: live.log, status: "running" };
-        } catch {
-          return { log: r.log, status: r.status };
-        }
-      }
-      return { log: r.log, status: r.status };
+      return reconcileRun(env, r);
     });
 
   // DELETE /environments/:id/deploy — apaga TODA a configuração de deploy do

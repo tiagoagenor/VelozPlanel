@@ -258,6 +258,9 @@ export interface DeployDetectResult {
 export function deployDetect(agentUrl: string, envId: string, image: string, repoUrl: string, branch: string, kind: string, http?: HttpCreds): Promise<DeployDetectResult> {
   return call(agentUrl, "POST", "/deploy/detect", { envId, image, repoUrl, branch, kind, http });
 }
+export function deployRemoteSha(agentUrl: string, envId: string, image: string, repoUrl: string, branch: string, http?: HttpCreds): Promise<{ ok: boolean; sha: string | null }> {
+  return call(agentUrl, "POST", "/deploy/remote-sha", { envId, image, repoUrl, branch, http });
+}
 export interface DeployRunInput {
   envId: string; image: string; appContainerId: string; workdir: string;
   repoUrl: string; branch: string;

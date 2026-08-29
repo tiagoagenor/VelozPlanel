@@ -179,6 +179,16 @@ export default function DeployPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [envChrome, cfg?.connectionMode, inWizard]);
 
+  // ---- Deploy automático ----
+  const [autoOn, setAutoOn] = React.useState(false);
+  const [autoInterval, setAutoInterval] = React.useState(5);
+  React.useEffect(() => { if (cfg) { setAutoOn(cfg.autoEnabled); setAutoInterval(cfg.intervalMinutes || 5); } }, [cfg?.autoEnabled, cfg?.intervalMinutes]);
+  const saveAuto = useMutation({
+    mutationFn: (p: { autoEnabled: boolean; intervalMinutes: number }) => api.setDeployAuto(id, p),
+    onSuccess: (r) => { qc.setQueryData(["deploy", id], r); toast.show("success", r.autoEnabled ? "Deploy automático ligado." : "Deploy automático desligado."); },
+    onError: (e) => toast.show("error", errMsg(e, "Falha ao salvar o deploy automático.")),
+  });
+
   if (q.isPending || envQ.isPending) return <div className="flex min-h-40 items-center justify-center"><Loader2 className="animate-spin text-brand-strong" /></div>;
 
   const hasConn = cfg && cfg.connectionMode !== "none";
@@ -344,6 +354,29 @@ export default function DeployPage() {
                 {varsQ.data.vars.length > 3 ? <button type="button" className="w-fit text-xs text-link hover:underline" onClick={() => setVarsOpen(true)}>+{varsQ.data.vars.length - 3} mais · ver todas</button> : null}
               </div>
             ) : <p className="text-sm text-text3">Nenhuma variável — clique em Gerenciar para adicionar.</p>}
+          </div></Card>
+
+          <Card><div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h3 className="flex items-center gap-2 font-semibold text-text"><RefreshCw size={16} className="text-brand-strong" /> Deploy automático</h3>
+              <button type="button" role="switch" aria-checked={autoOn} aria-label="Ligar deploy automático"
+                onClick={() => { const on = !autoOn; setAutoOn(on); saveAuto.mutate({ autoEnabled: on, intervalMinutes: Math.max(1, autoInterval) }); }}
+                className={`relative h-[22px] w-10 shrink-0 rounded-full transition-colors ${autoOn ? "bg-brand" : "bg-neutral/40"}`}>
+                <span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white transition-all ${autoOn ? "right-0.5" : "left-0.5"}`} />
+              </button>
+            </div>
+            <p className="text-xs text-text3">Checa o repositório de tempos em tempos e <strong>publica sozinho</strong> quando houver commit novo na branch.</p>
+            {autoOn ? (
+              <div className="flex flex-col gap-2 border-t border-border-subtle pt-3">
+                <label className="flex flex-wrap items-center gap-2 text-sm text-text2">
+                  Checar a cada
+                  <Input type="number" min={1} max={1440} value={autoInterval} onChange={(e) => setAutoInterval(Math.max(1, Number(e.target.value) || 1))} onBlur={() => saveAuto.mutate({ autoEnabled: true, intervalMinutes: Math.max(1, autoInterval) })} className="h-8 w-20" />
+                  minutos
+                  {saveAuto.isPending ? <Loader2 size={14} className="animate-spin text-text3" /> : null}
+                </label>
+                <p className="text-xs text-text3">Mínimo 1 minuto. {cfg?.lastCheckAt ? `Última checagem: ${new Date(cfg.lastCheckAt).toLocaleString("pt-BR")}.` : "Ainda não checou."}{cfg?.lastRemoteSha ? ` Commit visto: ${cfg.lastRemoteSha.slice(0, 8)}.` : ""}</p>
+              </div>
+            ) : null}
           </div></Card>
 
           <Card className="border-danger/30"><div className="flex flex-col gap-3">

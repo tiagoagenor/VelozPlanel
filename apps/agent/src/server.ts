@@ -352,6 +352,14 @@ app.post("/deploy/detect", async (req, reply) => {
   catch (err) { req.log.error({ err }, "deploy/detect failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
 });
 
+app.post("/deploy/remote-sha", async (req, reply) => {
+  const parsed = deployDetectBody.safeParse(req.body); // { envId, image, repoUrl, branch, http? } — ignora kind
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  const d = parsed.data;
+  try { return reply.code(200).send(await deploy.remoteSha(d.envId, d.image, d.repoUrl, d.branch, d.http)); }
+  catch (err) { req.log.error({ err }, "deploy/remote-sha failed"); return reply.code(dockerErrorStatus(err)).send(errorPayload(err)); }
+});
+
 app.post("/deploy/run", async (req, reply) => {
   const parsed = deployRunBody.safeParse(req.body);
   if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
