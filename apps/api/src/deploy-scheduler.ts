@@ -52,9 +52,14 @@ async function processOne(cfg: DeployConfigRow, log: FastifyBaseLogger): Promise
   if (!env) { await bump(); return; }
 
   // Fecha um run automático anterior ainda "running" (persiste status/commit + poda).
+  // Se ele AINDA está rodando, adia — nunca dispara um 2º build concorrente no mesmo
+  // volume de build (evitaria race na checkout/place).
   if (cfg.lastRunStatus === "running" && cfg.lastRunId) {
     const prev = (await db.select().from(deployRuns).where(eq(deployRuns.id, cfg.lastRunId)).limit(1))[0];
-    if (prev) await reconcileRun(env, prev).catch(() => {});
+    if (prev) {
+      const rec = await reconcileRun(env, prev).catch(() => ({ log: null, status: "running" }));
+      if (rec.status === "running") { await bump(); return; }
+    }
   }
 
   // Só dispara se o ambiente está PRONTO (running + container + verificado + passos).
@@ -63,8 +68,16 @@ async function processOne(cfg: DeployConfigRow, log: FastifyBaseLogger): Promise
   const ready = !!cfg.repoUrl && env.state === "running" && !!env.containerId && verified && stepsCount > 0;
   if (!ready) { await bump(); return; }
 
-  const agentUrl = await agentUrlForEnv(env);
-  const res = await agent.deployRemoteSha(agentUrl, env.id, baseImage(env), cfg.repoUrl!, cfg.branch, httpCredsFor(cfg));
+  // Lê o SHA remoto. QUALQUER falha do agente/nó/timeout ainda agenda o próximo check
+  // no intervalo normal (nunca vira hot-loop de 30s subindo container num nó fora do ar).
+  let res: { ok: boolean; sha: string | null };
+  try {
+    const agentUrl = await agentUrlForEnv(env);
+    res = await agent.deployRemoteSha(agentUrl, env.id, baseImage(env), cfg.repoUrl!, cfg.branch, httpCredsFor(cfg));
+  } catch (err) {
+    log.warn({ err, envId: env.id }, "auto-deploy: falha ao ler o SHA remoto");
+    await bump(); return;
+  }
   const sha = res.ok ? res.sha : null;
   if (!sha) { await bump(); return; } // não conseguiu ler o SHA — tenta de novo no próximo ciclo
 

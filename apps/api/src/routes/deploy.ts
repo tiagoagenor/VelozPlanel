@@ -457,8 +457,15 @@ export async function deployRoutes(fastify: FastifyInstance): Promise<void> {
     async (req): Promise<DeployConfig> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
-      await loadOrCreateConfig(env);
-      const upd = await db.update(deployConfigs).set({ autoEnabled: req.body.autoEnabled, intervalMinutes: req.body.intervalMinutes, nextCheckAt: req.body.autoEnabled ? new Date() : null }).where(eq(deployConfigs.envId, env.id)).returning();
+      const cur = await loadOrCreateConfig(env);
+      const upd = await db.update(deployConfigs).set({
+        autoEnabled: req.body.autoEnabled,
+        intervalMinutes: req.body.intervalMinutes,
+        nextCheckAt: req.body.autoEnabled ? new Date() : null,
+        // Ao LIGAR, semeia lastRemoteSha com o último commit já publicado → o auto
+        // não redispara um deploy do mesmo HEAD; só publica quando houver commit NOVO.
+        ...(req.body.autoEnabled && cur.lastGoodSha ? { lastRemoteSha: cur.lastGoodSha } : {}),
+      }).where(eq(deployConfigs.envId, env.id)).returning();
       return toConfig(upd[0]!);
     });
 
