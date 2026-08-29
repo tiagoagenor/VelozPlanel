@@ -572,9 +572,9 @@ export function FirstDeployWizard({ id }: { id: string }) {
             <div className="flex flex-col gap-3">
               {varRows.map((r, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <Input className="font-mono" placeholder="NOME" value={r.key} onChange={(e) => setVarRows((rs) => rs.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
-                  <span className="text-text3">=</span>
-                  <Input className="flex-1 font-mono" placeholder="valor" type={r.hidden ? "password" : "text"} value={r.value} onChange={(e) => setVarRows((rs) => rs.map((x, j) => j === i ? { ...x, value: e.target.value, dirty: true } : x))} />
+                  <Input className="min-w-0 flex-1 font-mono" placeholder="NOME" value={r.key} onChange={(e) => setVarRows((rs) => rs.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} />
+                  <span className="shrink-0 text-text3">=</span>
+                  <Input className="min-w-0 flex-1 font-mono" placeholder="valor" type={r.hidden ? "password" : "text"} value={r.value} onChange={(e) => setVarRows((rs) => rs.map((x, j) => j === i ? { ...x, value: e.target.value, dirty: true } : x))} />
                   <button type="button" title="Esconder valor (segredo)" onClick={() => setVarRows((rs) => rs.map((x, j) => j === i ? { ...x, hidden: !x.hidden } : x))}
                     className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-lg border", r.hidden ? "border-brand bg-brand-soft text-brand-strong" : "border-border text-text3")}>
                     {r.hidden ? <EyeOff size={17} /> : <Eye size={17} />}
