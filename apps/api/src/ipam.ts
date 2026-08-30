@@ -152,11 +152,23 @@ export async function allocateVpsAddress(
   });
 }
 
-/** Faixa de portas públicas de um VPS a partir do slot (bloco contíguo). */
-export function vpsPortRange(slot: number): { start: number; count: number } {
+/**
+ * Bloco de portas públicas de um VPS a partir do slot. O bloco tem `freeCount+1` portas
+ * contíguas: a 1ª é o **SSH** (o sshd do guest escuta nela) e as demais são **livres** (DNAT
+ * 1:1). Ex.: slot 0 → SSH 20000, livres 20001–20020.
+ */
+export function vpsPortRange(slot: number): {
+  blockStart: number;
+  blockCount: number;
+  sshPort: number;
+  freeStart: number;
+  freeCount: number;
+} {
   const base = Number(process.env.VP_VPS_PORT_BASE ?? 20000);
-  const count = Number(process.env.VP_VPS_PORTS_PER_VM ?? 20);
-  return { start: base + slot * count, count };
+  const freeCount = Number(process.env.VP_VPS_PORTS_PER_VM ?? 20);
+  const stride = freeCount + 1; // +1 para a porta de SSH
+  const blockStart = base + slot * stride;
+  return { blockStart, blockCount: stride, sshPort: blockStart, freeStart: blockStart + 1, freeCount };
 }
 
 /** Slot VPS (base do range de portas) de um dono num nó; null se ainda não alocado. */

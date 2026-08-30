@@ -19,7 +19,8 @@ const PORT = Number(process.env.VPS_AGENT_PORT ?? 4101);
 const HOST = process.env.VPS_AGENT_HOST ?? "0.0.0.0";
 const TOKEN = process.env.VP_INTERNAL_TOKEN ?? "";
 
-const app = Fastify({ logger: { transport: { target: "pino-pretty", options: { translateTime: "HH:MM:ss", ignore: "pid,hostname" } } } });
+// Sem transport pino-pretty: não funciona em bundle single-file (worker thread).
+const app = Fastify({ logger: { level: process.env.VPS_LOG_LEVEL ?? "info" } });
 await app.register(cors, { origin: true, credentials: true });
 
 app.addHook("onRequest", async (req, reply) => {
@@ -48,6 +49,7 @@ const provisionBody = z.object({
   sshPublicKeys: z.array(z.string().min(1)).min(1),
   sshUser: z.string().regex(/^[a-z_][a-z0-9_-]*$/).optional(),
   ports: z.object({ start: z.number().int().min(1).max(65535), count: z.number().int().min(1).max(1000) }).nullable().optional(),
+  sshPort: z.number().int().min(1).max(65535).nullable().optional(),
 });
 const nameBody = z.object({ vmName: z.string().regex(/^vps-[a-z0-9]+$/) });
 const publishBody = z.object({

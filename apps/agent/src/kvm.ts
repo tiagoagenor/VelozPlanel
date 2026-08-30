@@ -31,7 +31,6 @@ const POOL_DIR = process.env.VPS_POOL_DIR ?? "/var/lib/veloz-vps/disks"; // over
 const SEED_DIR = process.env.VPS_SEED_DIR ?? "/var/lib/veloz-vps/seed"; // ISOs cloud-init
 const BASE_DIR = process.env.VPS_BASE_DIR ?? "/var/lib/veloz-vps/base"; // imagens-base cloud
 const AA_DIR = process.env.VPS_APPARMOR_DIR ?? "/etc/apparmor.d/libvirt"; // perfis do libvirt
-const SSHPIPER_DIR = process.env.VPS_SSHPIPER_DIR ?? "/var/lib/veloz-vps/sshpiper"; // workingdir do sshpiper
 const NFT_DIR = process.env.VPS_NFT_DIR ?? "/var/lib/veloz-vps/nft"; // regras DNAT por VM
 const SSH_KEYSCAN_TIMEOUT_S = Number(process.env.VPS_KEYSCAN_TIMEOUT ?? 5);
 
@@ -70,6 +69,7 @@ export interface VpsProvisionArgs {
   sshPublicKeys: string[]; // chaves autorizadas do cliente (só pública)
   sshUser?: string; // usuário na VM (default "vps"); tem sudo NOPASSWD
   ports?: VpsPorts | null; // bloco de portas públicas DNAT 1:1 pra VM (liberdade do usuário)
+  sshPort?: number | null; // porta pública que cai no sshd da VM (o guest escuta nela + na 22)
 }
 
 export interface VpsProvisionResult {
@@ -144,56 +144,6 @@ export async function ensureNetwork(net: VpsNetwork): Promise<void> {
 }
 
 /**
- * Diretório do sshpiper para esta VM. O gateway (sshpiper) roda no nó com este dir como
- * workingdir; a chave PRIVADA por-VM fica AQUI (no nó), nunca no control plane — o raio
- * de dano é 1 VM por chave. Login no gateway = `vmName` (mapeado p/ `vps@<ip>:22`).
- */
-function sshpiperUserDir(vmName: string): string {
-  return path.join(SSHPIPER_DIR, vmName);
-}
-
-/** Gera (idempotente) a chave ed25519 por-VM do gateway e devolve a PÚBLICA (linha OpenSSH). */
-async function ensureGatewayKey(vmName: string): Promise<string> {
-  const dir = sshpiperUserDir(vmName);
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  const key = path.join(dir, "id_ed25519");
-  try {
-    return (await fs.readFile(`${key}.pub`, "utf8")).trim();
-  } catch {
-    /* gera abaixo */
-  }
-  await run("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", `veloz-gw-${vmName}`, "-f", key, "-q"]);
-  await fs.chmod(key, 0o600).catch(() => {});
-  return (await fs.readFile(`${key}.pub`, "utf8")).trim();
-}
-
-/**
- * Escreve o mapeamento do sshpiper (workingdir driver): quem pode entrar (authorized_keys
- * = chaves do cliente) e para onde vai (`sshpiper_upstream` = vps@<ip>:22). A chave privada
- * de upstream (id_ed25519) já está no dir. `known_hosts` pina a host key do guest quando conhecida.
- */
-async function writeSshpiperMapping(
-  vmName: string,
-  vmIp: string,
-  vmUser: string,
-  clientKeys: string[],
-  guestHostKey: string | null,
-): Promise<void> {
-  const dir = sshpiperUserDir(vmName);
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  await fs.writeFile(path.join(dir, "sshpiper_upstream"), `${vmUser}@${vmIp}:22\n`, { mode: 0o600 });
-  await fs.writeFile(path.join(dir, "authorized_keys"), clientKeys.map((k) => k.trim()).join("\n") + "\n", { mode: 0o600 });
-  if (guestHostKey) {
-    // Formato known_hosts: `<ip> <hostkey>` (a linha do ssh-keyscan já vem como `<ip> ssh-ed25519 ...`).
-    await fs.writeFile(path.join(dir, "known_hosts"), `${guestHostKey}\n`, { mode: 0o600 });
-  }
-}
-
-async function removeSshpiperMapping(vmName: string): Promise<void> {
-  await fs.rm(sshpiperUserDir(vmName), { recursive: true, force: true }).catch(() => {});
-}
-
-/**
  * Encaminhamento de portas (NAT-VPS): cada VPS recebe um BLOCO de portas públicas
  * DNAT 1:1 para a VM (host:P -> vmIp:P), dando liberdade total ao usuário (SSH extra,
  * apps, jogos…). A porta 80 pública NÃO é usada — HTTP é servido por domínio numa porta
@@ -257,6 +207,19 @@ async function removePortForwards(vmName: string): Promise<void> {
 async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: string[]): Promise<string> {
   const user = args.sshUser ?? "vps";
   const keys = allKeys.map((k) => `      - ${k.trim()}`).join("\n");
+  // sshd do guest escuta na 22 E na porta pública do SSH (a DNAT host:sshPort -> VM:sshPort
+  // cai direto no sshd). Assim o cliente entra `ssh -p <sshPort> vps@<host>` sem gateway.
+  const sshPort = args.sshPort ?? null;
+  const sshdDropin =
+    sshPort && sshPort !== 22
+      ? `write_files:\n` +
+        `  - path: /etc/ssh/sshd_config.d/veloz-vps.conf\n` +
+        `    content: |\n` +
+        `      Port 22\n` +
+        `      Port ${sshPort}\n` +
+        `runcmd:\n` +
+        `  - [ systemctl, restart, ssh ]\n`
+      : "";
   // Usuário com sudo NOPASSWD = "root livre"; sem senha; login por senha desligado.
   const userData =
     `#cloud-config\n` +
@@ -268,7 +231,8 @@ async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: str
     `    sudo: 'ALL=(ALL) NOPASSWD:ALL'\n` +
     `    shell: /bin/bash\n` +
     `    lock_passwd: true\n` +
-    `    ssh_authorized_keys:\n${keys}\n`;
+    `    ssh_authorized_keys:\n${keys}\n` +
+    sshdDropin;
   const metaData = `instance-id: ${vmName}\nlocal-hostname: ${vmName}\n`;
   // netplan v2: IP estático; casa qualquer interface "en*" (virtio nomeia enpXsY/ensZ).
   const netCfg =
@@ -321,22 +285,19 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   const img = IMAGES[args.image];
   if (!img) throw new Error(`imagem desconhecida: ${args.image}`);
   const vmName = vmNameFor(args.envId);
-  const vmUser = args.sshUser ?? "vps";
   if (await domainExists(vmName)) {
-    // Idempotência: se já existe, revalida sshpiper + portas e devolve os dados.
+    // Idempotência: se já existe, revalida as portas e devolve os dados.
     const hostKey = await readGuestHostKey(args.ip);
-    await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, hostKey).catch(() => {});
     if (args.ports) await programPortForwards(vmName, args.ip, args.ports).catch(() => {});
-    return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey: hostKey };
+    const sshP = args.sshPort ?? 22;
+    return { vmName, ip: args.ip, sshTarget: `${args.ip}:${sshP}`, guestHostKey: hostKey };
   }
 
   await ensureNetwork(args.network);
   await fs.mkdir(POOL_DIR, { recursive: true });
 
-  // Chave por-VM do gateway: entra no authorized_keys da VM (junto das do cliente) para
-  // o sshpiper conseguir alcançar a VM. A privada fica só no nó (sshpiper workingdir).
-  const gatewayPubKey = await ensureGatewayKey(vmName);
-  const allKeys = [...args.sshPublicKeys, gatewayPubKey];
+  // Só as chaves do CLIENTE — a VM autentica direto (sem gateway/sshpiper).
+  const allKeys = args.sshPublicKeys;
 
   const basePath = path.join(BASE_DIR, img.file);
   await fs.access(basePath).catch(() => {
@@ -373,10 +334,10 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   // A VM está subindo; a host key só existe após o boot — melhor-esforço (o sshpiper
   // pode capturar/pinar depois se vier null aqui).
   const guestHostKey = await readGuestHostKey(args.ip);
-  await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, guestHostKey);
-  // Bloco de portas públicas do usuário (DNAT 1:1).
+  // Bloco de portas públicas do usuário (DNAT 1:1) — inclui a porta do SSH (sshd escuta nela).
   if (args.ports) await programPortForwards(vmName, args.ip, args.ports);
-  return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey };
+  const sshP = args.sshPort ?? 22;
+  return { vmName, ip: args.ip, sshTarget: `${args.ip}:${sshP}`, guestHostKey };
 }
 
 // ── Ciclo de vida ──
@@ -432,9 +393,7 @@ export async function destroy(vmName: string): Promise<void> {
   // Garante remoção do overlay e do seed ISO mesmo se o undefine não os levou.
   await fs.rm(path.join(POOL_DIR, `${vmName}.qcow2`), { force: true }).catch(() => {});
   await fs.rm(path.join(SEED_DIR, `${vmName}.seed.iso`), { force: true }).catch(() => {});
-  // Remove o mapeamento + chave por-VM do sshpiper (revoga o acesso).
-  await removeSshpiperMapping(vmName).catch(() => {});
-  // Remove o bloco de portas DNAT (libera as portas públicas).
+  // Remove o bloco de portas DNAT (libera as portas públicas + revoga o SSH).
   await removePortForwards(vmName).catch(() => {});
   // Reaper do perfil AppArmor libvirt-<uuid>: só é possível casar por conteúdo; aqui
   // removemos qualquer perfil cujo `.files` referencie os discos deste vmName.

@@ -976,6 +976,7 @@ const vpsProvisionBody = z.object({
   sshPublicKeys: z.array(z.string().min(1)).min(1),
   sshUser: z.string().regex(/^[a-z_][a-z0-9_-]*$/).optional(),
   ports: z.object({ start: z.number().int().min(1).max(65535), count: z.number().int().min(1).max(1000) }).nullable().optional(),
+  sshPort: z.number().int().min(1).max(65535).nullable().optional(),
 });
 // Nome do domínio libvirt: só o alfabeto que geramos (vps-<hex>) — 2ª borda anti-injeção.
 const vpsNameBody = z.object({ vmName: z.string().regex(/^vps-[a-z0-9]+$/) });

@@ -42,13 +42,14 @@ systemctl enable --now veloz-vps-agent
 sleep 3
 echo "  agente: $(systemctl is-active veloz-vps-agent) | health: $(curl -sf http://127.0.0.1:4101/health || echo FALHOU)"
 
-echo "== gateway SSH (sshpiper :2224) =="
-docker compose -f "$SRC/docker-compose.sshpiper.yml" up -d
+# SSH das VPS NÃO usa gateway: cada VPS ganha uma porta pública (DNAT) que cai direto
+# no sshd da VM (o cliente autentica com a própria chave). Nada a subir aqui.
+
 echo "== borda HTTP (Caddy :8080) =="
 # o compose do Caddy referencia ./Caddyfile — rode a partir da pasta com o Caddyfile
 cp "$SRC/Caddyfile" /opt/veloz-vps/Caddyfile
 ( cd /opt/veloz-vps && cp "$SRC/docker-compose.caddy.yml" ./docker-compose.caddy.yml && docker compose -f docker-compose.caddy.yml up -d )
 
 echo "== resumo =="
-ss -tlnp 2>/dev/null | grep -E ':(4101|2224|8080) ' || true
-echo "OK. Agora aponte no roteador (para 192.168.2.111): 2224/tcp (SSH), 8080/tcp (HTTP), 20000-22559 tcp+udp (portas dos VPS)."
+ss -tlnp 2>/dev/null | grep -E ':(4101|8080) ' || true
+echo "OK. Aponte no roteador (para 192.168.2.111): 8080/tcp (HTTP) + a faixa de portas dos VPS (ex.: 20000-22600 tcp+udp) — o SSH de cada VPS é uma dessas portas."

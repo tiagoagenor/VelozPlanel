@@ -182,7 +182,7 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
   }
 
   const alloc = await allocateVpsAddress(nodeId, env.ownerId, env.id);
-  const ports = vpsPortRange(alloc.slot); // bloco de portas públicas (DNAT 1:1)
+  const range = vpsPortRange(alloc.slot); // bloco: 1 SSH + N livres (DNAT 1:1)
   const result = await agent.vpsProvision(agentUrl, {
     envId: env.id,
     name: env.name,
@@ -192,17 +192,16 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
     ip: alloc.ip,
     ownerId: env.ownerId,
     sshPublicKeys: clientKeys,
-    ports,
+    ports: { start: range.blockStart, count: range.blockCount },
+    sshPort: range.sshPort,
   });
 
   await db.update(envAddresses).set({ containerId: result.vmName }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps")));
-  // SSH do env: username = vmName (o que o cliente digita no gateway), porta do gateway
-  // sshpiper das VPS (2224; distinta do gateway Docker 2222/2223), ligado.
-  const vpsSshPort = Number(process.env.VP_VPS_SSH_PORT ?? 2224);
+  // SSH do env: usuário "vps" (login na VM), porta pública do SSH (DNAT direto pra VM), ligado.
   await db
     .insert(sshConfigs)
-    .values({ envId: env.id, username: result.vmName, enabled: true, port: vpsSshPort })
-    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: result.vmName, enabled: true, port: vpsSshPort } });
+    .values({ envId: env.id, username: "vps", enabled: true, port: range.sshPort })
+    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: "vps", enabled: true, port: range.sshPort } });
 
   await db.update(environments).set({
     vmName: result.vmName,

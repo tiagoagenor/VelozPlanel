@@ -94,6 +94,7 @@ export interface VpsProvisionInput {
   sshPublicKeys: string[];
   sshUser?: string;
   ports?: { start: number; count: number } | null;
+  sshPort?: number | null;
 }
 export interface VpsProvisionResult {
   vmName: string;
