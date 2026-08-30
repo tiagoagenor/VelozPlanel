@@ -6,7 +6,7 @@ import type { EnvironmentRow, JobRow } from "./db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { getPlan } from "./plans";
 import * as agent from "./agent";
-import { agentUrlForEnv, pickNodeForNewEnv } from "./nodes";
+import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv } from "./nodes";
 import { allocateAddress, allocateVpsAddress, releaseAddresses } from "./ipam";
 import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
@@ -166,11 +166,13 @@ async function provisionStackEnv(root: EnvironmentRow, et: typeof envTypes.$infe
  * chaves SSH do cliente, registra vmName/host key, liga o SSH (username = vmName) e
  * publica o domínio (se houver) no Caddy do nó -> vmIp:portaWeb.
  */
-async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelect, nodeId: string, agentUrl: string): Promise<void> {
+async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelect, nodeId: string, _agentUrl: string): Promise<void> {
   const planSpec = await getPlan(env.plan);
   if (!planSpec) throw new PermanentJobError("plano inválido");
   const image = et.image ?? "ubuntu-24.04";
   const upstreamPort = et.internalPort ?? 80;
+  // VPS fala com o agente KVM NATIVO do host (não o container Docker).
+  const agentUrl = await vpsAgentUrlForEnv(env);
 
   // A VM autentica por chave; sem chave do cliente não dá pra entrar. Exigimos ao menos uma.
   const keys = await db.select().from(sshKeys).where(eq(sshKeys.envId, env.id));
@@ -297,10 +299,11 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
 
   for (const target of [...children, env]) {
     // VPS (KVM): destrói a VM por completo (overlay+NVRAM+seed+AppArmor+sshpiper) e
-    // despublica o domínio no Caddy do nó. Feito antes da limpeza genérica.
+    // despublica o domínio. Usa o agente KVM NATIVO do host. Antes da limpeza genérica.
     if (target.vmName) {
-      if (target.domain && agentUrl) await agent.vpsUnpublish(agentUrl, target.domain).catch(() => {});
-      if (agentUrl) await agent.vpsAction(agentUrl, "destroy", target.vmName); // confirma antes de apagar; falha → retry
+      const vpsUrl = await vpsAgentUrlForEnv(target);
+      if (target.domain) await agent.vpsUnpublish(vpsUrl, target.domain).catch(() => {});
+      await agent.vpsAction(vpsUrl, "destroy", target.vmName); // confirma antes de apagar; falha → retry
     }
     if (target.autoSubdomain) await cpIngress.removeSite(target.autoSubdomain).catch(() => {});
     // Painéis de serviço (env_tools): remove o vhost do painel e, se for sidecar

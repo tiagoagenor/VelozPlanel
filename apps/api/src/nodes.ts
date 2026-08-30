@@ -24,6 +24,16 @@ export function agentUrlForEnv(env: Pick<EnvironmentRow, "nodeId">): Promise<str
 }
 
 /**
+ * URL do Agente **VPS** do nó. O KVM/libvirt é operado por um agente NATIVO no host
+ * (separado do agente Docker em container, que não alcança o libvirt). Por ora, um
+ * único endpoint global via `VP_VPS_AGENT_URL` (ex.: http://10.100.0.3:4101); se não
+ * definido, cai no agente normal do nó (dev/single-host onde o agente já é nativo).
+ */
+export async function vpsAgentUrlForEnv(env: Pick<EnvironmentRow, "nodeId">): Promise<string> {
+  return process.env.VP_VPS_AGENT_URL ?? (await agentUrlForEnv(env));
+}
+
+/**
  * Escolhe um nó para um novo ambiente: entre os nós ONLINE que têm Agente
  * configurado (`agent_url`), pega o menos carregado (menos ambientes). Assim o
  * provisionamento se espalha pelos servidores de hospedagem.

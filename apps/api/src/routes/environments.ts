@@ -38,7 +38,7 @@ import { encryptSecret, decryptSecret } from "../crypto";
 import { ApiHttpError, requireUser } from "../auth";
 import { getPlan } from "../plans";
 import * as agent from "../agent";
-import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode, publicHostForNode } from "../nodes";
+import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv, httpHostForNode, publicHostForNode } from "../nodes";
 
 /** Porta pública do gateway SSH das VPS (sshpiper) — distinta do gateway Docker (2222/2223). */
 const VPS_SSH_GATEWAY_PORT = Number(process.env.VP_VPS_SSH_PORT ?? 2224);
@@ -467,7 +467,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const env = await loadEnvironmentForUser(req.params.id, user);
       // VPS: desliga a VM (shutdown gracioso).
       if (env.vmName) {
-        await agent.vpsAction(await agentUrlForEnv(env), "stop", env.vmName);
+        await agent.vpsAction(await vpsAgentUrlForEnv(env), "stop", env.vmName);
         const up = await db.update(environments).set({ state: "paused" }).where(eq(environments.id, env.id)).returning();
         return await toEnvironment(up[0] ?? env);
       }
@@ -528,7 +528,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
 
       // VPS: liga a VM.
       if (env.vmName) {
-        await agent.vpsAction(await agentUrlForEnv(env), "start", env.vmName);
+        await agent.vpsAction(await vpsAgentUrlForEnv(env), "start", env.vmName);
         const up = await db.update(environments).set({ state: "running" }).where(eq(environments.id, env.id)).returning();
         return await toEnvironment(up[0] ?? env);
       }
@@ -565,7 +565,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       // VPS: reboot da VM.
       if (env.vmName) {
         if (env.state !== "running") throw new ApiHttpError(409, "not_running", "inicie a VPS antes de reiniciar");
-        await agent.vpsAction(await agentUrlForEnv(env), "reboot", env.vmName);
+        await agent.vpsAction(await vpsAgentUrlForEnv(env), "reboot", env.vmName);
         return await toEnvironment(env);
       }
       if (env.state !== "running" || !env.containerId) {
@@ -589,7 +589,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         env.state === "provisioning" || env.state === "error" ? env.state : "unknown";
       if (env.state !== "provisioning" && env.state !== "error") {
         try {
-          const s = await agent.vpsStatus(await agentUrlForEnv(env), env.vmName);
+          const s = await agent.vpsStatus(await vpsAgentUrlForEnv(env), env.vmName);
           state = (["running", "paused", "shutoff", "unknown", "absent"] as const).includes(s.state as never)
             ? (s.state as typeof state)
             : "unknown";
@@ -622,7 +622,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       if (user.role !== "admin") throw new ApiHttpError(403, "forbidden", "apenas admin pode suspender");
       const env = await loadEnvironmentForUser(req.params.id, user);
       if (!env.vmName) throw new ApiHttpError(400, "not_vps", "este ambiente não é um VPS");
-      await agent.vpsAction(await agentUrlForEnv(env), "suspend", env.vmName);
+      await agent.vpsAction(await vpsAgentUrlForEnv(env), "suspend", env.vmName);
       const up = await db.update(environments).set({ state: "paused" }).where(eq(environments.id, env.id)).returning();
       return await toEnvironment(up[0] ?? env);
     },
