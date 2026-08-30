@@ -114,7 +114,10 @@ export type UpdatePlanInput = z.infer<typeof updatePlanInput>;
 
 /* ─────────────── Tipos de ambiente (catálogo + preço por tipo) ─────────────── */
 
-export const envCategory = z.enum(["app", "service", "stack"]);
+// vps = máquina virtual KVM completa (cliente é root, "livre"), provisionada fora do
+// caminho Docker. Isolada por VM + rede por dono; borda por domínio/porta única e SSH
+// via gateway próprio (sshpiper). Não usa `runtime` — usa imagem-base + plano.
+export const envCategory = z.enum(["app", "service", "stack", "vps"]);
 export type EnvCategory = z.infer<typeof envCategory>;
 
 /** Ferramenta de UI de um serviço (ligada por proxy autenticado; nunca porta pública). */
@@ -239,7 +242,7 @@ export const environment = z.object({
   phpNodeVersionFull: z.string().nullable(), // versão Node real resolvida no container (ex.: 22.12.0)
   accessUrl: z.string().nullable(), // URL pública p/ abrir o site (domínio https, ou IP do nó:porta)
   type: z.string().nullable(), // slug do tipo (env_types); null = app legado
-  category: envCategory.nullable(), // app | service | stack
+  category: envCategory.nullable(), // app | service | stack | vps
   connection: z.record(z.string(), z.string()).nullable(), // dados de conexão do serviço (host interno/porta/credenciais)
   region: z.string().nullable(), // região do nó onde o ambiente roda
   internalIp: z.string().nullable(), // IP interno na rede do dono (serviços/stacks); null p/ app legado

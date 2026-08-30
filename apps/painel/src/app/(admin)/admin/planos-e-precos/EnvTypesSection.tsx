@@ -19,11 +19,13 @@ const CATEGORY_LABEL: Record<EnvType["category"], string> = {
   app: "Código",
   service: "Serviço",
   stack: "Stack (app + banco)",
+  vps: "VPS (KVM)",
 };
 const GROUPS: Array<{ cat: EnvType["category"]; title: string }> = [
   { cat: "app", title: "Código" },
   { cat: "service", title: "Serviços" },
   { cat: "stack", title: "Stacks — app + banco" },
+  { cat: "vps", title: "VPS — máquina virtual KVM" },
 ];
 
 function ActiveBadge({ active }: { active: boolean }) {
