@@ -18,6 +18,7 @@ import {
   apiError,
   diskUsage as diskUsageSchema,
   containerLogs as containerLogsSchema,
+  vpsInfo as vpsInfoSchema,
   PLANS,
 } from "@velozplanel/contracts";
 import type {
@@ -37,7 +38,10 @@ import { encryptSecret, decryptSecret } from "../crypto";
 import { ApiHttpError, requireUser } from "../auth";
 import { getPlan } from "../plans";
 import * as agent from "../agent";
-import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode } from "../nodes";
+import { agentUrlForEnv, pickNodeForNewEnv, httpHostForNode, publicHostForNode } from "../nodes";
+
+/** Porta pública do gateway SSH das VPS (sshpiper) — distinta do gateway Docker (2222/2223). */
+const VPS_SSH_GATEWAY_PORT = Number(process.env.VP_VPS_SSH_PORT ?? 2224);
 import { allocateAddress, ownerNetworkFor } from "../ipam";
 import { connectionInfo } from "../services";
 import { loadPanelRow, panelUrl, panelKindFor } from "../service-panel";
@@ -234,12 +238,12 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
 
       // Resolve o tipo (se houver) e a categoria.
       let et: EnvTypeRowLite | null = null;
-      let category: "app" | "service" | "stack" = "app";
+      let category: "app" | "service" | "stack" | "vps" = "app";
       if (req.body.type) {
         const [row] = await db.select().from(envTypes).where(eq(envTypes.id, req.body.type)).limit(1);
         if (!row || !row.active) throw new ApiHttpError(400, "invalid_type", "tipo de ambiente inválido");
         et = row;
-        category = row.category as "app" | "service" | "stack";
+        category = row.category as "app" | "service" | "stack" | "vps";
       }
 
       // Requisito mínimo de recursos do tipo (e do banco-filho, em stacks): o
@@ -300,6 +304,15 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         const ins = await db.insert(environments).values({
           name, ownerId: user.id, nodeId: null, plan, typeId: et!.id,
           runtimeKind: "node", runtimeVersion: et!.image?.split(":")[1] ?? "latest", state: "provisioning",
+        }).returning();
+        root = ins[0]!;
+      } else if (category === "vps") {
+        // VPS (KVM): sem runtime; usa imagem-base do tipo. runtimeKind/version são
+        // placeholders inofensivos (a UI decide pelo category). Nasce em provisioning.
+        const ins = await db.insert(environments).values({
+          name, ownerId: user.id, nodeId: null, plan, typeId: et!.id,
+          runtimeKind: "static", runtimeVersion: "-", vmUpstreamPort: et!.internalPort ?? 80,
+          state: "provisioning",
         }).returning();
         root = ins[0]!;
       } else {
@@ -452,6 +465,12 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+      // VPS: desliga a VM (shutdown gracioso).
+      if (env.vmName) {
+        await agent.vpsAction(await agentUrlForEnv(env), "stop", env.vmName);
+        const up = await db.update(environments).set({ state: "paused" }).where(eq(environments.id, env.id)).returning();
+        return await toEnvironment(up[0] ?? env);
+      }
       // Captura o tamanho do disco ANTES de parar (o container ainda está de pé, então o
       // `du` nos volumes funciona). Fica salvo para exibir enquanto pausado. Best-effort.
       let diskPatch: { diskBytes?: number; diskMeasuredAt?: Date } = {};
@@ -507,6 +526,13 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         }
       }
 
+      // VPS: liga a VM.
+      if (env.vmName) {
+        await agent.vpsAction(await agentUrlForEnv(env), "start", env.vmName);
+        const up = await db.update(environments).set({ state: "running" }).where(eq(environments.id, env.id)).returning();
+        return await toEnvironment(up[0] ?? env);
+      }
+
       let httpPort = env.httpPort;
       if (env.containerId) {
         const res = await agent.start(await agentUrlForEnv(env), env.containerId);
@@ -536,11 +562,69 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
     async (req): Promise<Environment> => {
       const user = await requireUser(req);
       const env = await loadEnvironmentForUser(req.params.id, user);
+      // VPS: reboot da VM.
+      if (env.vmName) {
+        if (env.state !== "running") throw new ApiHttpError(409, "not_running", "inicie a VPS antes de reiniciar");
+        await agent.vpsAction(await agentUrlForEnv(env), "reboot", env.vmName);
+        return await toEnvironment(env);
+      }
       if (env.state !== "running" || !env.containerId) {
         throw new ApiHttpError(409, "not_running", "inicie o ambiente antes de reiniciar");
       }
       await agent.restartApp(await agentUrlForEnv(env), env.containerId);
       return await toEnvironment(env);
+    },
+  );
+
+  // GET /environments/:id/vps — estado ao vivo da VM + dados de conexão SSH.
+  app.get(
+    "/environments/:id/vps",
+    { schema: { params: idParams, response: { 200: vpsInfoSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError } } },
+    async (req) => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (!env.vmName) throw new ApiHttpError(400, "not_vps", "este ambiente não é um VPS");
+      // Estado ao vivo do agente (mapeado); se em provisioning/error, o env manda.
+      let state: "provisioning" | "running" | "paused" | "shutoff" | "unknown" | "absent" | "error" =
+        env.state === "provisioning" || env.state === "error" ? env.state : "unknown";
+      if (env.state !== "provisioning" && env.state !== "error") {
+        try {
+          const s = await agent.vpsStatus(await agentUrlForEnv(env), env.vmName);
+          state = (["running", "paused", "shutoff", "unknown", "absent"] as const).includes(s.state as never)
+            ? (s.state as typeof state)
+            : "unknown";
+        } catch {
+          state = env.state === "paused" ? "paused" : "unknown";
+        }
+      }
+      const ip =
+        (await db.select().from(envAddresses).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps"))))[0]?.ip ?? null;
+      const sshHost = await publicHostForNode(env.nodeId);
+      return {
+        state,
+        ip,
+        sshUser: env.vmName,
+        sshHost,
+        sshPort: VPS_SSH_GATEWAY_PORT,
+        upstreamPort: env.vmUpstreamPort ?? 80,
+        hostKeyKnown: !!env.vmHostKey,
+        domain: env.domain,
+      };
+    },
+  );
+
+  // POST /environments/:id/vps/suspend — takedown de abuso (admin): congela a VM na hora.
+  app.post(
+    "/environments/:id/vps/suspend",
+    { schema: { params: idParams, response: { 200: environmentSchema, 400: apiError, 401: apiError, 403: apiError, 404: apiError, 502: apiError } } },
+    async (req): Promise<Environment> => {
+      const user = await requireUser(req);
+      if (user.role !== "admin") throw new ApiHttpError(403, "forbidden", "apenas admin pode suspender");
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (!env.vmName) throw new ApiHttpError(400, "not_vps", "este ambiente não é um VPS");
+      await agent.vpsAction(await agentUrlForEnv(env), "suspend", env.vmName);
+      const up = await db.update(environments).set({ state: "paused" }).where(eq(environments.id, env.id)).returning();
+      return await toEnvironment(up[0] ?? env);
     },
   );
 

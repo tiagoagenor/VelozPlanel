@@ -31,6 +31,7 @@ const POOL_DIR = process.env.VPS_POOL_DIR ?? "/var/lib/veloz-vps/disks"; // over
 const SEED_DIR = process.env.VPS_SEED_DIR ?? "/var/lib/veloz-vps/seed"; // ISOs cloud-init
 const BASE_DIR = process.env.VPS_BASE_DIR ?? "/var/lib/veloz-vps/base"; // imagens-base cloud
 const AA_DIR = process.env.VPS_APPARMOR_DIR ?? "/etc/apparmor.d/libvirt"; // perfis do libvirt
+const SSHPIPER_DIR = process.env.VPS_SSHPIPER_DIR ?? "/var/lib/veloz-vps/sshpiper"; // workingdir do sshpiper
 const SSH_KEYSCAN_TIMEOUT_S = Number(process.env.VPS_KEYSCAN_TIMEOUT ?? 5);
 
 /** Mapa slug de imagem -> arquivo qcow2 base + os-variant do virt-install. */
@@ -135,10 +136,60 @@ export async function ensureNetwork(net: VpsNetwork): Promise<void> {
   await run("virsh", ["net-autostart", net.name]);
 }
 
+/**
+ * Diretório do sshpiper para esta VM. O gateway (sshpiper) roda no nó com este dir como
+ * workingdir; a chave PRIVADA por-VM fica AQUI (no nó), nunca no control plane — o raio
+ * de dano é 1 VM por chave. Login no gateway = `vmName` (mapeado p/ `vps@<ip>:22`).
+ */
+function sshpiperUserDir(vmName: string): string {
+  return path.join(SSHPIPER_DIR, vmName);
+}
+
+/** Gera (idempotente) a chave ed25519 por-VM do gateway e devolve a PÚBLICA (linha OpenSSH). */
+async function ensureGatewayKey(vmName: string): Promise<string> {
+  const dir = sshpiperUserDir(vmName);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  const key = path.join(dir, "id_ed25519");
+  try {
+    return (await fs.readFile(`${key}.pub`, "utf8")).trim();
+  } catch {
+    /* gera abaixo */
+  }
+  await run("ssh-keygen", ["-t", "ed25519", "-N", "", "-C", `veloz-gw-${vmName}`, "-f", key, "-q"]);
+  await fs.chmod(key, 0o600).catch(() => {});
+  return (await fs.readFile(`${key}.pub`, "utf8")).trim();
+}
+
+/**
+ * Escreve o mapeamento do sshpiper (workingdir driver): quem pode entrar (authorized_keys
+ * = chaves do cliente) e para onde vai (`sshpiper_upstream` = vps@<ip>:22). A chave privada
+ * de upstream (id_ed25519) já está no dir. `known_hosts` pina a host key do guest quando conhecida.
+ */
+async function writeSshpiperMapping(
+  vmName: string,
+  vmIp: string,
+  vmUser: string,
+  clientKeys: string[],
+  guestHostKey: string | null,
+): Promise<void> {
+  const dir = sshpiperUserDir(vmName);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(path.join(dir, "sshpiper_upstream"), `${vmUser}@${vmIp}:22\n`, { mode: 0o600 });
+  await fs.writeFile(path.join(dir, "authorized_keys"), clientKeys.map((k) => k.trim()).join("\n") + "\n", { mode: 0o600 });
+  if (guestHostKey) {
+    // Formato known_hosts: `<ip> <hostkey>` (a linha do ssh-keyscan já vem como `<ip> ssh-ed25519 ...`).
+    await fs.writeFile(path.join(dir, "known_hosts"), `${guestHostKey}\n`, { mode: 0o600 });
+  }
+}
+
+async function removeSshpiperMapping(vmName: string): Promise<void> {
+  await fs.rm(sshpiperUserDir(vmName), { recursive: true, force: true }).catch(() => {});
+}
+
 /** Monta o seed ISO (NoCloud) com user-data/meta-data/network-config. Só chave pública. */
-async function buildSeedIso(args: VpsProvisionArgs, vmName: string): Promise<string> {
+async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: string[]): Promise<string> {
   const user = args.sshUser ?? "vps";
-  const keys = args.sshPublicKeys.map((k) => `      - ${k.trim()}`).join("\n");
+  const keys = allKeys.map((k) => `      - ${k.trim()}`).join("\n");
   // Usuário com sudo NOPASSWD = "root livre"; sem senha; login por senha desligado.
   const userData =
     `#cloud-config\n` +
@@ -203,13 +254,21 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   const img = IMAGES[args.image];
   if (!img) throw new Error(`imagem desconhecida: ${args.image}`);
   const vmName = vmNameFor(args.envId);
+  const vmUser = args.sshUser ?? "vps";
   if (await domainExists(vmName)) {
-    // Idempotência: se já existe, apenas devolve os dados de conexão.
-    return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey: await readGuestHostKey(args.ip) };
+    // Idempotência: se já existe, revalida o mapeamento do sshpiper e devolve os dados.
+    const hostKey = await readGuestHostKey(args.ip);
+    await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, hostKey).catch(() => {});
+    return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey: hostKey };
   }
 
   await ensureNetwork(args.network);
   await fs.mkdir(POOL_DIR, { recursive: true });
+
+  // Chave por-VM do gateway: entra no authorized_keys da VM (junto das do cliente) para
+  // o sshpiper conseguir alcançar a VM. A privada fica só no nó (sshpiper workingdir).
+  const gatewayPubKey = await ensureGatewayKey(vmName);
+  const allKeys = [...args.sshPublicKeys, gatewayPubKey];
 
   const basePath = path.join(BASE_DIR, img.file);
   await fs.access(basePath).catch(() => {
@@ -225,7 +284,7 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   ]);
   await fs.chmod(diskPath, 0o600).catch(() => {});
 
-  const seedIso = await buildSeedIso(args, vmName);
+  const seedIso = await buildSeedIso(args, vmName, allKeys);
   const vcpus = Math.max(1, Math.ceil(args.limits.vcpu));
 
   await run("virt-install", [
@@ -246,6 +305,7 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   // A VM está subindo; a host key só existe após o boot — melhor-esforço (o sshpiper
   // pode capturar/pinar depois se vier null aqui).
   const guestHostKey = await readGuestHostKey(args.ip);
+  await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, guestHostKey);
   return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey };
 }
 
@@ -302,6 +362,8 @@ export async function destroy(vmName: string): Promise<void> {
   // Garante remoção do overlay e do seed ISO mesmo se o undefine não os levou.
   await fs.rm(path.join(POOL_DIR, `${vmName}.qcow2`), { force: true }).catch(() => {});
   await fs.rm(path.join(SEED_DIR, `${vmName}.seed.iso`), { force: true }).catch(() => {});
+  // Remove o mapeamento + chave por-VM do sshpiper (revoga o acesso).
+  await removeSshpiperMapping(vmName).catch(() => {});
   // Reaper do perfil AppArmor libvirt-<uuid>: só é possível casar por conteúdo; aqui
   // removemos qualquer perfil cujo `.files` referencie os discos deste vmName.
   await reapAppArmorFor(vmName).catch(() => {});

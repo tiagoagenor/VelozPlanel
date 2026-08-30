@@ -82,6 +82,44 @@ export function provision(agentUrl: string, input: ProvisionInput): Promise<Prov
   return call<ProvisionResult>(agentUrl, "POST", "/provision", input, 600_000);
 }
 
+/* ── VPS (KVM) — caminho separado do Docker ── */
+export interface VpsProvisionInput {
+  envId: string;
+  name: string;
+  image: string;
+  limits: { vcpu: number; memMb: number; diskGb: number };
+  network: { name: string; subnet: string; gateway: string };
+  ip: string;
+  ownerId: string;
+  sshPublicKeys: string[];
+  sshUser?: string;
+}
+export interface VpsProvisionResult {
+  vmName: string;
+  ip: string;
+  sshTarget: string;
+  guestHostKey: string | null;
+}
+export function vpsProvision(agentUrl: string, input: VpsProvisionInput): Promise<VpsProvisionResult> {
+  return call<VpsProvisionResult>(agentUrl, "POST", "/vps/provision", input, 600_000);
+}
+export type VpsAction = "start" | "stop" | "reboot" | "suspend" | "resume" | "destroy";
+export function vpsAction(agentUrl: string, action: VpsAction, vmName: string): Promise<void> {
+  return call<void>(agentUrl, "POST", `/vps/${action}`, { vmName });
+}
+export function vpsStatus(agentUrl: string, vmName: string): Promise<{ state: string }> {
+  return call<{ state: string }>(agentUrl, "POST", "/vps/status", { vmName });
+}
+export function vpsAvailable(agentUrl: string): Promise<{ available: boolean }> {
+  return call<{ available: boolean }>(agentUrl, "GET", "/vps/available");
+}
+export function vpsPublish(agentUrl: string, domain: string, vmIp: string, port: number): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", "/vps/publish", { domain, vmIp, port });
+}
+export function vpsUnpublish(agentUrl: string, domain: string): Promise<{ ok: boolean }> {
+  return call<{ ok: boolean }>(agentUrl, "POST", "/vps/unpublish", { domain });
+}
+
 export interface ProvisionServiceInput {
   envId: string;
   name: string;

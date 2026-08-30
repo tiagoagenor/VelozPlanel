@@ -251,6 +251,19 @@ export const environment = z.object({
 });
 export type Environment = z.infer<typeof environment>;
 
+/** Estado + dados de conexão de um VPS (KVM), para a tela do painel. */
+export const vpsInfo = z.object({
+  state: z.enum(["provisioning", "running", "paused", "shutoff", "unknown", "absent", "error"]),
+  ip: z.string().nullable(), // IP interno da VM na rede do dono
+  sshUser: z.string().nullable(), // usuário de login no gateway (= vmName)
+  sshHost: z.string().nullable(), // host público do nó (gateway sshpiper)
+  sshPort: z.number().int(), // porta do gateway sshpiper
+  upstreamPort: z.number().int(), // porta web do guest atrás do proxy
+  hostKeyKnown: z.boolean(), // a host key do guest já foi pinada?
+  domain: z.string().nullable(),
+});
+export type VpsInfo = z.infer<typeof vpsInfo>;
+
 /** Definir/limpar o domínio do ambiente. `null` remove. */
 export const setDomainInput = z.object({
   domain: z

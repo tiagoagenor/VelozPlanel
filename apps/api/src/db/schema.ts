@@ -74,6 +74,10 @@ export const environments = pgTable("environments", {
   errorMessage: text("error_message"), // mensagem de falha do job (provision/delete) — mostrada no painel
   diskBytes: bigint("disk_bytes", { mode: "number" }), // último uso de disco medido (SizeRw + volumes)
   diskMeasuredAt: timestamp("disk_measured_at", { withTimezone: true }), // quando o disco foi medido
+  // ── VPS (categoria "vps"; NULL para ambientes Docker) ──
+  vmName: text("vm_name"), // nome do domínio libvirt (ex.: vps-<hex>) — tb. usuário de login no gateway
+  vmHostKey: text("vm_host_key"), // host key ed25519 do guest (pinning no sshpiper)
+  vmUpstreamPort: integer("vm_upstream_port"), // porta web do guest p/ o proxy (default 80)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -357,6 +361,27 @@ export const envAddresses = pgTable(
   (t) => ({ uniqNodeIp: uniqueIndex("env_addresses_node_ip_uq").on(t.nodeId, t.ip) }),
 );
 export type EnvAddressRow = typeof envAddresses.$inferSelect;
+
+// Rede /29 por (dono, nó) para VPS (KVM) — faixa 192.168.100.0/22, separada do /24
+// Docker (10.201.x). Uma libvirt network NAT por dono; IPs das VMs no env_addresses
+// (role "vps"). slot 0..127 = bloco /29 dentro do supernet.
+export const vpsNetworks = pgTable(
+  "vps_networks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    nodeId: uuid("node_id").notNull(),
+    ownerId: uuid("owner_id").notNull(),
+    slot: integer("slot").notNull(), // 0..127 (bloco /29)
+    subnet: text("subnet").notNull(), // ex.: 192.168.100.8/29
+    gateway: text("gateway").notNull(), // ex.: 192.168.100.9
+    netName: text("net_name").notNull(), // nome da libvirt network (ex.: vps-net-<slot>)
+  },
+  (t) => ({
+    uniqOwner: uniqueIndex("vps_networks_node_owner_uq").on(t.nodeId, t.ownerId),
+    uniqSlot: uniqueIndex("vps_networks_node_slot_uq").on(t.nodeId, t.slot),
+  }),
+);
+export type VpsNetworkRow = typeof vpsNetworks.$inferSelect;
 
 // Ferramentas de UI por ambiente-serviço, com liga/desliga (default desligado).
 export const envTools = pgTable("env_tools", {

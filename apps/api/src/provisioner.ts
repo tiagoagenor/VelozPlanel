@@ -1,13 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import type { RuntimeKind } from "@velozplanel/contracts";
 import { db } from "./db/client";
-import { environments, envAddresses, serviceCredentials, envTypes, envVars, envTools } from "./db/schema";
+import { environments, envAddresses, serviceCredentials, envTypes, envVars, envTools, sshKeys, sshConfigs } from "./db/schema";
 import type { EnvironmentRow, JobRow } from "./db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
 import { getPlan } from "./plans";
 import * as agent from "./agent";
 import { agentUrlForEnv, pickNodeForNewEnv } from "./nodes";
-import { allocateAddress, releaseAddresses } from "./ipam";
+import { allocateAddress, allocateVpsAddress, releaseAddresses } from "./ipam";
 import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
 import { subdomainFromName } from "./subdomain";
@@ -161,6 +161,61 @@ async function provisionStackEnv(root: EnvironmentRow, et: typeof envTypes.$infe
   await db.update(environments).set({ containerId: appRes.containerId, httpPort: appRes.httpPort ?? null, state: "running", errorMessage: null }).where(eq(environments.id, root.id));
 }
 
+/**
+ * Provisiona um VPS (KVM): aloca a rede /29 + IP do dono, sobe a VM via agente com as
+ * chaves SSH do cliente, registra vmName/host key, liga o SSH (username = vmName) e
+ * publica o domínio (se houver) no Caddy do nó -> vmIp:portaWeb.
+ */
+async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelect, nodeId: string, agentUrl: string): Promise<void> {
+  const planSpec = await getPlan(env.plan);
+  if (!planSpec) throw new PermanentJobError("plano inválido");
+  const image = et.image ?? "ubuntu-24.04";
+  const upstreamPort = et.internalPort ?? 80;
+
+  // A VM autentica por chave; sem chave do cliente não dá pra entrar. Exigimos ao menos uma.
+  const keys = await db.select().from(sshKeys).where(eq(sshKeys.envId, env.id));
+  const clientKeys = keys.map((k) => k.publicKey);
+  if (clientKeys.length === 0) {
+    throw new PermanentJobError("adicione uma chave SSH pública ao ambiente antes de criar o VPS");
+  }
+
+  const alloc = await allocateVpsAddress(nodeId, env.ownerId, env.id);
+  const result = await agent.vpsProvision(agentUrl, {
+    envId: env.id,
+    name: env.name,
+    image,
+    limits: { vcpu: planSpec.vcpu, memMb: planSpec.memMb, diskGb: planSpec.diskGb },
+    network: { name: alloc.netName, subnet: alloc.subnet, gateway: alloc.gateway },
+    ip: alloc.ip,
+    ownerId: env.ownerId,
+    sshPublicKeys: clientKeys,
+  });
+
+  await db.update(envAddresses).set({ containerId: result.vmName }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps")));
+  // SSH do env: username = vmName (o que o cliente digita no gateway), ligado.
+  await db
+    .insert(sshConfigs)
+    .values({ envId: env.id, username: result.vmName, enabled: true })
+    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: result.vmName, enabled: true } });
+
+  await db.update(environments).set({
+    vmName: result.vmName,
+    vmHostKey: result.guestHostKey,
+    vmUpstreamPort: upstreamPort,
+    state: "running",
+    errorMessage: null,
+  }).where(eq(environments.id, env.id));
+
+  // Domínio próprio (se configurado): publica no Caddy do nó apontando p/ a VM. Best-effort.
+  if (env.domain) {
+    try {
+      await agent.vpsPublish(agentUrl, env.domain, alloc.ip, upstreamPort);
+    } catch {
+      /* borda é auxiliar — não bloqueia o provisionamento */
+    }
+  }
+}
+
 /** Job de provisionamento: reconcilia o env (raiz + filhos) até running. */
 export async function runProvisionJob(job: JobRow): Promise<void> {
   const rows = await db.select().from(environments).where(eq(environments.id, job.envId)).limit(1);
@@ -184,6 +239,7 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
       if (!et || !et.active) throw new PermanentJobError("tipo de ambiente inválido");
       if (et.category === "service") await provisionServiceEnv(env, et, nodeId, agentUrl);
       else if (et.category === "stack") await provisionStackEnv(env, et, nodeId, agentUrl);
+      else if (et.category === "vps") await provisionVps({ ...env, nodeId }, et, nodeId, agentUrl);
       else await provisionApp({ ...env, nodeId }, nodeId, agentUrl);
     } else {
       await provisionApp({ ...env, nodeId }, nodeId, agentUrl);
@@ -238,6 +294,12 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
   const agentUrl = env.nodeId ? await agentUrlForEnv({ nodeId: env.nodeId }) : null;
 
   for (const target of [...children, env]) {
+    // VPS (KVM): destrói a VM por completo (overlay+NVRAM+seed+AppArmor+sshpiper) e
+    // despublica o domínio no Caddy do nó. Feito antes da limpeza genérica.
+    if (target.vmName) {
+      if (target.domain && agentUrl) await agent.vpsUnpublish(agentUrl, target.domain).catch(() => {});
+      if (agentUrl) await agent.vpsAction(agentUrl, "destroy", target.vmName); // confirma antes de apagar; falha → retry
+    }
     if (target.autoSubdomain) await cpIngress.removeSite(target.autoSubdomain).catch(() => {});
     // Painéis de serviço (env_tools): remove o vhost do painel e, se for sidecar
     // (phpmyadmin/adminer), o container da ferramenta. O rabbitmq embutido não tem

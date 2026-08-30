@@ -1032,6 +1032,40 @@ app.post("/vps/status", async (req, reply) => {
   }
 });
 
+// Publica o domínio do VPS no Caddy do nó -> vmIp:porta (upstream travado no IP da VM).
+const vpsPublishBody = z.object({
+  domain: z.string().min(3),
+  vmIp: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  port: z.number().int().min(1).max(65535),
+});
+app.post("/vps/publish", async (req, reply) => {
+  const parsed = vpsPublishBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    await ingress.putSite(parsed.data.domain, `${parsed.data.vmIp}:${parsed.data.port}`, {
+      vps: true,
+      expectUpstreamHost: parsed.data.vmIp,
+    });
+    return reply.send({ ok: true });
+  } catch (err) {
+    return reply.code(500).send(errorPayload(err));
+  }
+});
+app.post("/vps/unpublish", async (req, reply) => {
+  const parsed = z.object({ domain: z.string().min(3) }).safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    await ingress.removeSite(parsed.data.domain);
+    return reply.send({ ok: true });
+  } catch (err) {
+    return reply.code(500).send(errorPayload(err));
+  }
+});
+
 /* ─────────────── Boot ─────────────── */
 
 try {

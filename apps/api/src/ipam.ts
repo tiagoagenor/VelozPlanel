@@ -78,6 +78,79 @@ export async function allocateAddress(
   });
 }
 
+export interface VpsAllocation {
+  netName: string; // nome da libvirt network (ex.: vps-net-3)
+  subnet: string; // ex.: 192.168.100.24/29
+  gateway: string; // ex.: 192.168.100.25
+  ip: string; // IP fixo da VM
+}
+
+/**
+ * Aloca (ou reusa) a rede /29 do dono no nó (faixa 192.168.100.0/22, separada do /24
+ * Docker) e um IP livre para a VM. Idempotente por (env, role="vps"). slot 0..127 =
+ * bloco /29; até 5 VMs por dono por bloco (base+2..base+6).
+ */
+export async function allocateVpsAddress(
+  nodeId: string,
+  ownerId: string,
+  envId: string,
+): Promise<VpsAllocation> {
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"vps-ipam:" + nodeId}))`;
+
+    let net = (
+      await tx`select * from vps_networks where node_id = ${nodeId} and owner_id = ${ownerId} limit 1`
+    )[0];
+
+    const already = (
+      await tx<{ ip: string }[]>`select ip from env_addresses where env_id = ${envId} and role = ${"vps"} limit 1`
+    )[0];
+    if (already && net) {
+      return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: already.ip };
+    }
+
+    if (!net) {
+      const nextRows = await tx`select coalesce(max(slot), -1) + 1 as next from vps_networks where node_id = ${nodeId}`;
+      const slot: number = nextRows[0]!.next;
+      if (slot > 127) throw new Error("no_vps_subnet: nó sem /29 livre para novos donos de VPS");
+      const off = slot * 8; // deslocamento dentro de 192.168.100.0/22
+      const third = 100 + Math.floor(off / 256);
+      const fourth = off % 256;
+      const subnet = `192.168.${third}.${fourth}/29`;
+      const gateway = `192.168.${third}.${fourth + 1}`;
+      const netName = `vps-net-${slot}`;
+      net = (
+        await tx`
+          insert into vps_networks (node_id, owner_id, slot, subnet, gateway, net_name)
+          values (${nodeId}, ${ownerId}, ${slot}, ${subnet}, ${gateway}, ${netName})
+          returning *
+        `
+      )[0];
+    }
+
+    // Base da /29 a partir do gateway (gateway = base+1).
+    const gwParts = net!.gateway.split(".");
+    const baseFourth = Number(gwParts[3]) - 1;
+    const prefix3 = `${gwParts[0]}.${gwParts[1]}.${gwParts[2]}.`;
+    const used = await tx<{ ip: string }[]>`select ip from env_addresses where node_id = ${nodeId}`;
+    const usedSet = new Set(used.map((r) => r.ip));
+    let ip: string | null = null;
+    for (let h = baseFourth + 2; h <= baseFourth + 6; h++) {
+      const cand = prefix3 + h;
+      if (!usedSet.has(cand)) { ip = cand; break; }
+    }
+    if (!ip) throw new Error("vps_subnet_full: /29 do dono cheio neste nó");
+
+    const ins = await tx<{ ip: string }[]>`
+      insert into env_addresses (node_id, env_id, role, ip) values (${nodeId}, ${envId}, ${"vps"}, ${ip})
+      on conflict (env_id, role) do nothing returning ip
+    `;
+    const finalIp = ins[0]?.ip ?? (await tx<{ ip: string }[]>`select ip from env_addresses where env_id = ${envId} and role = ${"vps"} limit 1`)[0]!.ip;
+
+    return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: finalIp };
+  });
+}
+
 /** Rede (bridge/subnet/gateway) do dono num nó — para recriar o container na mesma bridge. */
 export async function ownerNetworkFor(
   nodeId: string,

@@ -340,6 +340,26 @@ async function createSchema(): Promise<void> {
   // Um IP por (env, papel) — fecha o vazamento de IP em retry idempotente.
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS env_addresses_env_role_uq ON env_addresses (env_id, role)`;
 
+  // Rede /29 por (dono, nó) para VPS (KVM) — faixa 192.168.100.0/22 (separada do /24 Docker).
+  await sql`
+    CREATE TABLE IF NOT EXISTS vps_networks (
+      id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      node_id   uuid NOT NULL,
+      owner_id  uuid NOT NULL,
+      slot      integer NOT NULL,
+      subnet    text NOT NULL,
+      gateway   text NOT NULL,
+      net_name  text NOT NULL
+    )
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS vps_networks_node_owner_uq ON vps_networks (node_id, owner_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS vps_networks_node_slot_uq ON vps_networks (node_id, slot)`;
+
+  // Colunas de VPS no environments (NULL para ambientes Docker).
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_name text`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_host_key text`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_upstream_port integer`;
+
   // Fila de jobs (provisionar/remover ambiente).
   await sql`
     CREATE TABLE IF NOT EXISTS jobs (
@@ -550,6 +570,9 @@ async function seed(): Promise<void> {
     { id: "wordpress", label: "WordPress", category: "stack", image: "wordpress:php8.3-apache", port: 80, dataPath: "/var/www/html", needsDb: true, childType: "mariadb", tool: null, publicDomain: true, price: 0, minVcpu: 1, minMemMb: 1024 },
     // MongoDB: mesmo preço do MySQL (0) e piso 0.5 vCPU / 512 MB. Sem ferramenta de UI própria.
     { id: "mongodb", label: "MongoDB", category: "service", image: "mongo:7", port: 27017, dataPath: "/data/db", needsDb: false, childType: null, tool: null, publicDomain: false, price: 0, minVcpu: 0.5, minMemMb: 512 },
+    // VPS (KVM): VM completa, cliente root. image = slug da imagem-base cloud no nó.
+    // internal_port = porta web do guest atrás do proxy por domínio. Piso 1 vCPU / 1 GB.
+    { id: "vps", label: "VPS (Ubuntu 24.04 · KVM)", category: "vps", image: "ubuntu-24.04", port: 80, dataPath: null, needsDb: false, childType: null, tool: null, publicDomain: true, price: 0, minVcpu: 1, minMemMb: 1024 },
   ];
   for (let i = 0; i < envTypeSeed.length; i++) {
     const t = envTypeSeed[i]!;
