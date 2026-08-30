@@ -301,6 +301,68 @@ export const phpNodeCurrent = z.object({
 });
 export type PhpNodeCurrent = z.infer<typeof phpNodeCurrent>;
 
+/* ─────────────── Configuração PHP (php.ini) por ambiente ─────────────── */
+
+/**
+ * Diretivas do php.ini expostas no painel. Fonte ÚNICA: a UI monta os controles
+ * (sliders de MB/segundos + toggles) a partir de PHP_INI_FIELDS e o agente
+ * serializa/valida pelos MESMOS limites. Valores de MB e segundos são inteiros.
+ * Persistência é por ARQUIVO no host (bind mount), sem banco — sobrevive ao
+ * recreate do container.
+ */
+export const phpIniConfig = z.object({
+  memory_limit: z.number().int().min(16).max(1024), // MB
+  upload_max_filesize: z.number().int().min(1).max(512), // MB
+  post_max_size: z.number().int().min(1).max(512), // MB
+  max_execution_time: z.number().int().min(0).max(600), // segundos (0 = ilimitado)
+  max_input_time: z.number().int().min(0).max(600), // segundos
+  // OPcache (acelerador): grava opcache.enable + opcache.enable_cli juntos — o
+  // servidor roda com `php -S` (SAPI cli), então enable_cli=1 é o que de fato
+  // liga o cache. Sobrescreve o tuning da imagem base (que vem enable_cli=0).
+  opcache: z.boolean(),
+  display_errors: z.boolean(),
+  file_uploads: z.boolean(),
+  allow_url_fopen: z.boolean(),
+});
+export type PhpIniConfig = z.infer<typeof phpIniConfig>;
+
+/** Padrões (o botão "Restaurar padrões" grava exatamente estes valores). */
+export const DEFAULT_PHP_INI: PhpIniConfig = {
+  memory_limit: 128,
+  upload_max_filesize: 2,
+  post_max_size: 8,
+  max_execution_time: 30,
+  max_input_time: 60,
+  opcache: false, // reflete o estado efetivo atual (php -S com enable_cli=0)
+  display_errors: false,
+  file_uploads: true,
+  allow_url_fopen: true,
+};
+
+export type PhpIniFieldKind = "mb" | "seconds" | "bool";
+export interface PhpIniField {
+  key: keyof PhpIniConfig;
+  label: string;
+  kind: PhpIniFieldKind;
+  help: string;
+  min?: number; // só mb/seconds
+  max?: number; // só mb/seconds
+  step?: number; // só mb/seconds
+}
+
+/** Metadados para a UI (rótulo, faixa, passo, unidade). Ordem = ordem de exibição. */
+export const PHP_INI_FIELDS: readonly PhpIniField[] = [
+  { key: "memory_limit", label: "Limite de memória", kind: "mb", min: 16, max: 1024, step: 16, help: "Memória máxima que um script PHP pode usar (memory_limit)." },
+  { key: "upload_max_filesize", label: "Tamanho máx. por arquivo enviado", kind: "mb", min: 1, max: 512, step: 1, help: "Maior arquivo aceito em um upload (upload_max_filesize)." },
+  { key: "post_max_size", label: "Tamanho máx. do POST", kind: "mb", min: 1, max: 512, step: 1, help: "Maior corpo de requisição POST (post_max_size). Convém ser ≥ o tamanho de upload." },
+  { key: "max_execution_time", label: "Tempo máx. de execução", kind: "seconds", min: 0, max: 600, step: 5, help: "Segundos que um script pode rodar antes de ser interrompido (max_execution_time). 0 = ilimitado." },
+  { key: "max_input_time", label: "Tempo máx. de leitura da requisição", kind: "seconds", min: 0, max: 600, step: 5, help: "Segundos para receber os dados da requisição (max_input_time)." },
+  { key: "opcache", label: "OPcache (acelerador)", kind: "bool", help: "Cache de bytecode do PHP — acelera bastante a execução. Liga opcache.enable + enable_cli (o php -S roda em modo CLI). Em desenvolvimento, revalida arquivos a cada ~2s." },
+  { key: "display_errors", label: "Exibir erros na página", kind: "bool", help: "Mostra erros do PHP direto no navegador (display_errors). Ligue apenas para depurar." },
+  { key: "file_uploads", label: "Permitir uploads", kind: "bool", help: "Habilita o envio de arquivos via HTTP (file_uploads)." },
+  { key: "allow_url_fopen", label: "Permitir abrir URLs remotas", kind: "bool", help: "Permite que fopen/file_get_contents acessem URLs remotas (allow_url_fopen)." },
+];
+
 /* ─────────────── Deploy (Git) ─────────────── */
 
 export const deployConnectionMode = z.enum(["none", "public", "ssh", "http", "local"]);

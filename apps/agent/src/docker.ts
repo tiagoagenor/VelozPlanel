@@ -1,7 +1,9 @@
 import os from "node:os";
+import path from "node:path";
+import { promises as fs } from "node:fs";
 import Docker from "dockerode";
-import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult } from "@velozplanel/contracts";
-import { isSqlEngine } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, PhpIniConfig } from "@velozplanel/contracts";
+import { isSqlEngine, DEFAULT_PHP_INI } from "@velozplanel/contracts";
 import { buildSqlExec, buildMongoExec, buildRedisExec, parseExec, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
 
 /**
@@ -146,6 +148,9 @@ HTTPServer(("0.0.0.0", 80), H).serve_forever()
 const CADDYFILE = `:80 {
 	root * /app
 	encode gzip
+	header -Via
+	header -Server
+	header -X-Powered-By
 	try_files {path} {path}/ /index.html
 	file_server {
 		hide .*
@@ -449,6 +454,150 @@ export async function applyPhpRoot(
   await ex.start({});
 }
 
+/* ─────────────── Configuração PHP (php.ini) por ambiente ───────────────
+ * A fonte da verdade é UM arquivo por ambiente no HOST (VELOZ_PHP_INI_DIR/
+ * <envId>.ini), sem banco. Ele é injetado no container via bind mount na
+ * provision() (reaplicado em TODO recreate) no path abaixo — que carrega por
+ * último em conf.d (prefixo "zzz") e sobrescreve os defaults da imagem. Assim a
+ * config sobrevive ao recreate. Ver ensurePhpIniFile()/writePhpConfig(). */
+const PHP_INI_DIR = process.env.VELOZ_PHP_INI_DIR ?? "/etc/veloz/php";
+const PHP_INI_CONTAINER_PATH = "/usr/local/etc/php/conf.d/zzz-veloz-user.ini";
+
+/** Serializa a config num drop-in de php.ini (MB → "128M"; bool → On/Off). */
+function serializePhpIni(cfg: PhpIniConfig): string {
+  const onoff = (b: boolean) => (b ? "On" : "Off");
+  return [
+    "; VelozPanel — php.ini gerenciado pelo painel. NÃO edite à mão (é sobrescrito ao salvar).",
+    `memory_limit = ${cfg.memory_limit}M`,
+    `upload_max_filesize = ${cfg.upload_max_filesize}M`,
+    `post_max_size = ${cfg.post_max_size}M`,
+    `max_execution_time = ${cfg.max_execution_time}`,
+    `max_input_time = ${cfg.max_input_time}`,
+    // OPcache: enable_cli é o que vale para o `php -S` (SAPI cli); gravamos os dois.
+    `opcache.enable = ${cfg.opcache ? "1" : "0"}`,
+    `opcache.enable_cli = ${cfg.opcache ? "1" : "0"}`,
+    `display_errors = ${onoff(cfg.display_errors)}`,
+    `file_uploads = ${onoff(cfg.file_uploads)}`,
+    `allow_url_fopen = ${onoff(cfg.allow_url_fopen)}`,
+    "",
+  ].join("\n");
+}
+
+/** Garante os valores dentro dos limites do contrato (2ª barreira de validação). */
+function clampPhpIni(cfg: PhpIniConfig): PhpIniConfig {
+  const n = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+  return {
+    memory_limit: n(cfg.memory_limit, 16, 1024),
+    upload_max_filesize: n(cfg.upload_max_filesize, 1, 512),
+    post_max_size: n(cfg.post_max_size, 1, 512),
+    max_execution_time: n(cfg.max_execution_time, 0, 600),
+    max_input_time: n(cfg.max_input_time, 0, 600),
+    opcache: !!cfg.opcache,
+    display_errors: !!cfg.display_errors,
+    file_uploads: !!cfg.file_uploads,
+    allow_url_fopen: !!cfg.allow_url_fopen,
+  };
+}
+
+/** Faz o parse do drop-in de volta para a config (chaves ausentes → default). */
+function parsePhpIni(text: string): PhpIniConfig {
+  const map = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith(";") || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const k = line.slice(0, eq).trim().toLowerCase();
+    const v = line.slice(eq + 1).trim().replace(/["']/g, "").trim();
+    map.set(k, v);
+  }
+  const num = (k: string, def: number) => {
+    const v = map.get(k);
+    const m = v?.match(/-?\d+/);
+    return m ? parseInt(m[0], 10) : def;
+  };
+  const bool = (k: string, def: boolean) => {
+    const v = map.get(k);
+    return v === undefined ? def : /^(on|1|true|yes)$/i.test(v);
+  };
+  return clampPhpIni({
+    memory_limit: num("memory_limit", DEFAULT_PHP_INI.memory_limit),
+    upload_max_filesize: num("upload_max_filesize", DEFAULT_PHP_INI.upload_max_filesize),
+    post_max_size: num("post_max_size", DEFAULT_PHP_INI.post_max_size),
+    max_execution_time: num("max_execution_time", DEFAULT_PHP_INI.max_execution_time),
+    max_input_time: num("max_input_time", DEFAULT_PHP_INI.max_input_time),
+    // enable_cli é o determinante para o `php -S`; cai em opcache.enable se ausente.
+    opcache: bool("opcache.enable_cli", bool("opcache.enable", DEFAULT_PHP_INI.opcache)),
+    display_errors: bool("display_errors", DEFAULT_PHP_INI.display_errors),
+    file_uploads: bool("file_uploads", DEFAULT_PHP_INI.file_uploads),
+    allow_url_fopen: bool("allow_url_fopen", DEFAULT_PHP_INI.allow_url_fopen),
+  });
+}
+
+/**
+ * Garante que o arquivo do host existe (com os padrões, se novo) e devolve o
+ * caminho — ou null se o nó não tem o diretório montado (segue sem persistência).
+ * DEVE rodar ANTES de createContainer: um bind com origem inexistente faria o
+ * Docker criar um DIRETÓRIO no lugar do arquivo.
+ */
+async function ensurePhpIniFile(envId: string): Promise<string | null> {
+  const file = path.join(PHP_INI_DIR, `${envId}.ini`);
+  try {
+    await fs.mkdir(PHP_INI_DIR, { recursive: true });
+    try {
+      await fs.access(file);
+    } catch {
+      await fs.writeFile(file, serializePhpIni(DEFAULT_PHP_INI), { mode: 0o644 });
+    }
+    return file;
+  } catch {
+    return null;
+  }
+}
+
+/** Lê a config do arquivo do host (fonte da verdade). Ausente → padrões. */
+export async function readPhpConfig(envId: string): Promise<PhpIniConfig> {
+  const file = path.join(PHP_INI_DIR, `${envId}.ini`);
+  try {
+    return parsePhpIni(await fs.readFile(file, "utf8"));
+  } catch {
+    return { ...DEFAULT_PHP_INI };
+  }
+}
+
+/**
+ * Grava a config e aplica AO VIVO (sem recriar):
+ *  1) escreve o arquivo do host → persiste no recreate (via bind da provision);
+ *     em container que já tem o bind (:ro), o container vê o novo conteúdo na hora.
+ *  2) grava também dentro do container → cobre containers criados ANTES do bind
+ *     existir (a escrita no path :ro falha, inofensiva: o passo 1 já resolveu).
+ *  3) mata o php -S (/.vp-app-pid) → o supervisor sobe um novo que relê o conf.d.
+ * Devolve a config já normalizada (clamp).
+ */
+export async function writePhpConfig(
+  containerId: string,
+  envId: string,
+  cfg: PhpIniConfig,
+): Promise<PhpIniConfig> {
+  const clean = clampPhpIni(cfg);
+  const ini = serializePhpIni(clean);
+  const file = await ensurePhpIniFile(envId);
+  if (file) await fs.writeFile(file, ini, { mode: 0o644 }).catch(() => {});
+  const b64 = Buffer.from(ini, "utf8").toString("base64");
+  await execCapture(containerId, [
+    "sh",
+    "-c",
+    `printf '%s' '${b64}' | base64 -d > ${PHP_INI_CONTAINER_PATH} 2>/dev/null || true`,
+  ]);
+  await execCapture(containerId, ["sh", "-c", `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`]);
+  return clean;
+}
+
+/** Restaura os padrões (grava DEFAULT_PHP_INI + reinicia). Devolve a config. */
+export async function resetPhpConfig(containerId: string, envId: string): Promise<PhpIniConfig> {
+  return writePhpConfig(containerId, envId, DEFAULT_PHP_INI);
+}
+
 /**
  * Aplica um novo arquivo de start no container Node SEM recriá-lo: grava
  * /.vp-node-start e mata o processo node atual — o supervisor relê e reinicia
@@ -648,6 +797,14 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
   if (codeDir) {
     await ensureNamedVolume(`veloz-code-${envId}`, envId);
     binds.push(`veloz-code-${envId}:${codeDir}`);
+  }
+  // PHP: injeta o php.ini gerenciado pelo painel (arquivo no host) como drop-in de
+  // conf.d, para a config sobreviver a recreate/troca de versão. Se o nó não tem o
+  // diretório montado, segue sem o bind (a config ainda aplica ao vivo ao salvar,
+  // mas não persiste no recreate até o nó receber o mount). :ro — só o painel edita.
+  if (runtime.kind === "php") {
+    const iniFile = await ensurePhpIniFile(envId);
+    if (iniFile) binds.push(`${iniFile}:${PHP_INI_CONTAINER_PATH}:ro`);
   }
   const cpuset = await pickCpuset(limits.vcpu);
   const attachNet = !!(args.network && args.ip && args.ownerId);

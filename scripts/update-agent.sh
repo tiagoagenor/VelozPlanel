@@ -23,7 +23,19 @@ WGIP=$(docker inspect "$A" --format '{{range $p,$b := .HostConfig.PortBindings}}
 
 mapfile -t PORTS < <(docker inspect "$A" --format '{{range $p,$b := .HostConfig.PortBindings}}{{range $b}}{{if .HostIp}}{{.HostIp}}:{{end}}{{.HostPort}}:{{$p}}{{println}}{{end}}{{end}}')
 mapfile -t BINDS < <(docker inspect "$A" --format '{{range .HostConfig.Binds}}{{println .}}{{end}}')
-docker inspect "$A" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(VP_|AGENT_|SSH_|CADDY_)' > /tmp/velozagent.env
+docker inspect "$A" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E '^(VP_|AGENT_|SSH_|CADDY_|VELOZ_)' > /tmp/velozagent.env
+
+# php.ini gerenciado por ambiente: garante o mount do diretório do host e a env,
+# ADICIONANDO se o container antigo ainda não os tinha (idempotente — mesmo padrão
+# de preservar as portas 2222/2223). Sem isto, a config do php.ini não persiste no
+# recreate dos containers de cliente. O dir do host é criado aqui (best-effort) e,
+# se faltar permissão, o próprio dockerd o cria como root ao subir o bind.
+PHP_INI_BIND="/etc/veloz/php:/etc/veloz/php"
+mkdir -p /etc/veloz/php 2>/dev/null || true
+_hasbind=0; for b in "${BINDS[@]}"; do [ "$b" = "$PHP_INI_BIND" ] && _hasbind=1; done
+[ "$_hasbind" = 1 ] || BINDS+=("$PHP_INI_BIND")
+grep -q '^VELOZ_PHP_INI_DIR=' /tmp/velozagent.env || echo 'VELOZ_PHP_INI_DIR=/etc/veloz/php' >> /tmp/velozagent.env
+
 echo "capturado: ${#PORTS[@]} portas, ${#BINDS[@]} binds, $(wc -l < /tmp/velozagent.env) envs. rollback=$OLD"
 
 run_agent() {

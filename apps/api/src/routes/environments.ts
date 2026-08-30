@@ -12,6 +12,8 @@ import {
   setDotnetCmdInput,
   setPhpNodeVersionInput,
   phpNodeCurrent as phpNodeCurrentSchema,
+  phpIniConfig,
+  DEFAULT_PHP_INI,
   changeRuntimeInput,
   apiError,
   diskUsage as diskUsageSchema,
@@ -26,6 +28,7 @@ import type {
   EnvState,
   EnvCategory,
   DiskUsage,
+  PhpIniConfig,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
 import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs } from "../db/schema";
@@ -878,6 +881,79 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       } catch {
         return { current: null };
       }
+    },
+  );
+
+  // GET /environments/:id/php-ini — config php.ini gerenciada (arquivo do host).
+  // Lê mesmo com o ambiente parado (a fonte da verdade é o arquivo, não o container).
+  app.get(
+    "/environments/:id/php-ini",
+    {
+      schema: {
+        params: idParams,
+        response: { 200: z.object({ config: phpIniConfig }), 400: apiError, 401: apiError, 403: apiError, 404: apiError },
+      },
+    },
+    async (req): Promise<{ config: PhpIniConfig }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.runtimeKind !== "php") {
+        throw new ApiHttpError(400, "not_php", "as configurações do php.ini só existem em ambientes PHP");
+      }
+      try {
+        const agentUrl = await agentUrlForEnv(env);
+        return await agent.readPhpIni(agentUrl, env.id);
+      } catch {
+        return { config: { ...DEFAULT_PHP_INI } }; // nó fora do ar: mostra os padrões
+      }
+    },
+  );
+
+  // PUT /environments/:id/php-ini — grava a config e aplica AO VIVO (docker exec +
+  // reinício do php -S, sem recriar). Persiste em arquivo no host (sobrevive ao recreate).
+  app.put(
+    "/environments/:id/php-ini",
+    {
+      schema: {
+        params: idParams,
+        body: phpIniConfig,
+        response: { 200: z.object({ config: phpIniConfig }), 400: apiError, 401: apiError, 403: apiError, 404: apiError, 409: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<{ config: PhpIniConfig }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.runtimeKind !== "php") {
+        throw new ApiHttpError(400, "not_php", "as configurações do php.ini só existem em ambientes PHP");
+      }
+      if (env.state !== "running" || !env.containerId) {
+        throw new ApiHttpError(409, "not_running", "inicie o ambiente antes de alterar o php.ini");
+      }
+      const agentUrl = await agentUrlForEnv(env);
+      return await agent.writePhpIni(agentUrl, env.containerId, env.id, req.body);
+    },
+  );
+
+  // POST /environments/:id/php-ini/reset — restaura os padrões e aplica ao vivo.
+  app.post(
+    "/environments/:id/php-ini/reset",
+    {
+      schema: {
+        params: idParams,
+        response: { 200: z.object({ config: phpIniConfig }), 400: apiError, 401: apiError, 403: apiError, 404: apiError, 409: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<{ config: PhpIniConfig }> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      if (env.runtimeKind !== "php") {
+        throw new ApiHttpError(400, "not_php", "as configurações do php.ini só existem em ambientes PHP");
+      }
+      if (env.state !== "running" || !env.containerId) {
+        throw new ApiHttpError(409, "not_running", "inicie o ambiente antes de restaurar o php.ini");
+      }
+      const agentUrl = await agentUrlForEnv(env);
+      return await agent.resetPhpIni(agentUrl, env.containerId, env.id);
     },
   );
 

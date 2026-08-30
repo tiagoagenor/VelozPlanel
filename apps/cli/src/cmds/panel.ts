@@ -10,6 +10,9 @@ import { applyCaddyfile } from "./caddy.js";
 function panelBlock(host: string): string {
   return `${host} {
 	encode gzip zstd
+	header -Via
+	header -Server
+	header -X-Powered-By
 	handle /api/v1/internal/* {
 		respond 403
 	}

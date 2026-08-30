@@ -1,4 +1,4 @@
-import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, PhpIniConfig } from "@velozplanel/contracts";
 import { ApiHttpError } from "./auth";
 
 /**
@@ -222,6 +222,32 @@ export function readNodeCurrent(
   containerId: string,
 ): Promise<{ current: string | null }> {
   return call<{ current: string | null }>(agentUrl, "POST", "/node-current", { containerId });
+}
+
+/* ── Configuração PHP (php.ini) por ambiente — persistida em arquivo no host ── */
+
+/** Lê a config php.ini gerenciada (arquivo do host; padrões se ausente). */
+export function readPhpIni(agentUrl: string, envId: string): Promise<{ config: PhpIniConfig }> {
+  return call<{ config: PhpIniConfig }>(agentUrl, "POST", "/php-ini/read", { envId });
+}
+
+/** Grava a config php.ini e aplica ao vivo (sem recriar). Devolve a config normalizada. */
+export function writePhpIni(
+  agentUrl: string,
+  containerId: string,
+  envId: string,
+  config: PhpIniConfig,
+): Promise<{ config: PhpIniConfig }> {
+  return call<{ config: PhpIniConfig }>(agentUrl, "POST", "/php-ini/write", { containerId, envId, config });
+}
+
+/** Restaura os padrões do php.ini e aplica ao vivo. Devolve a config. */
+export function resetPhpIni(
+  agentUrl: string,
+  containerId: string,
+  envId: string,
+): Promise<{ config: PhpIniConfig }> {
+  return call<{ config: PhpIniConfig }>(agentUrl, "POST", "/php-ini/reset", { containerId, envId });
 }
 
 /* ─── Deploy + env vars ─── */

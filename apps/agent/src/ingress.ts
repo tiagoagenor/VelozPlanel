@@ -38,7 +38,10 @@ export async function available(): Promise<boolean> {
 export async function putSite(domain: string, upstream: string): Promise<void> {
   const d = safeDomain(domain);
   const up = safeUpstream(upstream);
-  const block = `# gerenciado pelo VelozPanel\n${d} {\n\tencode gzip zstd\n\treverse_proxy ${up}\n}\n`;
+  // `header -Via/-Server/-X-Powered-By`: remove a assinatura da stack da resposta
+  // final (Via: 1.1 Caddy do proxy, Server nas páginas de erro e o que o app do
+  // cliente setar) — dificulta fingerprint de atacante.
+  const block = `# gerenciado pelo VelozPanel\n${d} {\n\tencode gzip zstd\n\theader -Via\n\theader -Server\n\theader -X-Powered-By\n\treverse_proxy ${up}\n}\n`;
   await fs.mkdir(SITES_DIR, { recursive: true });
   const file = path.join(SITES_DIR, `${d}.caddy`);
   await fs.writeFile(file, block, { mode: 0o644 });

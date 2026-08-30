@@ -3,10 +3,21 @@
 import * as React from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Settings, RefreshCw, Lock, AlertTriangle } from "lucide-react";
-import { RUNTIME_VERSIONS, RUNTIME_LABEL, runtimeHasVersions, type RuntimeKind, type Environment } from "@velozplanel/contracts";
+import { Settings, RefreshCw, Lock, AlertTriangle, SlidersHorizontal, RotateCcw } from "lucide-react";
+import {
+  RUNTIME_VERSIONS,
+  RUNTIME_LABEL,
+  runtimeHasVersions,
+  PHP_INI_FIELDS,
+  DEFAULT_PHP_INI,
+  type PhpIniConfig,
+  type PhpIniField,
+  type RuntimeKind,
+  type Environment,
+} from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { usePlans } from "@/lib/usePlans";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -143,6 +154,45 @@ export default function EnvSettingsPage() {
     },
     onError: (err) =>
       toast.show("error", err instanceof Error ? err.message : "Falha ao aplicar a versão do Node."),
+  });
+
+  // php.ini — só ambientes PHP. Config vem de arquivo no host (sem banco); o
+  // estado local espelha a query e detecta alterações pendentes.
+  const isRunning = env?.state === "running";
+  const phpIniQuery = useQuery({
+    queryKey: ["php-ini", id],
+    queryFn: () => api.getPhpIni(id),
+    enabled: !!env && isPhp,
+  });
+  const [phpIni, setPhpIni] = React.useState<PhpIniConfig | null>(null);
+  React.useEffect(() => {
+    if (phpIniQuery.data) setPhpIni(phpIniQuery.data.config);
+  }, [phpIniQuery.data]);
+  const phpIniDirty =
+    !!phpIni && !!phpIniQuery.data && JSON.stringify(phpIni) !== JSON.stringify(phpIniQuery.data.config);
+  const savePhpIni = useMutation({
+    mutationFn: () => api.setPhpIni(id, phpIni!),
+    onSuccess: (res) => {
+      qc.setQueryData(["php-ini", id], res);
+      setPhpIni(res.config);
+      toast.show("success", "php.ini salvo e aplicado — o PHP reiniciou com a nova configuração.");
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao salvar o php.ini."),
+  });
+  const [resetPhpOpen, setResetPhpOpen] = React.useState(false);
+  const resetPhpIni = useMutation({
+    mutationFn: () => api.resetPhpIni(id),
+    onSuccess: (res) => {
+      qc.setQueryData(["php-ini", id], res);
+      setPhpIni(res.config);
+      setResetPhpOpen(false);
+      toast.show("success", "Configuração do php.ini restaurada para os padrões.");
+    },
+    onError: (err) => {
+      setResetPhpOpen(false);
+      toast.show("error", err instanceof Error ? err.message : "Falha ao restaurar os padrões.");
+    },
   });
 
   if (envQuery.isPending) {
@@ -334,6 +384,63 @@ export default function EnvSettingsPage() {
         </Card>
       )}
 
+      {/* Configurações do PHP (php.ini) — só ambientes PHP */}
+      {isPhp && (
+        <Card>
+          <h2 className="vp-accent-bar mb-1 flex items-center gap-2 text-base font-semibold text-text">
+            <SlidersHorizontal size={16} aria-hidden="true" className="text-brand-strong" />
+            Configurações do PHP (php.ini)
+          </h2>
+          <p className="mb-4 text-sm text-text2">
+            As principais diretivas do <code>php.ini</code>. Ao salvar, o PHP{" "}
+            <strong>reinicia na hora</strong> com a nova configuração (sem recriar o container). A
+            configuração fica num arquivo do ambiente e é{" "}
+            <strong>mantida mesmo se o container for recriado</strong>.
+          </p>
+
+          {phpIniQuery.isPending || !phpIni ? (
+            <div className="h-56 animate-pulse rounded-lg border border-border-subtle bg-bg" />
+          ) : (
+            <>
+              <div className="flex flex-col divide-y divide-border-subtle">
+                {PHP_INI_FIELDS.map((f) => (
+                  <PhpIniRow
+                    key={f.key}
+                    field={f}
+                    value={phpIni[f.key]}
+                    onChange={(v) => setPhpIni({ ...phpIni, [f.key]: v })}
+                  />
+                ))}
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={() => savePhpIni.mutate()}
+                  disabled={!phpIniDirty || savePhpIni.isPending || !isRunning}
+                >
+                  {savePhpIni.isPending ? "Salvando…" : "Salvar"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setResetPhpOpen(true)}
+                  disabled={savePhpIni.isPending || resetPhpIni.isPending || !isRunning}
+                >
+                  <RotateCcw size={16} aria-hidden="true" />
+                  Restaurar padrões
+                </Button>
+                <span className="text-sm text-text3">
+                  {!isRunning
+                    ? "Inicie o ambiente para aplicar as alterações."
+                    : phpIniDirty
+                      ? "Alterações não salvas."
+                      : "Nenhuma alteração pendente."}
+                </span>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
       {/* Comandos de inicialização — só apps: em serviços (mysql/postgres/…) o
           container usa o entrypoint da imagem oficial e o script nunca roda. */}
       {isApp ? (
@@ -416,6 +523,22 @@ export default function EnvSettingsPage() {
       </Dialog>
 
       <Dialog
+        open={resetPhpOpen}
+        onClose={() => setResetPhpOpen(false)}
+        title="Restaurar os padrões do php.ini?"
+        description="Todas as diretivas voltam aos valores padrão e o PHP reinicia na hora. As alterações atuais serão descartadas."
+      >
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setResetPhpOpen(false)}>
+            Cancelar
+          </Button>
+          <Button onClick={() => resetPhpIni.mutate()} disabled={resetPhpIni.isPending}>
+            {resetPhpIni.isPending ? "Restaurando…" : "Restaurar padrões"}
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog
         open={confirmOpen}
         onClose={() => setConfirmOpen(false)}
         title="Recriar o container?"
@@ -449,4 +572,76 @@ export default function EnvSettingsPage() {
 
 function labelKind(kind: RuntimeKind): string {
   return RUNTIME_LABEL[kind];
+}
+
+/** Uma linha de configuração do php.ini: slider (MB/segundos) ou toggle (On/Off). */
+function PhpIniRow({
+  field,
+  value,
+  onChange,
+}: {
+  field: PhpIniField;
+  value: number | boolean;
+  onChange: (v: number | boolean) => void;
+}) {
+  const unit = field.kind === "mb" ? "MB" : field.kind === "seconds" ? "s" : "";
+  const on = value === true;
+  return (
+    <div className="flex flex-col gap-2 py-4 first:pt-0 last:pb-0">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text">{field.label}</p>
+          <p className="mt-0.5 text-xs text-text3">{field.help}</p>
+        </div>
+        {field.kind === "bool" ? (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            aria-label={field.label}
+            onClick={() => onChange(!on)}
+            className={cn(
+              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+              on ? "bg-brand" : "bg-border",
+            )}
+          >
+            <span
+              className={cn(
+                "inline-block h-5 w-5 transform rounded-full bg-surface shadow transition-transform",
+                on ? "translate-x-5" : "translate-x-0.5",
+              )}
+            />
+          </button>
+        ) : (
+          <span className="shrink-0 rounded-md bg-brand-soft px-2 py-1 font-mono text-sm font-semibold text-brand-strong tabular-nums">
+            {field.kind === "seconds" && value === 0 ? "∞" : `${value as number}${unit ? ` ${unit}` : ""}`}
+          </span>
+        )}
+      </div>
+      {field.kind !== "bool" && (
+        <>
+          <input
+            type="range"
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            value={value as number}
+            onChange={(e) => onChange(Number(e.target.value))}
+            aria-label={field.label}
+            className="h-2 w-full cursor-pointer accent-brand"
+          />
+          <div className="flex justify-between text-[11px] text-text3">
+            <span>
+              {field.min}
+              {unit ? ` ${unit}` : ""}
+            </span>
+            <span>
+              {field.max}
+              {unit ? ` ${unit}` : ""}
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

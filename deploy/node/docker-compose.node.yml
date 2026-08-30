@@ -26,6 +26,10 @@ services:
       AGENT_PORT: "4100"
       # Dir de vhosts gerenciados do Caddy (ingress por domínio). Ver setup-caddy-ingress.sh.
       CADDY_SITES_DIR: /etc/caddy/managed
+      # Dir dos php.ini gerenciados por ambiente (1 arquivo por env). MESMO path
+      # host↔agente: o daemon do host resolve o bind mount que injetamos no
+      # container do cliente. Sem isto, a config do php.ini não persiste no recreate.
+      VELOZ_PHP_INI_DIR: /etc/veloz/php
     # Publica 4100 SÓ no IP WireGuard do nó (fora da interface pública).
     ports:
       - "${AGENT_BIND_IP:?defina AGENT_BIND_IP (ex.: 10.77.0.2 no nó local, 10.77.0.3 no remoto)}:4100:4100"
@@ -37,6 +41,10 @@ services:
       # (rode deploy/node/setup-caddy-ingress.sh uma vez no host). Em nós sem
       # Caddy, o diretório fica ocioso.
       - /etc/caddy/managed:/etc/caddy/managed
+      # php.ini gerenciado: o agente escreve 1 arquivo por ambiente aqui e o Docker
+      # do host injeta cada um no container do cliente (conf.d). MESMO path dos dois
+      # lados (ver VELOZ_PHP_INI_DIR) → o bind mount que passamos ao daemon resolve.
+      - /etc/veloz/php:/etc/veloz/php
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s

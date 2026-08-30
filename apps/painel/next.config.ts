@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   // Build de produção auto-contido para Docker: gera `.next/standalone`
   // (server.js + node_modules mínimo). Ver apps/painel/Dockerfile.
   output: "standalone",
+  // Não expor `X-Powered-By: Next.js` (a borda Caddy também remove, isto é defesa
+  // em profundidade e cobre acesso direto ao container).
+  poweredByHeader: false,
   // Monorepo pnpm: o tracing precisa enxergar a raiz do workspace para
   // incluir as deps de workspace (@velozplanel/contracts) no standalone.
   outputFileTracingRoot: path.join(__dirname, "../../"),

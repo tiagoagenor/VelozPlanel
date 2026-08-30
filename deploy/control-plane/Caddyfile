@@ -19,6 +19,13 @@
 
 	encode gzip zstd
 
+	# Não revelar a stack nos headers (dificulta fingerprint de atacante).
+	# -Via: remove "Via: 1.1 Caddy" das respostas do reverse_proxy;
+	# -Server: remove "Server: Caddy" das páginas de erro do próprio Caddy.
+	header -Via
+	header -Server
+	header -X-Powered-By
+
 	# /api/* → API Fastify. O restante → Painel Next.
 	handle /api/* {
 		reverse_proxy api:4000

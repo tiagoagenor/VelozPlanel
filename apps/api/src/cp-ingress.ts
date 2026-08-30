@@ -38,7 +38,10 @@ export function wgIpFromAgentUrl(agentUrl: string | null | undefined): string | 
 export async function putSite(sub: string, upstream: string, zone: string = SUB_ZONE): Promise<void> {
   const host = subFqdn(sub, zone);
   if (!safeHost(host) || !safeUpstream(upstream)) return;
-  const block = `${host} {\n\tencode gzip zstd\n\treverse_proxy ${upstream}\n}\n`;
+  // `header -Via/-Server/-X-Powered-By`: remove a assinatura da stack da resposta
+  // final (Via: 1.1 Caddy do proxy, Server nas páginas de erro e o que o app do
+  // cliente setar) — dificulta fingerprint de atacante.
+  const block = `${host} {\n\tencode gzip zstd\n\theader -Via\n\theader -Server\n\theader -X-Powered-By\n\treverse_proxy ${upstream}\n}\n`;
   await fs.mkdir(DIR, { recursive: true });
   await fs.writeFile(path.join(DIR, `${host}.caddy`), block, { mode: 0o644 });
 }

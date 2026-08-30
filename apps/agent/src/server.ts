@@ -27,7 +27,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { z } from "zod";
-import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput, dbRunRedisInput } from "@velozplanel/contracts";
+import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput, dbRunRedisInput, phpIniConfig } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
 import * as ingress from "./ingress.js";
 import * as files from "./files.js";
@@ -107,6 +107,16 @@ const phpRootBody = z.object({
   root: z.string().regex(/^\/var\/www(\/[A-Za-z0-9._-]+)*$/),
   useRouter: z.boolean(),
 });
+
+// php.ini gerenciado: leitura só pelo envId (arquivo do host); escrita/reset
+// precisam do container para aplicar ao vivo (docker exec + kill do php -S).
+const phpIniReadBody = z.object({ envId: z.string().min(1) });
+const phpIniWriteBody = z.object({
+  containerId: z.string().min(1),
+  envId: z.string().min(1),
+  config: phpIniConfig,
+});
+const phpIniResetBody = z.object({ containerId: z.string().min(1), envId: z.string().min(1) });
 
 const containerIdBody = z.object({
   containerId: z.string().min(1),
@@ -408,6 +418,42 @@ app.post("/php-root", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "php-root failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/php-ini/read", async (req, reply) => {
+  const parsed = phpIniReadBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const config = await dockerDriver.readPhpConfig(parsed.data.envId);
+    return reply.code(200).send({ config });
+  } catch (err) {
+    req.log.error({ err }, "php-ini read failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/php-ini/write", async (req, reply) => {
+  const parsed = phpIniWriteBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const config = await dockerDriver.writePhpConfig(parsed.data.containerId, parsed.data.envId, parsed.data.config);
+    return reply.code(200).send({ config });
+  } catch (err) {
+    req.log.error({ err }, "php-ini write failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+app.post("/php-ini/reset", async (req, reply) => {
+  const parsed = phpIniResetBody.safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  try {
+    const config = await dockerDriver.resetPhpConfig(parsed.data.containerId, parsed.data.envId);
+    return reply.code(200).send({ config });
+  } catch (err) {
+    req.log.error({ err }, "php-ini reset failed");
     return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
   }
 });

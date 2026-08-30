@@ -17,6 +17,7 @@ import type {
   LoginInput,
   MetricSeries,
   DiskUsage,
+  PhpIniConfig,
   Node,
   SessionUser,
   SslStatus,
@@ -389,6 +390,28 @@ export function setPhpNodeVersion(
 /** Lê a versão de Node atual no container (reflete troca feita no terminal). */
 export function getPhpNodeCurrent(id: string): Promise<{ current: string | null }> {
   return request<{ current: string | null }>(`/environments/${id}/node-version`);
+}
+
+/* ── Configuração PHP (php.ini) — persistida em arquivo no host, sem banco ── */
+
+/** Lê a config php.ini gerenciada do ambiente. */
+export function getPhpIni(id: string): Promise<{ config: PhpIniConfig }> {
+  return request<{ config: PhpIniConfig }>(`/environments/${id}/php-ini`);
+}
+
+/** Grava a config php.ini e aplica ao vivo (reinicia o php -S, sem recriar). */
+export function setPhpIni(id: string, config: PhpIniConfig): Promise<{ config: PhpIniConfig }> {
+  return request<{ config: PhpIniConfig }>(`/environments/${id}/php-ini`, {
+    method: "PUT",
+    body: config,
+  });
+}
+
+/** Restaura os padrões do php.ini. */
+export function resetPhpIni(id: string): Promise<{ config: PhpIniConfig }> {
+  return request<{ config: PhpIniConfig }>(`/environments/${id}/php-ini/reset`, {
+    method: "POST",
+  });
 }
 
 /** Troca a versão/linguagem do runtime — recria o container. */

@@ -226,6 +226,10 @@ async function deployAgent(a: Args, cfg: Config): Promise<void> {
   const build = cfg.hosts.build.ssh;
   const logId = newLogId("deploy-agent");
   let buffer = "";
+  // 0) rsync do código local -> host de build (senão o build usa código velho de srcRemote)
+  const rsRes = await rsync(cfg.paths.srcLocal, build, cfg.paths.srcRemote, SRC_EXCLUDES);
+  buffer += `# rsync\n${rsRes.out}\n${rsRes.err}\n`;
+  if (rsRes.code !== 0) fail("rsync falhou", { step: "rsync", tail: tail(rsRes.err || rsRes.out), logId: writeLogId(logId, buffer) });
   // build 1x
   const bRes = await sh(build, `cd ${cfg.paths.srcRemote} && docker build -q -f apps/agent/Dockerfile -t velozplanel/agent:prod .`, { timeoutMs: 900_000 });
   buffer += `# build\n${bRes.out}\n${bRes.err}\n`;
