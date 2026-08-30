@@ -1,0 +1,10 @@
+# Borda HTTP das VPS — porta EXCLUSIVA (não 80; o node já usa apache na 80).
+# Cada VPS com domínio vira um arquivo em /etc/caddy/managed/<dominio>.caddy com um
+# bloco `http://<dominio>:8080 { reverse_proxy <vmIp>:80 ... }` (escrito pelo agente).
+{
+	admin off
+	auto_https off
+}
+
+# Importa os vhosts gerenciados (um por domínio de VPS).
+import /etc/caddy/managed/*.caddy

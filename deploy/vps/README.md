@@ -112,16 +112,37 @@ sudo VPS_BASE_DIR=/var/lib/veloz-vps/base ./fetch-base-images.sh
 ## 10) Gateway SSH (sshpiper) — porta única
 ```bash
 sudo docker compose -f deploy/vps/docker-compose.sshpiper.yml up -d
-# confira escutando na 2224:
-sudo ss -tlnp | grep 2224
+sudo ss -tlnp | grep 2224   # escutando
 ```
-Encaminhe no **roteador**: 1 porta web (a do Caddy) + **porta 2224 (SSH das VPS)**.
+
+## 10b) Borda HTTP (Caddy) — porta EXCLUSIVA (não 80)
+O node usa apache na :80. A borda HTTP das VPS roda numa porta própria (default **8080**),
+roteando por domínio -> VM:web.
+```bash
+cd deploy/vps && sudo docker compose -f docker-compose.caddy.yml up -d
+sudo ss -tlnp | grep 8080
+```
+
+## Modelo de portas (NAT-VPS)
+Cada VPS recebe um **bloco de 20 portas públicas** (configurável) encaminhadas **1:1** pra VM
+(host:P -> VM:P, TCP+UDP) — liberdade total do usuário. Alocação por `slot`:
+- slot 0 -> **20000–20019**, slot 1 -> 20020–20039, … (base `VP_VPS_PORT_BASE`, tamanho `VP_VPS_PORTS_PER_VM`).
+- **HTTP**: servidor web na porta **80 dentro da VM** (reservada) é servido pelo **domínio na porta
+  exclusiva 8080** (Caddy). Nunca usamos a 80 pública.
+- **SSH**: porta única **2224** (sshpiper), roteia por `vmName`.
+
+### Encaminhamento no ROTEADOR (para 192.168.2.111)
+- **2224/tcp** → SSH das VPS
+- **8080/tcp** → HTTP por domínio
+- **20000–22559 (tcp+udp)** → o bloco de portas dos VPS (128 slots × 20). Encaminhe a faixa que for usar.
 
 ## 11) Variáveis de ambiente
-- **Agente** (velozplanel-agent): `VPS_BASE_DIR`, `VPS_POOL_DIR`, `VPS_SEED_DIR`,
-  `VPS_SSHPIPER_DIR=/var/lib/veloz-vps/sshpiper` (defaults já apontam para `/var/lib/veloz-vps/*`).
-- **API** (control plane): `VP_VPS_SSH_PORT=2224` (porta do gateway mostrada ao cliente);
-  `VP_SSH_GATEWAY_ACTIVE=1` só quando o gateway estiver de fato no ar.
+- **Agente VPS nativo** (systemd): defaults já apontam para `/var/lib/veloz-vps/*`; opcionais
+  `VPS_HTTP_PORT=8080` (porta exclusiva da borda), `VPS_NFT_DIR=/var/lib/veloz-vps/nft`.
+- **API** (control plane):
+  - `VP_VPS_AGENT_URL=http://10.100.0.3:4101` (agente KVM nativo)
+  - `VP_VPS_SSH_PORT=2224` · `VP_SSH_GATEWAY_ACTIVE=1` (só quando o sshpiper estiver no ar)
+  - `VP_VPS_HTTP_PORT=8080` (mostrada ao cliente) · `VP_VPS_PORT_BASE=20000` · `VP_VPS_PORTS_PER_VM=20`
 
 ## Verificação da FASE 3 (2 VPS de donos diferentes)
 1. Criar VPS no painel (precisa de ≥1 chave SSH no ambiente). Estado chega a **running**.

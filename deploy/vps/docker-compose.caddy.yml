@@ -1,0 +1,23 @@
+# Caddy da borda HTTP das VPS — porta EXCLUSIVA 8080 (domínio -> VM:web).
+# network_mode host: precisa alcançar os IPs privados das VMs (192.168.100.x) e
+# escutar a 8080 do host (a 80 é do apache). --watch recarrega ao mudar os vhosts.
+#
+# Rode no NÓ:  docker compose -f docker-compose.caddy.yml up -d
+# Se o --watch não pegar mudança de vhost:  docker exec veloz-vps-caddy caddy reload --config /etc/caddy/Caddyfile
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: veloz-vps-caddy
+    restart: unless-stopped
+    network_mode: host
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--watch"]
+    volumes:
+      - /etc/caddy/managed:/etc/caddy/managed
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - veloz_vps_caddy_data:/data
+      - veloz_vps_caddy_config:/config
+
+volumes:
+  veloz_vps_caddy_data:
+  veloz_vps_caddy_config:
