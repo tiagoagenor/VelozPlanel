@@ -31,16 +31,32 @@ const keyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid() });
 const SSH_HOST = process.env.VP_SSH_HOST ?? "localhost";
 const SSH_PORT = 2222;
 
+/**
+ * O gateway SSH que TERMINA a conexão (ssh2 p/ Docker, sshpiper p/ VPS) roda de fato?
+ * Honesto por config: o deploy da borda que roda o gateway seta `VP_SSH_GATEWAY_ACTIVE=1`.
+ * Sem isso, NÃO afirmamos ao cliente que há SSH aceitando conexão.
+ */
+const SSH_GATEWAY_ACTIVE = process.env.VP_SSH_GATEWAY_ACTIVE === "1";
+
 const { utils: sshUtils } = ssh2;
 
 /** Teto de chaves por ambiente — evita abuso/DoS por geração ilimitada. */
 const MAX_KEYS_PER_ENV = 20;
 
-/** Tipos de chave pública SSH aceitos (algoritmo no 1º campo da linha). */
+/**
+ * Piso do módulo RSA (bits). `ssh-rsa` sem limite deixa passar chaves pequenas da
+ * era SHA-1. 2048 é o mínimo aceitável hoje; recomende ed25519 ou RSA ≥ 3072.
+ */
+const MIN_RSA_BITS = 2048;
+
+/**
+ * Tipos de chave pública SSH aceitos (algoritmo no 1º campo da linha).
+ * `ssh-dss` (DSA) foi REMOVIDO: é criptograficamente quebrado e desativado por
+ * padrão no OpenSSH moderno — não aceitamos acesso root a VM por chave DSA.
+ */
 const ALLOWED_KEY_TYPES = [
   "ssh-ed25519",
   "ssh-rsa",
-  "ssh-dss",
   "ecdsa-sha2-nistp256",
   "ecdsa-sha2-nistp384",
   "ecdsa-sha2-nistp521",
@@ -52,6 +68,34 @@ function isAllowedKeyType(type: string): boolean {
   if (ALLOWED_KEY_TYPES.includes(type)) return true;
   // cobre ecdsa-sha2-* e sk-* futuros/variantes
   return type.startsWith("ecdsa-sha2-") || type.startsWith("sk-");
+}
+
+/**
+ * Bits do módulo RSA a partir do blob binário, começando logo após a string do
+ * algoritmo. Formato: `string algo | mpint e | mpint n`. Retorna null se malformado.
+ */
+function rsaModulusBits(raw: Buffer, offAfterAlgo: number): number | null {
+  let off = offAfterAlgo;
+  if (off + 4 > raw.length) return null;
+  const eLen = raw.readUInt32BE(off);
+  off += 4 + eLen; // pula o expoente `e`
+  if (off + 4 > raw.length) return null;
+  const nLen = raw.readUInt32BE(off);
+  off += 4;
+  if (nLen <= 0 || off + nLen > raw.length) return null;
+  const n = raw.subarray(off, off + nLen);
+  // mpint tem 0x00 à esquerda quando o bit alto está setado — pula os zeros.
+  let i = 0;
+  while (i < n.length && n[i] === 0) i++;
+  if (i >= n.length) return 0;
+  const bytes = n.length - i;
+  const first = n.readUInt8(i);
+  let lead = 0;
+  for (let m = 7; m >= 0; m--) {
+    if (first & (1 << m)) break;
+    lead++;
+  }
+  return bytes * 8 - lead;
 }
 
 /**
@@ -113,6 +157,18 @@ function parseAndFingerprint(
     };
   }
 
+  // Rejeita RSA fraco (era SHA-1) — só chega aqui com o blob validado.
+  if (type === "ssh-rsa") {
+    const bits = rsaModulusBits(raw, 4 + algoLen);
+    if (bits === null) return { ok: false, reason: "não foi possível ler o módulo da chave RSA" };
+    if (bits < MIN_RSA_BITS) {
+      return {
+        ok: false,
+        reason: `chave RSA de ${bits} bits é fraca; use ao menos ${MIN_RSA_BITS} bits (ideal: ed25519 ou RSA 3072+)`,
+      };
+    }
+  }
+
   const digest = createHash("sha256").update(raw).digest("base64").replace(/=+$/, "");
   const normalized = parts.length > 2 ? `${type} ${blob} ${parts.slice(2).join(" ")}` : `${type} ${blob}`;
   return { ok: true, fingerprint: `SHA256:${digest}`, normalized };
@@ -155,9 +211,10 @@ async function loadOrCreateSshConfig(env: EnvironmentRow): Promise<SshConfigRow>
 
 /**
  * Monta o `sshConfig` do contrato a partir da linha de config + das chaves,
- * escolhendo uma `message` HONESTA. `gatewayActive` é sempre false no núcleo:
- * o gateway SSH/SFTP que TERMINA a conexão ainda não roda; ele ativa na fase
- * de infra/borda (como o SSL). Nunca afirmamos que já há SSH aceitando conexão.
+ * escolhendo uma `message` HONESTA. `gatewayActive` reflete o estado REAL via
+ * `SSH_GATEWAY_ACTIVE` (config do deploy da borda): o gateway SSH/SFTP que TERMINA
+ * a conexão só é `true` quando de fato roda. Nunca afirmamos SSH aceitando conexão
+ * quando o gateway não está no ar.
  */
 /** Host que o cliente usa para conectar: o host público do nó do ambiente,
  *  configurado pelo super admin; cai para VP_SSH_HOST/localhost se não definido. */
@@ -182,6 +239,11 @@ function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[], host: string): SshCon
     notes.push(
       "O SSH está ligado, mas nenhuma chave pública foi adicionada ainda — adicione uma chave para conectar.",
     );
+  } else if (!SSH_GATEWAY_ACTIVE) {
+    // Honesto: os dados de acesso já ficam prontos, mas o gateway ainda não aceita conexão.
+    notes.push(
+      `Acesso configurado (${cfg.username}@${host}:${cfg.port}). O gateway de conexão será ativado na borda.`,
+    );
   } else {
     notes.push(`Conecte com: ssh -p ${cfg.port} ${cfg.username}@${host}`);
   }
@@ -196,7 +258,7 @@ function toSshConfig(cfg: SshConfigRow, keys: SshKeyRow[], host: string): SshCon
     accessScope,
     allowlist: Array.isArray(cfg.allowlist) ? (cfg.allowlist as string[]) : [],
     keys: keys.map(toSshKey),
-    gatewayActive: true,
+    gatewayActive: SSH_GATEWAY_ACTIVE,
     message: notes.join(" "),
   };
 }
