@@ -192,11 +192,13 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
   });
 
   await db.update(envAddresses).set({ containerId: result.vmName }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps")));
-  // SSH do env: username = vmName (o que o cliente digita no gateway), ligado.
+  // SSH do env: username = vmName (o que o cliente digita no gateway), porta do gateway
+  // sshpiper das VPS (2224; distinta do gateway Docker 2222/2223), ligado.
+  const vpsSshPort = Number(process.env.VP_VPS_SSH_PORT ?? 2224);
   await db
     .insert(sshConfigs)
-    .values({ envId: env.id, username: result.vmName, enabled: true })
-    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: result.vmName, enabled: true } });
+    .values({ envId: env.id, username: result.vmName, enabled: true, port: vpsSshPort })
+    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: result.vmName, enabled: true, port: vpsSshPort } });
 
   await db.update(environments).set({
     vmName: result.vmName,
