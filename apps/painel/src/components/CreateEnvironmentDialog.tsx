@@ -263,7 +263,7 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                         id={key}
                         typeId={t.id}
                         label={t.label}
-                        category={code ? "Código" : t.category === "stack" ? "App + banco" : "Serviço"}
+                        category={code ? "Código" : t.category === "stack" ? "App + banco" : t.category === "vps" ? "VPS (KVM)" : "Serviço"}
                         subtitle={code ? CARD_SUBTITLE[t.id] : undefined}
                         fromCents={fromPriceOf(t)}
                         selected={currentKey === key}

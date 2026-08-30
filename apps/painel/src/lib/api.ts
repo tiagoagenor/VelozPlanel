@@ -12,6 +12,7 @@ import type {
   DbRunMongoInput,
   DbRunRedisInput,
   Environment,
+  VpsInfo,
   FileContent,
   FileList,
   LoginInput,
@@ -232,6 +233,13 @@ export function listRegions(): Promise<RegionOption[]> {
 
 export function getEnvironment(id: string): Promise<Environment> {
   return request<Environment>(`/environments/${id}`);
+}
+
+export function getVpsInfo(id: string): Promise<VpsInfo> {
+  return request<VpsInfo>(`/environments/${id}/vps`);
+}
+export function suspendVps(id: string): Promise<Environment> {
+  return request<Environment>(`/environments/${id}/vps/suspend`, { method: "POST" });
 }
 
 export function createEnvironment(

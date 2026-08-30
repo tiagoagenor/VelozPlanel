@@ -23,6 +23,7 @@ import {
   ChevronsUpDown,
   Box as BoxIcon,
   LayoutDashboard,
+  Server,
   Globe,
   Settings,
   FolderOpen,
@@ -62,6 +63,8 @@ interface Section {
   dbOnly?: boolean; // só aparece em ambientes-serviço de banco (Jamees Studio)
   appOnly?: boolean; // não faz sentido em ambientes-serviço (só apps/stacks)
   panelOnly?: boolean; // só em serviços com painel web (rabbitmq/mysql/mariadb/postgres)
+  vpsOnly?: boolean; // só em VPS (KVM)
+  vpsOk?: boolean; // seção appOnly que TAMBÉM vale para VPS (ex.: Domínio, SSH)
 }
 
 const STUDIO_ENGINES = new Set(["mysql", "mariadb", "postgres", "mongodb", "redis"]);
@@ -71,6 +74,10 @@ function isDbServiceEnv(env: { category?: string | null; type?: string | null } 
 /** Ambiente-serviço (redis/mysql/…): esconde as abas de app (Domínio/Arquivos/Deploy/…). */
 function isServiceEnv(env: { category?: string | null } | undefined): boolean {
   return env?.category === "service";
+}
+/** VPS (KVM): VM completa. Mostra abas VPS/Domínio/SSH; esconde as de app (Arquivos/Deploy/…). */
+function isVpsEnv(env: { category?: string | null } | undefined): boolean {
+  return env?.category === "vps";
 }
 // Serviços com painel web: rabbitmq (management embutido) e bancos SQL (phpMyAdmin/Adminer sidecar).
 const PANEL_TYPES = new Set(["rabbitmq", "mysql", "mariadb", "postgres"]);
@@ -85,11 +92,12 @@ function hasServicePanel(env: { category?: string | null; type?: string | null }
 // Deploy, Variáveis).
 const SECTIONS: Section[] = [
   { seg: "", label: "Visão geral", icon: LayoutDashboard },
-  { seg: "dominio", label: "Domínio & DNS", icon: Globe, appOnly: true },
+  { seg: "vps", label: "VPS", icon: Server, vpsOnly: true },
+  { seg: "dominio", label: "Domínio & DNS", icon: Globe, appOnly: true, vpsOk: true },
   { seg: "configuracoes", label: "Configurações", icon: Settings },
   { seg: "arquivos", label: "Arquivos", icon: FolderOpen, appOnly: true },
   { seg: "ssl", label: "SSL", icon: ShieldCheck, appOnly: true },
-  { seg: "ssh", label: "SSH", icon: TerminalSquare, appOnly: true },
+  { seg: "ssh", label: "SSH", icon: TerminalSquare, appOnly: true, vpsOk: true },
   { seg: "sftp", label: "SFTP", icon: FolderSync, appOnly: true },
   { seg: "deploy", label: "Deploy", icon: Rocket, appOnly: true },
   { seg: "variaveis", label: "Variáveis", icon: Braces, appOnly: true },
@@ -222,7 +230,8 @@ export default function EnvContextLayout({
               {SECTIONS.filter(
                 (s) =>
                   (!s.dbOnly || isDbServiceEnv(env)) &&
-                  (!s.appOnly || !isServiceEnv(env)) &&
+                  (!s.appOnly || (!isServiceEnv(env) && (!isVpsEnv(env) || !!s.vpsOk))) &&
+                  (!s.vpsOnly || isVpsEnv(env)) &&
                   (!s.panelOnly || hasServicePanel(env)),
               ).map((s) => {
                 const active = s.seg === currentSeg;
