@@ -29,6 +29,7 @@ import cors from "@fastify/cors";
 import { z } from "zod";
 import { runtimeSpec, studioEngine, dbRunSqlInput, dbRunMongoInput, dbRunRedisInput, phpIniConfig } from "@velozplanel/contracts";
 import * as dockerDriver from "./docker.js";
+import * as kvm from "./kvm.js";
 import * as ingress from "./ingress.js";
 import * as files from "./files.js";
 import { startSshGateway } from "./ssh.js";
@@ -951,6 +952,83 @@ app.delete("/files/:cid", async (req, reply) => {
   } catch (err) {
     req.log.error({ err }, "files.remove failed");
     return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+/* ─────────────── Rotas VPS (KVM) — caminho separado do Docker ─────────────── */
+
+const vpsProvisionBody = z.object({
+  envId: z.string().min(1),
+  name: z.string().min(1),
+  image: z.string().min(1),
+  limits: z.object({
+    vcpu: z.number().positive(),
+    memMb: z.number().positive(),
+    diskGb: z.number().positive(),
+  }),
+  network: z.object({
+    name: z.string().min(1),
+    subnet: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/),
+    gateway: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  }),
+  ip: z.string().regex(/^(\d{1,3}\.){3}\d{1,3}$/),
+  ownerId: z.string().min(1),
+  sshPublicKeys: z.array(z.string().min(1)).min(1),
+  sshUser: z.string().regex(/^[a-z_][a-z0-9_-]*$/).optional(),
+});
+// Nome do domínio libvirt: só o alfabeto que geramos (vps-<hex>) — 2ª borda anti-injeção.
+const vpsNameBody = z.object({ vmName: z.string().regex(/^vps-[a-z0-9]+$/) });
+
+app.get("/vps/available", async () => ({ available: await kvm.available() }));
+
+app.post("/vps/provision", async (req, reply) => {
+  const parsed = vpsProvisionBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const result = await kvm.provision(parsed.data);
+    req.log.info({ envId: parsed.data.envId, vmName: result.vmName, ip: result.ip }, "vps provisioned");
+    return reply.send(result);
+  } catch (err) {
+    req.log.error({ err }, "vps provision failed");
+    return reply.code(500).send(errorPayload(err));
+  }
+});
+
+// Ações de ciclo de vida por nome do domínio. suspend/resume servem ao takedown de abuso.
+for (const [route, fn] of [
+  ["start", kvm.start],
+  ["stop", kvm.stop],
+  ["reboot", kvm.reboot],
+  ["suspend", kvm.suspend],
+  ["resume", kvm.resume],
+  ["destroy", kvm.destroy],
+] as const) {
+  app.post(`/vps/${route}`, async (req, reply) => {
+    const parsed = vpsNameBody.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+    }
+    try {
+      await fn(parsed.data.vmName);
+      return reply.code(204).send(null);
+    } catch (err) {
+      req.log.error({ err, route }, "vps action failed");
+      return reply.code(500).send(errorPayload(err));
+    }
+  });
+}
+
+app.post("/vps/status", async (req, reply) => {
+  const parsed = vpsNameBody.safeParse(req.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    return reply.send({ state: await kvm.status(parsed.data.vmName) });
+  } catch (err) {
+    return reply.code(500).send(errorPayload(err));
   }
 });
 
