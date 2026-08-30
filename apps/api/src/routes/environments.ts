@@ -605,7 +605,11 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       }
       const ip =
         (await db.select().from(envAddresses).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps"))))[0]?.ip ?? null;
-      const sshHost = await publicHostForNode(env.nodeId);
+      // Host público do SSH das VPS = a BORDA (hub público), pois o acesso externo entra
+      // pelo hub e vai pela WireGuard até o nó (o roteador de casa não é alterado).
+      // Cai para o public_host do nó se a env não estiver setada.
+      const sshHost =
+        process.env.VP_VPS_SSH_HOST ?? process.env.VP_SSH_HOST ?? (await publicHostForNode(env.nodeId));
       const slot = env.nodeId ? await vpsSlotFor(env.nodeId, env.ownerId) : null;
       const range = slot === null ? null : vpsPortRange(slot);
       return {
