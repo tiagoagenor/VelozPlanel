@@ -169,7 +169,8 @@ async function provisionStackEnv(root: EnvironmentRow, et: typeof envTypes.$infe
 async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelect, nodeId: string, _agentUrl: string): Promise<void> {
   const planSpec = await getPlan(env.plan);
   if (!planSpec) throw new PermanentJobError("plano inválido");
-  const image = et.image ?? "ubuntu-24.04";
+  const image = env.vmImage ?? et.image ?? "ubuntu-24.04"; // imagem escolhida pelo cliente
+  const sshUser = env.vmSshUser ?? "vps"; // usuário de login aleatório por VPS
   const upstreamPort = et.internalPort ?? 80;
   // VPS fala com o agente KVM NATIVO do host (não o container Docker).
   const agentUrl = await vpsAgentUrlForEnv(env);
@@ -192,16 +193,17 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
     ip: alloc.ip,
     ownerId: env.ownerId,
     sshPublicKeys: clientKeys,
+    sshUser,
     ports: { start: range.blockStart, count: range.blockCount },
     sshPort: range.sshPort,
   });
 
   await db.update(envAddresses).set({ containerId: result.vmName }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps")));
-  // SSH do env: usuário "vps" (login na VM), porta pública do SSH (DNAT direto pra VM), ligado.
+  // SSH do env: usuário aleatório da VM, porta pública do SSH (DNAT direto pra VM), ligado.
   await db
     .insert(sshConfigs)
-    .values({ envId: env.id, username: "vps", enabled: true, port: range.sshPort })
-    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: "vps", enabled: true, port: range.sshPort } });
+    .values({ envId: env.id, username: sshUser, enabled: true, port: range.sshPort })
+    .onConflictDoUpdate({ target: sshConfigs.envId, set: { username: sshUser, enabled: true, port: range.sshPort } });
 
   await db.update(environments).set({
     vmName: result.vmName,

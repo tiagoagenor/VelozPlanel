@@ -10,6 +10,8 @@ import {
   addSshKeyInput,
   generateSshKeyInput,
   generatedSshKey as generatedSshKeySchema,
+  generateKeypairInput,
+  generatedKeypair as generatedKeypairSchema,
   updateSshConfigInput,
   apiError,
 } from "@velozplanel/contracts";
@@ -269,6 +271,23 @@ async function loadKeys(envId: string): Promise<SshKeyRow[]> {
 
 export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // POST /ssh/generate — gera um par ed25519 NO SERVIDOR, SEM ambiente (fluxo de criação
+  // de VPS). Devolve a PRIVADA uma única vez; nada é armazenado. Autenticado.
+  app.post(
+    "/ssh/generate",
+    { schema: { body: generateKeypairInput, response: { 200: generatedKeypairSchema, 401: apiError, 500: apiError } } },
+    async (req, reply) => {
+      await requireUser(req);
+      reply.header("cache-control", "no-store");
+      reply.header("pragma", "no-cache");
+      const pair = sshUtils.generateKeyPairSync("ed25519");
+      const [type, blob] = pair.public.trim().split(/\s+/);
+      const parsed = parseAndFingerprint(`${type} ${blob} ${req.body.label.trim()}`);
+      if (!parsed.ok) throw new ApiHttpError(500, "keygen_failed", "falha ao gerar a chave");
+      return { publicKey: parsed.normalized, privateKey: pair.private, fingerprint: parsed.fingerprint };
+    },
+  );
 
   // GET /environments/:id/ssh — configuração honesta de acesso SSH do ambiente.
   app.get(

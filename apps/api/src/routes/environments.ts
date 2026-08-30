@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { eq, count, and, isNull, sql } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 import {
   environment as environmentSchema,
   createEnvironmentInput,
@@ -19,6 +20,8 @@ import {
   diskUsage as diskUsageSchema,
   containerLogs as containerLogsSchema,
   vpsInfo as vpsInfoSchema,
+  VPS_DEFAULT_IMAGE,
+  isValidVpsImage,
   PLANS,
 } from "@velozplanel/contracts";
 import type {
@@ -274,13 +277,23 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       }
 
       // VPS: a VM autentica por chave — exige a chave pública na criação (senão nasce inacessível).
-      let vpsKey: { publicKey: string; fingerprint: string } | null = null;
+      // Também: imagem Linux escolhida (default Ubuntu) e um usuário de login ALEATÓRIO por VPS.
+      let vpsKey: { publicKey: string; fingerprint: string; label: string } | null = null;
+      let vpsImage = VPS_DEFAULT_IMAGE;
+      let vpsSshUser = "";
       if (category === "vps") {
         const raw = req.body.sshPublicKey?.trim();
         if (!raw) throw new ApiHttpError(400, "ssh_key_required", "adicione sua chave SSH pública para criar o VPS.");
         const pk = parseAndFingerprint(raw);
         if (!pk.ok) throw new ApiHttpError(400, "invalid_ssh_key", pk.reason);
-        vpsKey = { publicKey: pk.normalized, fingerprint: pk.fingerprint };
+        const label = (req.body.sshKeyLabel?.trim() || "minha-chave").slice(0, 60);
+        vpsKey = { publicKey: pk.normalized, fingerprint: pk.fingerprint, label };
+        if (req.body.image) {
+          if (!isValidVpsImage(req.body.image)) throw new ApiHttpError(400, "invalid_image", "imagem Linux inválida.");
+          vpsImage = req.body.image;
+        }
+        // Usuário de login aleatório (não "vps"): u + 9 dígitos. Vários clientes -> nomes distintos.
+        vpsSshUser = "u" + Array.from(randomBytes(5)).map((b) => b % 10).join("").slice(0, 9);
       }
 
       // Trava de saldo: (dinheiro + bônus) precisa cobrir ao menos 1 HORA do
@@ -329,11 +342,12 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         const ins = await db.insert(environments).values({
           name, ownerId: user.id, nodeId: null, plan, typeId: et!.id,
           runtimeKind: "static", runtimeVersion: "-", vmUpstreamPort: et!.internalPort ?? 80,
+          vmImage: vpsImage, vmSshUser: vpsSshUser,
           state: "provisioning",
         }).returning();
         root = ins[0]!;
-        // Chave SSH do cliente (validada acima) — a VM autentica com ela.
-        await db.insert(sshKeys).values({ envId: root.id, label: "VPS", publicKey: vpsKey!.publicKey, fingerprint: vpsKey!.fingerprint });
+        // Chave SSH do cliente (validada acima) — a VM autentica com ela. Nome = label.
+        await db.insert(sshKeys).values({ envId: root.id, label: vpsKey!.label, publicKey: vpsKey!.publicKey, fingerprint: vpsKey!.fingerprint });
       } else {
         if (!et!.childType) throw new ApiHttpError(400, "invalid_type", "stack sem banco-filho configurado");
         const [child] = await db.select().from(envTypes).where(eq(envTypes.id, et!.childType)).limit(1);
@@ -628,7 +642,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       return {
         state,
         ip,
-        sshUser: "vps", // login direto na VM (sem gateway)
+        sshUser: env.vmSshUser ?? "vps", // usuário aleatório da VM (login direto, sem gateway)
         sshHost,
         sshPort: range?.sshPort ?? 22,
         upstreamPort: env.vmUpstreamPort ?? 80,

@@ -360,6 +360,8 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_name text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_host_key text`;
   await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_upstream_port integer`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_image text`;
+  await sql`ALTER TABLE environments ADD COLUMN IF NOT EXISTS vm_ssh_user text`;
 
   // Fila de jobs (provisionar/remover ambiente).
   await sql`

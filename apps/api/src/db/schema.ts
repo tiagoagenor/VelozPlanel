@@ -79,6 +79,8 @@ export const environments = pgTable("environments", {
   vmName: text("vm_name"), // nome do domínio libvirt (ex.: vps-<hex>) — tb. usuário de login no gateway
   vmHostKey: text("vm_host_key"), // host key ed25519 do guest (pinning no sshpiper)
   vmUpstreamPort: integer("vm_upstream_port"), // porta web do guest p/ o proxy (default 80)
+  vmImage: text("vm_image"), // slug da imagem Linux escolhida (VPS); null = default
+  vmSshUser: text("vm_ssh_user"), // usuário de login na VM (aleatório por VPS; não é "vps")
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

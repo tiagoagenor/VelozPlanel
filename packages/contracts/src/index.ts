@@ -675,8 +675,32 @@ export const createEnvironmentInput = z.object({
   // VPS (KVM): a VM autentica por chave — a chave pública é OBRIGATÓRIA na criação
   // (senão a VM nasce inacessível). Ignorado para app/service/stack.
   sshPublicKey: z.string().max(4096).optional(),
+  sshKeyLabel: z.string().max(60).optional(), // nome da chave (VPS)
+  image: z.string().max(40).optional(), // slug da imagem Linux (VPS); default ubuntu-24.04
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
+
+/** Imagens Linux disponíveis para VPS (KVM). A 1ª é o default (Ubuntu). */
+export const VPS_IMAGES: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "ubuntu-24.04", label: "Ubuntu 24.04 LTS" },
+  { id: "ubuntu-22.04", label: "Ubuntu 22.04 LTS" },
+  { id: "debian-12", label: "Debian 12" },
+];
+export const VPS_DEFAULT_IMAGE = "ubuntu-24.04";
+export function isValidVpsImage(id: string): boolean {
+  return VPS_IMAGES.some((i) => i.id === id);
+}
+
+/** Geração de par SSH SEM ambiente (para o fluxo de criação de VPS). Privada devolvida 1×. */
+export const generatedKeypair = z.object({
+  publicKey: z.string(), // linha authorized_keys (já com o label/comentário)
+  privateKey: z.string(), // formato OpenSSH (id_ed25519) — NÃO é armazenada no servidor
+  fingerprint: z.string(),
+});
+export type GeneratedKeypair = z.infer<typeof generatedKeypair>;
+
+export const generateKeypairInput = z.object({ label: z.string().min(1).max(60) });
+export type GenerateKeypairInput = z.infer<typeof generateKeypairInput>;
 
 /* ─────────────── Nó ─────────────── */
 
