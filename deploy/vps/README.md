@@ -83,3 +83,54 @@ sudo virsh net-list --all
   `192.168.2.x`, `10.100.0.x` e o IP de outro tenant **inalcançáveis**; SMTP :25 bloqueado.
 - `docker ps` inalterado; geestao/mongo de pé; `nft list table inet vp_kvm` intacto após restart.
 - `nested` = N; `ksm/run` = 0; libvirt confinando VMs.
+
+---
+
+# FASE 3 — Borda & runtime do VPS (no nó)
+
+Depois da FASE 0, prepare o runtime que o `kvm.ts`/`sshpiper` usam.
+
+## 7) Diretórios e permissões
+```bash
+sudo mkdir -p /var/lib/veloz-vps/{base,disks,seed,sshpiper,sshpiper-hostkeys}
+sudo chown -R root:root /var/lib/veloz-vps
+sudo chmod 700 /var/lib/veloz-vps/sshpiper
+```
+
+## 8) Ferramentas necessárias no nó
+`virt-install`, `qemu-img`, `virsh`, `cloud-localds` (pacote `cloud-image-utils`),
+`ssh-keygen`, `ssh-keyscan`, `genisoimage`. No Ubuntu:
+```bash
+sudo apt-get install -y virtinst qemu-utils libvirt-clients cloud-image-utils genisoimage
+```
+
+## 9) Imagens-base cloud
+```bash
+sudo VPS_BASE_DIR=/var/lib/veloz-vps/base ./fetch-base-images.sh
+```
+
+## 10) Gateway SSH (sshpiper) — porta única
+```bash
+sudo docker compose -f deploy/vps/docker-compose.sshpiper.yml up -d
+# confira escutando na 2224:
+sudo ss -tlnp | grep 2224
+```
+Encaminhe no **roteador**: 1 porta web (a do Caddy) + **porta 2224 (SSH das VPS)**.
+
+## 11) Variáveis de ambiente
+- **Agente** (velozplanel-agent): `VPS_BASE_DIR`, `VPS_POOL_DIR`, `VPS_SEED_DIR`,
+  `VPS_SSHPIPER_DIR=/var/lib/veloz-vps/sshpiper` (defaults já apontam para `/var/lib/veloz-vps/*`).
+- **API** (control plane): `VP_VPS_SSH_PORT=2224` (porta do gateway mostrada ao cliente);
+  `VP_SSH_GATEWAY_ACTIVE=1` só quando o gateway estiver de fato no ar.
+
+## Verificação da FASE 3 (2 VPS de donos diferentes)
+1. Criar VPS no painel (precisa de ≥1 chave SSH no ambiente). Estado chega a **running**.
+2. Isolamento: de dentro do VPS A, o IP do VPS B e os serviços do host **inalcançáveis**.
+3. SSH: `ssh -p 2224 <vmName>@<host-publico>` entra na VM certa (com sua chave), SFTP/scp ok.
+4. Domínio (se configurado): `https://<dominio>` → Caddy (porta única) → VM correta.
+5. Destroy: some VM + overlay + NVRAM + seed + perfil AppArmor + mapeamento sshpiper (sem órfãos).
+
+# FASE 5 — Uso aceitável & abuso
+- Política de uso aceitável: [AUP.md](AUP.md). O egress já bloqueia SMTP/RFC1918 (FASE 0).
+- Takedown de abuso: **admin** → `POST /environments/:id/vps/suspend` (congela a VM na hora,
+  preserva estado/logs). No nó: `virsh suspend <vmName>` faz o mesmo manualmente.

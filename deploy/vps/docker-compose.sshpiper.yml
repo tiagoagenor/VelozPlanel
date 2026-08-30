@@ -1,0 +1,36 @@
+# Gateway SSH das VPS (porta única) — sshpiper com o driver "workingdir".
+#
+# O agente (kvm.ts) mantém, por VM, um diretório <root>/<vmName>/ com:
+#   - sshpiper_upstream  -> "vps@<ip>:22" (para onde rotear)
+#   - authorized_keys    -> chaves PÚBLICAS do cliente (quem pode entrar como <vmName>)
+#   - id_ed25519         -> chave PRIVADA por-VM (o sshpiper usa p/ autenticar na VM)
+#   - known_hosts        -> host key pinada do guest (verifica a VM)
+#
+# O cliente conecta:  ssh -p 2224 <vmName>@<host-publico-do-no>
+# sshpiper autentica a chave do cliente contra authorized_keys e roteia p/ a VM.
+#
+# Porta 2224 (2222/2223 são do gateway Docker do velozplanel-agent). Ajuste o
+# port-forward do roteador p/ esta porta. Rode no NÓ (borda), junto do agente.
+
+services:
+  sshpiper:
+    image: ghcr.io/tg123/sshpiper:latest
+    container_name: veloz-vps-sshpiper
+    restart: unless-stopped
+    # Porta única pública do SSH das VPS.
+    ports:
+      - "2224:2222"
+    command:
+      - /sshpiperd/sshpiperd
+      - workingdir
+      - --root=/var/lib/veloz-vps/sshpiper
+      # Confia no known_hosts de cada VM (host key pinada); sem isso, recusa VM desconhecida.
+      - --check-hostkey=true
+    volumes:
+      # Mesmo diretório que o agente escreve os mapeamentos.
+      - /var/lib/veloz-vps/sshpiper:/var/lib/veloz-vps/sshpiper
+      # Host key do PRÓPRIO gateway (persistente entre restarts).
+      - /var/lib/veloz-vps/sshpiper-hostkeys:/etc/ssh/keys
+    environment:
+      # Onde o sshpiperd guarda/le a host key do gateway.
+      SSHPIPERD_SERVER_KEY: /etc/ssh/keys/ssh_host_ed25519_key
