@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:vps": "tsx watch src/vps-server.ts",
+    "build:vps": "esbuild src/vps-server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/vps-agent.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

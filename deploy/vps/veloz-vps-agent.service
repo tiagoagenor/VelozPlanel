@@ -1,0 +1,26 @@
+# Agente VPS (KVM) nativo do host — só rotas /vps/* na porta 4101.
+# Instalar em /etc/systemd/system/ e `systemctl enable --now veloz-vps-agent`.
+# O bundle (dist/vps-agent.mjs) vai para /opt/veloz-vps/. O EnvironmentFile guarda o
+# VP_INTERNAL_TOKEN (mesmo do agente Docker) — mantê-lo 0600.
+[Unit]
+Description=VelozPlanel VPS (KVM) agent
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Precisa de root: libvirt (qemu:///system), /var/lib/veloz-vps, perfis AppArmor.
+User=root
+EnvironmentFile=/etc/veloz/vps-agent.env
+Environment=VPS_AGENT_PORT=4101
+Environment=VPS_BASE_DIR=/var/lib/veloz-vps/base
+Environment=VPS_POOL_DIR=/var/lib/veloz-vps/disks
+Environment=VPS_SEED_DIR=/var/lib/veloz-vps/seed
+Environment=VPS_SSHPIPER_DIR=/var/lib/veloz-vps/sshpiper
+Environment=CADDY_SITES_DIR=/etc/caddy/managed
+ExecStart=/home/server-local/.nvm/versions/node/v24.11.0/bin/node /opt/veloz-vps/vps-agent.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
