@@ -1,0 +1,14 @@
+# Reaplica o isolamento nft das VPS (vp_kvm) no boot — regras de runtime se perdem
+# num reboot; este oneshot as recarrega sempre. Depende do arquivo em /etc/nftables.d/.
+[Unit]
+Description=VelozPlanel VPS nft isolation (vp_kvm)
+After=nftables.service network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/nftables.d/vp-kvm.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

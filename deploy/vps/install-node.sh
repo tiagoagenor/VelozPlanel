@@ -14,8 +14,20 @@ NODE_BIN="${NODE_BIN:-$(ls /home/*/.nvm/versions/node/*/bin/node 2>/dev/null | h
 [ -x "$NODE_BIN" ] || { echo "node não encontrado; defina NODE_BIN=/caminho/para/node"; exit 1; }
 
 echo "== diretórios =="
-mkdir -p /opt/veloz-vps /etc/veloz /var/lib/veloz-vps/{base,disks,seed,sshpiper,sshpiper-hostkeys,nft}
+mkdir -p /opt/veloz-vps /etc/veloz /etc/nftables.d /var/lib/veloz-vps/{base,disks,seed,sshpiper,sshpiper-hostkeys,nft}
 chmod 700 /var/lib/veloz-vps/sshpiper
+
+echo "== isolamento nft (vp_kvm) — aplica + persiste no boot =="
+if [ -f "$SRC/nftables-vp-kvm.nft" ]; then
+  cp "$SRC/nftables-vp-kvm.nft" /etc/nftables.d/vp-kvm.nft
+  nft -f /etc/nftables.d/vp-kvm.nft
+  cp "$SRC/veloz-vps-nft.service" /etc/systemd/system/veloz-vps-nft.service
+  systemctl daemon-reload
+  systemctl enable --now veloz-vps-nft >/dev/null 2>&1 || true
+  echo "  vp_kvm drops ativos: $(nft list table inet vp_kvm 2>/dev/null | grep -c drop)"
+else
+  echo "  AVISO: nftables-vp-kvm.nft não está em $SRC — isolamento NÃO aplicado (rode a FASE 0)."
+fi
 
 echo "== agente VPS nativo (systemd :4101) =="
 cp "$SRC/vps-agent.mjs" /opt/veloz-vps/vps-agent.mjs
