@@ -1,0 +1,14 @@
+# Desliga o KSM (Kernel Same-page Merging) no nó VPS.
+# KSM deduplica memória entre VMs -> canal lateral cross-VM comprovado. Com 15 GiB o ganho
+# é irrelevante; desligar. Instalar em /etc/systemd/system/ e `enable --now`.
+[Unit]
+Description=Disable KSM (memory dedup side-channel) for VPS node
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo 0 > /sys/kernel/mm/ksm/run'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

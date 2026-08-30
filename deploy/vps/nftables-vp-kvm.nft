@@ -1,0 +1,80 @@
+#!/usr/sbin/nft -f
+#
+# vp_kvm — isolamento de rede do produto VPS (KVM) do VelozPlanel.
+#
+# POR QUE UMA TABELA PRÓPRIA:
+#   O host usa iptables-nft e libvirt 8.0 (Ubuntu 22.04) NÃO tem backend nftables.
+#   Docker e libvirt só enumeram/limpam as PRÓPRIAS chains. Colocando a política numa
+#   tabela `inet vp_kvm` com hook em prioridade -20 (antes das chains prio 0 do Docker/
+#   libvirt) e verdito `drop` TERMINAL, nem Docker nem libvirt conseguem apagá-la ou
+#   contorná-la, e ela sobrevive a restart de ambos.
+#
+# SEGURANÇA DE LOCKOUT:
+#   Todos os drops têm `ip saddr $TENANTS` — só afetam tráfego ORIGINADO nas VPS dos
+#   tenants (192.168.100.0/22). SSH/admin do host pela mesh (10.100.0.0/24) e da LAN
+#   NÃO são afetados. Aplicar isto NÃO derruba sua sessão.
+#
+# APLICAR:   sudo nft -f deploy/vps/nftables-vp-kvm.nft
+# VER:       sudo nft list table inet vp_kvm
+# PERSISTIR: copiar p/ /etc/nftables.d/ e garantir include no /etc/nftables.conf,
+#            OU habilitar via systemd (ver README.md desta pasta).
+
+table inet vp_kvm {
+	# Faixa de todos os tenants VPS (fatiada /29 por dono).
+	define TENANTS = 192.168.100.0/22
+
+	# Redes que um tenant NUNCA pode alcançar: mesh admin, LAN de casa, link-local,
+	# loopback, e as sub-redes internas do Docker/libvirt existentes.
+	define PROTECT = {
+		10.100.0.0/24,        # WireGuard mesh (admin)
+		192.168.2.0/24,       # LAN de casa + roteador
+		169.254.0.0/16,       # link-local
+		127.0.0.0/8,          # loopback
+		192.168.122.0/24,     # virbr0 (libvirt default)
+		192.168.48.0/20,      # docker (bridges)
+		172.17.0.0/16,        # docker0 + bridges
+		172.18.0.0/15,        # docker bridges (172.18-19)
+		172.20.0.0/14,        # docker bridges (172.20-23)
+		172.24.0.0/15,        # docker bridges (172.24-25)
+		10.201.0.0/16         # docker (veloz-uN observados)
+	}
+
+	# Portas de serviço do host que um tenant NUNCA pode tocar.
+	define HOST_SVC_TCP = { 22, 80, 139, 445, 1212, 2222, 2223, 4100, 9090, 28548, 32777 }
+
+	# ── FORWARD: tráfego que passa PELO host (VPS -> internet, VPS -> outra rede) ──
+	chain forward {
+		type filter hook forward priority -20; policy accept;
+
+		# Retornos de conexões já estabelecidas passam sempre.
+		ct state established,related accept
+
+		# tenant -> tenant: BLOQUEIO OBRIGATÓRIO. Duas redes NAT do libvirt são
+		# sub-redes locais no host com ip_forward=1 -> o host rotearia entre elas.
+		ip saddr $TENANTS ip daddr $TENANTS drop
+
+		# tenant -> mesh/LAN/host-bridges/link-local/loopback: bloqueio.
+		ip saddr $TENANTS ip daddr $PROTECT drop
+
+		# Anti-abuso de e-mail: bloquear SMTP de saída por padrão (IP residencial).
+		ip saddr $TENANTS tcp dport { 25, 465, 587 } drop
+
+		# Anti-scan/DDoS: teto de novas conexões por segundo por VPS.
+		ip saddr $TENANTS ct state new limit rate over 50/second burst 100 packets drop
+
+		# O resto (tenant -> internet) cai fora e é aceito; o SNAT é do libvirt.
+		# Para egress DEFAULT-DENY (tenant não-confiável), descomente:
+		# ip saddr $TENANTS ip daddr != $TENANTS log prefix "vpkvm-egress-drop " drop
+	}
+
+	# ── INPUT: tráfego destinado AO PRÓPRIO host ──
+	chain input {
+		type filter hook input priority -20; policy accept;
+
+		ct state established,related accept
+
+		# tenant -> serviços do host (sshd, agent, samba, cockpit, mysql, caddy...): bloqueio.
+		ip saddr $TENANTS tcp dport $HOST_SVC_TCP drop
+		ip saddr $TENANTS udp dport 53 drop        # não usar o resolver do host; DNS é 1.1.1.1/8.8.8.8 na VM
+	}
+}
