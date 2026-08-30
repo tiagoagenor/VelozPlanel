@@ -258,9 +258,13 @@ export const vpsInfo = z.object({
   sshUser: z.string().nullable(), // usuário de login no gateway (= vmName)
   sshHost: z.string().nullable(), // host público do nó (gateway sshpiper)
   sshPort: z.number().int(), // porta do gateway sshpiper
-  upstreamPort: z.number().int(), // porta web do guest atrás do proxy
+  upstreamPort: z.number().int(), // porta web RESERVADA dentro da VM (servidor http; default 80)
   hostKeyKnown: z.boolean(), // a host key do guest já foi pinada?
   domain: z.string().nullable(),
+  // NAT-VPS: bloco de portas públicas DNAT 1:1 pra VM (liberdade do usuário).
+  portStart: z.number().int(), // 1ª porta pública do bloco (ex.: 20000)
+  portCount: z.number().int(), // quantas portas (ex.: 20)
+  httpEdgePort: z.number().int(), // porta EXCLUSIVA da borda HTTP (domínio -> VM:web); nunca 80
 });
 export type VpsInfo = z.infer<typeof vpsInfo>;
 

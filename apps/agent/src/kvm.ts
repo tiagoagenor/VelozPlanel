@@ -32,6 +32,7 @@ const SEED_DIR = process.env.VPS_SEED_DIR ?? "/var/lib/veloz-vps/seed"; // ISOs 
 const BASE_DIR = process.env.VPS_BASE_DIR ?? "/var/lib/veloz-vps/base"; // imagens-base cloud
 const AA_DIR = process.env.VPS_APPARMOR_DIR ?? "/etc/apparmor.d/libvirt"; // perfis do libvirt
 const SSHPIPER_DIR = process.env.VPS_SSHPIPER_DIR ?? "/var/lib/veloz-vps/sshpiper"; // workingdir do sshpiper
+const NFT_DIR = process.env.VPS_NFT_DIR ?? "/var/lib/veloz-vps/nft"; // regras DNAT por VM
 const SSH_KEYSCAN_TIMEOUT_S = Number(process.env.VPS_KEYSCAN_TIMEOUT ?? 5);
 
 /** Mapa slug de imagem -> arquivo qcow2 base + os-variant do virt-install. */
@@ -53,6 +54,11 @@ export interface VpsNetwork {
   gateway: string; // gateway da rede (ex.: 192.168.100.9)
 }
 
+export interface VpsPorts {
+  start: number; // 1ª porta pública do bloco (ex.: 20000)
+  count: number; // quantas portas (ex.: 20) — DNAT 1:1 pra VM (mesma porta)
+}
+
 export interface VpsProvisionArgs {
   envId: string;
   name: string; // nome amigável (vira hostname)
@@ -63,6 +69,7 @@ export interface VpsProvisionArgs {
   ownerId: string;
   sshPublicKeys: string[]; // chaves autorizadas do cliente (só pública)
   sshUser?: string; // usuário na VM (default "vps"); tem sudo NOPASSWD
+  ports?: VpsPorts | null; // bloco de portas públicas DNAT 1:1 pra VM (liberdade do usuário)
 }
 
 export interface VpsProvisionResult {
@@ -186,6 +193,66 @@ async function removeSshpiperMapping(vmName: string): Promise<void> {
   await fs.rm(sshpiperUserDir(vmName), { recursive: true, force: true }).catch(() => {});
 }
 
+/**
+ * Encaminhamento de portas (NAT-VPS): cada VPS recebe um BLOCO de portas públicas
+ * DNAT 1:1 para a VM (host:P -> vmIp:P), dando liberdade total ao usuário (SSH extra,
+ * apps, jogos…). A porta 80 pública NÃO é usada — HTTP é servido por domínio numa porta
+ * exclusiva da borda (Caddy). Regras vivem numa tabela nft própria `ip vp_kvm_nat`,
+ * regenerada atomicamente a partir de um arquivo por-VM (idempotente, sem sujar Docker/libvirt).
+ */
+function nftRuleFile(vmName: string): string {
+  return path.join(NFT_DIR, `${vmName}.rule`);
+}
+
+/** Regenera a tabela `ip vp_kvm_nat` a partir de todos os arquivos por-VM e aplica. */
+async function rebuildNat(): Promise<void> {
+  await fs.mkdir(NFT_DIR, { recursive: true });
+  let entries: string[] = [];
+  try {
+    entries = (await fs.readdir(NFT_DIR)).filter((f) => f.endsWith(".rule"));
+  } catch {
+    /* dir vazio */
+  }
+  const lines: string[] = [];
+  for (const f of entries) {
+    const content = await fs.readFile(path.join(NFT_DIR, f), "utf8").catch(() => "");
+    for (const l of content.split("\n")) {
+      const t = l.trim();
+      if (t) lines.push(`    ${t}`);
+    }
+  }
+  const ruleset =
+    `add table ip vp_kvm_nat\n` +
+    `flush table ip vp_kvm_nat\n` +
+    `table ip vp_kvm_nat {\n` +
+    `  chain prerouting {\n` +
+    `    type nat hook prerouting priority dstnat; policy accept;\n` +
+    `${lines.join("\n")}${lines.length ? "\n" : ""}` +
+    `  }\n` +
+    `}\n`;
+  const tmp = path.join(NFT_DIR, ".ruleset.nft");
+  await fs.writeFile(tmp, ruleset, { mode: 0o600 });
+  await run("nft", ["-f", tmp]);
+}
+
+/** Programa o bloco de portas de uma VM (DNAT 1:1) e reconstrói a tabela. */
+async function programPortForwards(vmName: string, vmIp: string, ports: VpsPorts): Promise<void> {
+  const end = ports.start + ports.count - 1;
+  // DNAT preservando a porta: host:P -> vmIp:P (TCP e UDP).
+  const rule =
+    `tcp dport ${ports.start}-${end} dnat ip to ${vmIp}\n` +
+    `udp dport ${ports.start}-${end} dnat ip to ${vmIp}\n`;
+  await fs.mkdir(NFT_DIR, { recursive: true });
+  await fs.writeFile(nftRuleFile(vmName), rule, { mode: 0o600 });
+  await rebuildNat();
+}
+
+/** Remove o bloco de portas de uma VM e reconstrói a tabela. */
+async function removePortForwards(vmName: string): Promise<void> {
+  await fs.rm(nftRuleFile(vmName), { force: true }).catch(() => {});
+  await rebuildNat().catch(() => {});
+}
+
 /** Monta o seed ISO (NoCloud) com user-data/meta-data/network-config. Só chave pública. */
 async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: string[]): Promise<string> {
   const user = args.sshUser ?? "vps";
@@ -256,9 +323,10 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   const vmName = vmNameFor(args.envId);
   const vmUser = args.sshUser ?? "vps";
   if (await domainExists(vmName)) {
-    // Idempotência: se já existe, revalida o mapeamento do sshpiper e devolve os dados.
+    // Idempotência: se já existe, revalida sshpiper + portas e devolve os dados.
     const hostKey = await readGuestHostKey(args.ip);
     await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, hostKey).catch(() => {});
+    if (args.ports) await programPortForwards(vmName, args.ip, args.ports).catch(() => {});
     return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey: hostKey };
   }
 
@@ -306,6 +374,8 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   // pode capturar/pinar depois se vier null aqui).
   const guestHostKey = await readGuestHostKey(args.ip);
   await writeSshpiperMapping(vmName, args.ip, vmUser, args.sshPublicKeys, guestHostKey);
+  // Bloco de portas públicas do usuário (DNAT 1:1).
+  if (args.ports) await programPortForwards(vmName, args.ip, args.ports);
   return { vmName, ip: args.ip, sshTarget: `${args.ip}:22`, guestHostKey };
 }
 
@@ -364,6 +434,8 @@ export async function destroy(vmName: string): Promise<void> {
   await fs.rm(path.join(SEED_DIR, `${vmName}.seed.iso`), { force: true }).catch(() => {});
   // Remove o mapeamento + chave por-VM do sshpiper (revoga o acesso).
   await removeSshpiperMapping(vmName).catch(() => {});
+  // Remove o bloco de portas DNAT (libera as portas públicas).
+  await removePortForwards(vmName).catch(() => {});
   // Reaper do perfil AppArmor libvirt-<uuid>: só é possível casar por conteúdo; aqui
   // removemos qualquer perfil cujo `.files` referencie os discos deste vmName.
   await reapAppArmorFor(vmName).catch(() => {});

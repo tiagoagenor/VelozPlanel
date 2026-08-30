@@ -42,7 +42,10 @@ import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv, httpHostForNode, 
 
 /** Porta pública do gateway SSH das VPS (sshpiper) — distinta do gateway Docker (2222/2223). */
 const VPS_SSH_GATEWAY_PORT = Number(process.env.VP_VPS_SSH_PORT ?? 2224);
-import { allocateAddress, ownerNetworkFor } from "../ipam";
+import { allocateAddress, ownerNetworkFor, vpsPortRange, vpsSlotFor } from "../ipam";
+
+/** Porta EXCLUSIVA da borda HTTP das VPS (domínio -> VM:web); nunca 80. */
+const VPS_HTTP_EDGE_PORT = Number(process.env.VP_VPS_HTTP_PORT ?? 8080);
 import { connectionInfo } from "../services";
 import { loadPanelRow, panelUrl, panelKindFor } from "../service-panel";
 import * as cpIngress from "../cp-ingress";
@@ -600,6 +603,8 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       const ip =
         (await db.select().from(envAddresses).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps"))))[0]?.ip ?? null;
       const sshHost = await publicHostForNode(env.nodeId);
+      const slot = env.nodeId ? await vpsSlotFor(env.nodeId, env.ownerId) : null;
+      const range = slot === null ? { start: 0, count: Number(process.env.VP_VPS_PORTS_PER_VM ?? 20) } : vpsPortRange(slot);
       return {
         state,
         ip,
@@ -609,6 +614,9 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         upstreamPort: env.vmUpstreamPort ?? 80,
         hostKeyKnown: !!env.vmHostKey,
         domain: env.domain,
+        portStart: range.start,
+        portCount: range.count,
+        httpEdgePort: VPS_HTTP_EDGE_PORT,
       };
     },
   );

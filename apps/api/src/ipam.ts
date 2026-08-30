@@ -83,6 +83,7 @@ export interface VpsAllocation {
   subnet: string; // ex.: 192.168.100.24/29
   gateway: string; // ex.: 192.168.100.25
   ip: string; // IP fixo da VM
+  slot: number; // bloco /29 (0..127) — base do range de portas públicas
 }
 
 /**
@@ -106,7 +107,7 @@ export async function allocateVpsAddress(
       await tx<{ ip: string }[]>`select ip from env_addresses where env_id = ${envId} and role = ${"vps"} limit 1`
     )[0];
     if (already && net) {
-      return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: already.ip };
+      return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: already.ip, slot: net!.slot };
     }
 
     if (!net) {
@@ -147,8 +148,23 @@ export async function allocateVpsAddress(
     `;
     const finalIp = ins[0]?.ip ?? (await tx<{ ip: string }[]>`select ip from env_addresses where env_id = ${envId} and role = ${"vps"} limit 1`)[0]!.ip;
 
-    return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: finalIp };
+    return { netName: net!.net_name, subnet: net!.subnet, gateway: net!.gateway, ip: finalIp, slot: net!.slot };
   });
+}
+
+/** Faixa de portas públicas de um VPS a partir do slot (bloco contíguo). */
+export function vpsPortRange(slot: number): { start: number; count: number } {
+  const base = Number(process.env.VP_VPS_PORT_BASE ?? 20000);
+  const count = Number(process.env.VP_VPS_PORTS_PER_VM ?? 20);
+  return { start: base + slot * count, count };
+}
+
+/** Slot VPS (base do range de portas) de um dono num nó; null se ainda não alocado. */
+export async function vpsSlotFor(nodeId: string, ownerId: string): Promise<number | null> {
+  const rows = await sql<{ slot: number }[]>`
+    select slot from vps_networks where node_id = ${nodeId} and owner_id = ${ownerId} limit 1
+  `;
+  return rows[0]?.slot ?? null;
 }
 
 /** Rede (bridge/subnet/gateway) do dono num nó — para recriar o container na mesma bridge. */

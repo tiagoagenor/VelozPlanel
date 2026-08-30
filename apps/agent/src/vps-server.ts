@@ -47,6 +47,7 @@ const provisionBody = z.object({
   ownerId: z.string().min(1),
   sshPublicKeys: z.array(z.string().min(1)).min(1),
   sshUser: z.string().regex(/^[a-z_][a-z0-9_-]*$/).optional(),
+  ports: z.object({ start: z.number().int().min(1).max(65535), count: z.number().int().min(1).max(1000) }).nullable().optional(),
 });
 const nameBody = z.object({ vmName: z.string().regex(/^vps-[a-z0-9]+$/) });
 const publishBody = z.object({

@@ -7,7 +7,7 @@ import { encryptSecret, decryptSecret } from "./crypto";
 import { getPlan } from "./plans";
 import * as agent from "./agent";
 import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv } from "./nodes";
-import { allocateAddress, allocateVpsAddress, releaseAddresses } from "./ipam";
+import { allocateAddress, allocateVpsAddress, vpsPortRange, releaseAddresses } from "./ipam";
 import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
 import { subdomainFromName } from "./subdomain";
@@ -182,6 +182,7 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
   }
 
   const alloc = await allocateVpsAddress(nodeId, env.ownerId, env.id);
+  const ports = vpsPortRange(alloc.slot); // bloco de portas públicas (DNAT 1:1)
   const result = await agent.vpsProvision(agentUrl, {
     envId: env.id,
     name: env.name,
@@ -191,6 +192,7 @@ async function provisionVps(env: EnvironmentRow, et: typeof envTypes.$inferSelec
     ip: alloc.ip,
     ownerId: env.ownerId,
     sshPublicKeys: clientKeys,
+    ports,
   });
 
   await db.update(envAddresses).set({ containerId: result.vmName }).where(and(eq(envAddresses.envId, env.id), eq(envAddresses.role, "vps")));

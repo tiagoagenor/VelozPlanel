@@ -8,6 +8,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 const SITES_DIR = process.env.CADDY_SITES_DIR ?? "/etc/caddy/managed";
+/** Porta EXCLUSIVA da borda HTTP das VPS (nunca 80). Domínio roteia por aqui -> VM:web. */
+const VPS_HTTP_PORT = Number(process.env.VPS_HTTP_PORT ?? 8080);
 
 function safeDomain(domain: string): string {
   const d = domain.trim().toLowerCase().replace(/\.$/, "");
@@ -81,8 +83,12 @@ export async function putSite(domain: string, upstream: string, opts: SiteOption
       `\t\trespond "Seu VPS ainda nao respondeu na porta web. Verifique o servico dentro da VM." 502\n` +
       `\t}\n`;
   }
+  // VPS: serve o domínio numa PORTA EXCLUSIVA (não 80). O endereço do site inclui a
+  // porta, então o Caddy escuta nela (HTTP simples no piloto — sem depender da 80/443,
+  // que a casa/ISP pode bloquear e o apache já ocupa a 80).
+  const siteAddr = opts.vps ? `http://${d}:${VPS_HTTP_PORT}` : d;
   const block =
-    `# gerenciado pelo VelozPanel\n${d} {\n` +
+    `# gerenciado pelo VelozPanel\n${siteAddr} {\n` +
     `\tencode gzip zstd\n` +
     `\theader -Via\n\theader -Server\n\theader -X-Powered-By\n` +
     `\treverse_proxy ${up}${proxyBody}\n` +

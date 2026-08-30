@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Server, Copy, Check, Loader2, KeyRound, Globe, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Server, Copy, Check, Loader2, KeyRound, Globe, ShieldCheck, ShieldAlert, Network } from "lucide-react";
 import type { VpsInfo } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -138,6 +138,36 @@ export default function VpsPage() {
             conexão aparece aqui.
           </p>
         )}
+      </Card>
+
+      <Card className="p-5">
+        <div className="flex items-center gap-2.5">
+          <Network className="size-5 text-text2" />
+          <h3 className="text-[15px] font-semibold text-text">Portas & rede</h3>
+        </div>
+        <div className="mt-3 space-y-3">
+          <div className="space-y-1">
+            <div className="text-[13px] font-medium text-text2">Suas portas públicas (livres)</div>
+            <code className="block rounded-md border border-border bg-bg px-2.5 py-1.5 text-[13px] text-text">
+              {vps.portStart}–{vps.portStart + vps.portCount - 1} · TCP/UDP
+            </code>
+            <p className="text-[12px] text-text3">
+              {vps.portCount} portas encaminhadas direto pra sua VM (mesmo número). Rode o que quiser nelas
+              (SSH extra, apps, jogos). Ex.: um serviço na porta {vps.portStart} da VM responde em{" "}
+              <code className="text-text2">{vps.sshHost ?? "seu-host"}:{vps.portStart}</code>.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <div className="text-[13px] font-medium text-text2">Servidor HTTP (porta exclusiva, por domínio)</div>
+            <code className="block rounded-md border border-border bg-bg px-2.5 py-1.5 text-[13px] text-text">
+              {vps.domain ? `http://${vps.domain}:${vps.httpEdgePort}` : `porta ${vps.httpEdgePort} (configure um domínio)`}
+            </code>
+            <p className="text-[12px] text-text3">
+              Um servidor web na porta <code className="text-text2">{vps.upstreamPort}</code> dentro da VM fica
+              acessível pelo seu domínio na porta exclusiva {vps.httpEdgePort} (não usamos a 80).
+            </p>
+          </div>
+        </div>
       </Card>
 
       <Card className="p-5">
