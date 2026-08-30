@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Globe,
+  Server,
   CreditCard,
   LifeBuoy,
   ShieldCheck,
@@ -38,6 +39,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: "Ambientes", href: "/", icon: LayoutDashboard, exact: true },
+  { label: "VPS", href: "/vps", icon: Server },
   { label: "Meus domínios", href: "/dominios", icon: Globe },
   { label: "Financeiro", href: "/financeiro", icon: CreditCard },
   { label: "Suporte", href: "/suporte", icon: LifeBuoy, soon: true },

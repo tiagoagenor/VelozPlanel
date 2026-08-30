@@ -28,6 +28,7 @@ import type {
   AddSshKeyInput,
   GenerateSshKeyInput,
   GeneratedSshKey,
+  GeneratedKeypair,
   UpdateSshConfigInput,
   SftpConfig,
   SetSftpEnabledInput,
@@ -246,6 +247,14 @@ export function createEnvironment(
   input: CreateEnvironmentInput,
 ): Promise<Environment> {
   return request<Environment>("/environments", { method: "POST", body: input });
+}
+
+/**
+ * Gera um par de chaves ed25519 SEM ambiente (fluxo de criação de VPS). A chave
+ * PRIVADA volta UMA vez na resposta — não é armazenada no servidor.
+ */
+export function generateKeypair(label: string): Promise<GeneratedKeypair> {
+  return request<GeneratedKeypair>("/ssh/generate", { method: "POST", body: { label } });
 }
 
 export function pauseEnvironment(id: string): Promise<Environment> {
