@@ -63,6 +63,7 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
   const [kind, setKind] = React.useState<RuntimeKind>("php");
   const [version, setVersion] = React.useState<string>(RECOMMENDED_VERSION.php);
   const [serviceType, setServiceType] = React.useState<string>("");
+  const [sshKey, setSshKey] = React.useState<string>("");
   const [region, setRegion] = React.useState<string>("");
   const [error, setError] = React.useState<string | null>(null);
 
@@ -204,13 +205,18 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
     setNameTouched(true);
     if (validateName(name)) { nameRef.current?.focus(); return; }
     const base = { name, plan, region: region || undefined };
-    const body = isService ? { ...base, type: serviceType } : { ...base, runtime: { kind, version } };
+    const body = isService
+      ? { ...base, type: serviceType, ...(isVps ? { sshPublicKey: sshKey.trim() } : {}) }
+      : { ...base, runtime: { kind, version } };
     const parsed = createEnvironmentInput.safeParse(body);
     if (!parsed.success) { setError(parsed.error.issues[0]?.message ?? "Dados inválidos. Revise os campos."); return; }
     mutation.mutate(parsed.data);
   }
 
-  const canAdvance = step === 1 ? !!currentKey : !validateName(name) && !!plan;
+  // VPS (KVM): exige a chave SSH pública na criação (a VM autentica com ela).
+  const isVps = selectedType?.category === "vps";
+  const canAdvance =
+    step === 1 ? !!currentKey : !validateName(name) && !!plan && (!isVps || sshKey.trim().length > 20);
 
   return (
     <Dialog
@@ -323,6 +329,26 @@ export function CreateEnvironmentDialog({ open, onClose }: { open: boolean; onCl
                     ))}
                   </select>
                 </div>
+
+                {isVps ? (
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="env-sshkey" className="text-[13px] font-medium text-text2">
+                      Sua chave SSH pública <span className="text-danger">*</span>
+                    </label>
+                    <textarea
+                      id="env-sshkey"
+                      value={sshKey}
+                      onChange={(e) => setSshKey(e.target.value)}
+                      rows={3}
+                      spellCheck={false}
+                      placeholder="ssh-ed25519 AAAA... seu-comentario"
+                      className={`${fieldCls} font-mono text-[12px] leading-snug`}
+                    />
+                    <p className="text-[12px] text-text3">
+                      A VM autentica por chave — cole a linha do seu <code>~/.ssh/id_ed25519.pub</code>. Sem senha.
+                    </p>
+                  </div>
+                ) : null}
 
                 <div className="flex flex-col gap-2">
                   <span className="text-[13px] font-medium text-text2">Região</span>

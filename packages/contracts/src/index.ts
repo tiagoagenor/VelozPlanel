@@ -672,6 +672,9 @@ export const createEnvironmentInput = z.object({
   region: z.string().max(60).optional(), // região escolhida; ausente = auto
   nodeId: z.string().uuid().optional(), // nó específico (avançado); ausente = auto pela região
   template: deployFramework.default("none"), // "nextjs" pré-configura o deploy
+  // VPS (KVM): a VM autentica por chave — a chave pública é OBRIGATÓRIA na criação
+  // (senão a VM nasce inacessível). Ignorado para app/service/stack.
+  sshPublicKey: z.string().max(4096).optional(),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
 

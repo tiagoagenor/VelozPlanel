@@ -109,7 +109,7 @@ function rsaModulusBits(raw: Buffer, offAfterAlgo: number): number | null {
  * Segurança: aceitamos SOMENTE chave PÚBLICA. Se a linha contiver marcadores
  * de chave privada, rejeitamos explicitamente.
  */
-function parseAndFingerprint(
+export function parseAndFingerprint(
   publicKey: string,
 ): { ok: true; fingerprint: string; normalized: string } | { ok: false; reason: string } {
   const line = publicKey.trim();

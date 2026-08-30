@@ -32,7 +32,8 @@ import type {
   PhpIniConfig,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs, users } from "../db/schema";
+import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs, users, sshKeys } from "../db/schema";
+import { parseAndFingerprint } from "./ssh";
 import type { EnvironmentRow } from "../db/schema";
 import { encryptSecret, decryptSecret } from "../crypto";
 import { ApiHttpError, requireUser } from "../auth";
@@ -272,6 +273,16 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         if (!urow?.v) throw new ApiHttpError(403, "vps_not_allowed", "seu acesso a VPS (KVM) ainda não foi liberado.");
       }
 
+      // VPS: a VM autentica por chave — exige a chave pública na criação (senão nasce inacessível).
+      let vpsKey: { publicKey: string; fingerprint: string } | null = null;
+      if (category === "vps") {
+        const raw = req.body.sshPublicKey?.trim();
+        if (!raw) throw new ApiHttpError(400, "ssh_key_required", "adicione sua chave SSH pública para criar o VPS.");
+        const pk = parseAndFingerprint(raw);
+        if (!pk.ok) throw new ApiHttpError(400, "invalid_ssh_key", pk.reason);
+        vpsKey = { publicKey: pk.normalized, fingerprint: pk.fingerprint };
+      }
+
       // Trava de saldo: (dinheiro + bônus) precisa cobrir ao menos 1 HORA do
       // container. Stack (ex.: WordPress) conta 1× — o banco-filho vai junto,
       // não dobra. Admin é isento (cria ambientes de teste/infra).
@@ -321,6 +332,8 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
           state: "provisioning",
         }).returning();
         root = ins[0]!;
+        // Chave SSH do cliente (validada acima) — a VM autentica com ela.
+        await db.insert(sshKeys).values({ envId: root.id, label: "VPS", publicKey: vpsKey!.publicKey, fingerprint: vpsKey!.fingerprint });
       } else {
         if (!et!.childType) throw new ApiHttpError(400, "invalid_type", "stack sem banco-filho configurado");
         const [child] = await db.select().from(envTypes).where(eq(envTypes.id, et!.childType)).limit(1);
