@@ -81,6 +81,7 @@ function toAdminUser(u: UserRow, envCount: number, bal: BalanceBreakdown): Admin
     name: u.name,
     role: u.role as UserRole,
     status: (u.status as AccountStatus) ?? "active",
+    vpsEnabled: u.vpsEnabled ?? false,
     envCount,
     balanceCents: bal.totalCents,
     bonusCents: bal.bonusCents,
@@ -217,6 +218,7 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       if (req.body.name !== undefined) patch.name = req.body.name;
       if (req.body.role !== undefined) patch.role = req.body.role;
       if (req.body.status !== undefined) patch.status = req.body.status;
+      if (req.body.vpsEnabled !== undefined) patch.vpsEnabled = req.body.vpsEnabled;
       if (req.body.password !== undefined) patch.passwordHash = await hashPassword(req.body.password);
       const updated = await db.update(users).set(patch).where(eq(users.id, req.params.id)).returning();
       const u = updated[0];

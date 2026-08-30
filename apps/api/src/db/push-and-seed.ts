@@ -243,6 +243,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE env_vars ADD COLUMN IF NOT EXISTS hidden boolean NOT NULL DEFAULT false`;
 
   await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'`;
+  await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS vps_enabled boolean NOT NULL DEFAULT false`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS audit_logs (

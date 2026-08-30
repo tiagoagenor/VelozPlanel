@@ -6,7 +6,7 @@ import { plan as planSchema, balance as balanceSchema, envType as envTypeSchema,
 import type { Plan, Balance, EnvType, RegionOption } from "@velozplanel/contracts";
 import { requireUser } from "../auth";
 import { db } from "../db/client";
-import { creditTransactions, environments, envTypes, nodes, dnsZonesMeta, platformSettings } from "../db/schema";
+import { creditTransactions, environments, envTypes, nodes, dnsZonesMeta, platformSettings, users } from "../db/schema";
 import { listPlans, rowToPlan, getPlan } from "../plans";
 import { breakdownCredits } from "../credits";
 import { getSettings } from "../billing";
@@ -53,8 +53,15 @@ export async function plansRoutes(fastify: FastifyInstance): Promise<void> {
     "/env-types",
     { schema: { response: { 200: z.array(envTypeSchema), 401: apiError } } },
     async (req): Promise<EnvType[]> => {
-      await requireUser(req);
-      const rows = await db.select().from(envTypes).where(eq(envTypes.active, true)).orderBy(envTypes.sortOrder);
+      const user = await requireUser(req);
+      // VPS (KVM) é liberado por cliente pelo admin — some do catálogo de quem não tem acesso.
+      let canVps = user.role === "admin";
+      if (!canVps) {
+        const [urow] = await db.select({ v: users.vpsEnabled }).from(users).where(eq(users.id, user.id)).limit(1);
+        canVps = !!urow?.v;
+      }
+      const all = await db.select().from(envTypes).where(eq(envTypes.active, true)).orderBy(envTypes.sortOrder);
+      const rows = canVps ? all : all.filter((r) => r.category !== "vps");
       return rows.map((r) => ({
         id: r.id,
         label: r.label,

@@ -32,7 +32,7 @@ import type {
   PhpIniConfig,
 } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs } from "../db/schema";
+import { environments, envVars, deployConfigs, deploySteps, envTypes, envAddresses, serviceCredentials, nodes, jobs, users } from "../db/schema";
 import type { EnvironmentRow } from "../db/schema";
 import { encryptSecret, decryptSecret } from "../crypto";
 import { ApiHttpError, requireUser } from "../auth";
@@ -268,6 +268,12 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       }
 
       if (category === "app" && !runtime) throw new ApiHttpError(400, "invalid_runtime", "informe o runtime do ambiente");
+
+      // VPS (KVM) é liberado por cliente pelo admin. Admin sempre pode; cliente só com o flag.
+      if (category === "vps" && user.role !== "admin") {
+        const [urow] = await db.select({ v: users.vpsEnabled }).from(users).where(eq(users.id, user.id)).limit(1);
+        if (!urow?.v) throw new ApiHttpError(403, "vps_not_allowed", "seu acesso a VPS (KVM) ainda não foi liberado.");
+      }
 
       // Trava de saldo: (dinheiro + bônus) precisa cobrir ao menos 1 HORA do
       // container. Stack (ex.: WordPress) conta 1× — o banco-filho vai junto,

@@ -1046,6 +1046,7 @@ export const adminUser = z.object({
   name: z.string(),
   role: userRole,
   status: accountStatus,
+  vpsEnabled: z.boolean(), // admin liberou KVM/VPS para este cliente?
   envCount: z.number().int(),
   balanceCents: z.number().int(), // saldo total gastável (dinheiro + bônus) = soma do razão
   bonusCents: z.number().int(), // parte do saldo que veio de bônus/cortesia
@@ -1097,6 +1098,7 @@ export const updateUserInput = z.object({
   role: userRole.optional(),
   status: accountStatus.optional(),
   password: z.string().min(6).max(100).optional(),
+  vpsEnabled: z.boolean().optional(), // admin liga/desliga o KVM/VPS deste cliente
 });
 export type UpdateUserInput = z.infer<typeof updateUserInput>;
 

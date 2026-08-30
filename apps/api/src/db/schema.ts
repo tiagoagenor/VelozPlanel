@@ -23,6 +23,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   role: text("role").notNull(), // "admin" | "client"
   status: text("status").notNull().default("active"), // "active" | "suspended"
+  vpsEnabled: boolean("vps_enabled").notNull().default(false), // admin libera KVM/VPS p/ este cliente
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

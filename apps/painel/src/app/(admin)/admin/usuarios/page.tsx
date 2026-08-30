@@ -9,6 +9,7 @@ import {
   Ban,
   CheckCircle2,
   ShieldCheck,
+  Server,
   User as UserIcon,
   AlertTriangle,
   Boxes,
@@ -153,6 +154,7 @@ export default function AdminUsersPage() {
                           <Wallet size={15} aria-hidden="true" />
                           Saldo
                         </Button>
+                        <ToggleVpsButton user={u} />
                         <ToggleStatusButton user={u} />
                         <Button variant="ghost" size="sm" onClick={() => setEditing(u)} aria-label={`Editar ${u.name}`}>
                           <Pencil size={15} aria-hidden="true" />
@@ -191,6 +193,7 @@ export default function AdminUsersPage() {
                     <Wallet size={15} aria-hidden="true" />
                     Saldo
                   </Button>
+                  <ToggleVpsButton user={u} />
                   <ToggleStatusButton user={u} />
                   <Button variant="outline" size="sm" onClick={() => setEditing(u)}>
                     <Pencil size={15} aria-hidden="true" />
@@ -364,6 +367,34 @@ function ToggleStatusButton({ user }: { user: AdminUser }) {
           Reativar
         </>
       )}
+    </Button>
+  );
+}
+
+/** Liga/desliga o acesso a VPS (KVM) do cliente — admin escolhe quem pode criar VM. */
+function ToggleVpsButton({ user }: { user: AdminUser }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const next = !user.vpsEnabled;
+  const m = useMutation({
+    mutationFn: () => api.updateUser(user.id, { vpsEnabled: next }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      toast.show("success", next ? "VPS (KVM) liberado para o usuário." : "VPS (KVM) bloqueado.");
+    },
+    onError: (e) => toast.show("error", e instanceof Error ? e.message : "Falha ao alterar acesso a VPS."),
+  });
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => m.mutate()}
+      disabled={m.isPending}
+      aria-label={next ? `Liberar VPS para ${user.name}` : `Bloquear VPS de ${user.name}`}
+      title={user.vpsEnabled ? "VPS (KVM) liberado — clique para bloquear" : "VPS (KVM) bloqueado — clique para liberar"}
+    >
+      <Server size={15} aria-hidden="true" className={user.vpsEnabled ? "text-emerald-600" : "text-text3"} />
+      {user.vpsEnabled ? "VPS: on" : "VPS: off"}
     </Button>
   );
 }
