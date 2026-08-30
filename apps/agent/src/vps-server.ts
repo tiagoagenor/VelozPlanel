@@ -127,6 +127,7 @@ app.post("/vps/unpublish", async (req, reply) => {
 });
 
 try {
+  await kvm.reconcile(); // reaplica DNAT + FORWARD accept (robusto a reboot/restart)
   await app.listen({ port: PORT, host: HOST });
   app.log.info(`Agente VPS (KVM) nativo escutando em :${PORT}`);
 } catch (err) {

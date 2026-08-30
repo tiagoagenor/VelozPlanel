@@ -154,8 +154,26 @@ function nftRuleFile(vmName: string): string {
   return path.join(NFT_DIR, `${vmName}.rule`);
 }
 
+/**
+ * Permite o tráfego ENTRANTE (DNAT) chegar às VMs: o libvirt só aceita conexões
+ * ESTABELECIDAS de fora para a rede da VM e REJEITA SYN novo — por isso o port-forward
+ * entrante é recusado. Inserimos um ACCEPT no topo do FORWARD (iptables-nft) para a faixa
+ * dos tenants. Isolamento tenant->outros continua garantido pela tabela inet vp_kvm
+ * (prioridade -20, avaliada ANTES): tenant como ORIGEM é dropado lá; aqui só liberamos
+ * pacotes cujo DESTINO é a faixa das VMs (entrantes/DNAT). Idempotente.
+ */
+async function ensureForwardAccept(): Promise<void> {
+  const supernet = process.env.VPS_SUPERNET ?? "192.168.100.0/22";
+  try {
+    await run("iptables", ["-C", "FORWARD", "-d", supernet, "-j", "ACCEPT"]);
+  } catch {
+    await run("iptables", ["-I", "FORWARD", "1", "-d", supernet, "-j", "ACCEPT"]).catch(() => {});
+  }
+}
+
 /** Regenera a tabela `ip vp_kvm_nat` a partir de todos os arquivos por-VM e aplica. */
 async function rebuildNat(): Promise<void> {
+  await ensureForwardAccept().catch(() => {});
   await fs.mkdir(NFT_DIR, { recursive: true });
   let entries: string[] = [];
   try {
@@ -185,13 +203,29 @@ async function rebuildNat(): Promise<void> {
   await run("nft", ["-f", tmp]);
 }
 
-/** Programa o bloco de portas de uma VM (DNAT 1:1) e reconstrói a tabela. */
-async function programPortForwards(vmName: string, vmIp: string, ports: VpsPorts): Promise<void> {
-  const end = ports.start + ports.count - 1;
-  // DNAT preservando a porta: host:P -> vmIp:P (TCP e UDP).
-  const rule =
-    `tcp dport ${ports.start}-${end} dnat ip to ${vmIp}\n` +
-    `udp dport ${ports.start}-${end} dnat ip to ${vmIp}\n`;
+/** Reaplica no startup do agente: regras DNAT (dos arquivos por-VM) + FORWARD accept. */
+export async function reconcile(): Promise<void> {
+  await rebuildNat().catch(() => {});
+}
+
+/**
+ * Programa o bloco de portas de uma VM e reconstrói a tabela.
+ * - `sshPort` (1ª do bloco): DNAT para a **:22** da VM (o guest fica stock).
+ * - demais portas do bloco: DNAT **1:1** (host:P -> vmIp:P), TCP e UDP — livres pro usuário.
+ */
+async function programPortForwards(vmName: string, vmIp: string, ports: VpsPorts, sshPort?: number | null): Promise<void> {
+  const blockEnd = ports.start + ports.count - 1;
+  const ssh = sshPort ?? ports.start;
+  const freeStart = ssh + 1;
+  let rule = "";
+  if (ssh >= ports.start && ssh <= blockEnd) {
+    rule += `tcp dport ${ssh} dnat ip to ${vmIp}:22\n`; // SSH -> :22 da VM
+  }
+  if (freeStart <= blockEnd) {
+    rule +=
+      `tcp dport ${freeStart}-${blockEnd} dnat ip to ${vmIp}\n` + // livres 1:1
+      `udp dport ${freeStart}-${blockEnd} dnat ip to ${vmIp}\n`;
+  }
   await fs.mkdir(NFT_DIR, { recursive: true });
   await fs.writeFile(nftRuleFile(vmName), rule, { mode: 0o600 });
   await rebuildNat();
@@ -207,19 +241,8 @@ async function removePortForwards(vmName: string): Promise<void> {
 async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: string[]): Promise<string> {
   const user = args.sshUser ?? "vps";
   const keys = allKeys.map((k) => `      - ${k.trim()}`).join("\n");
-  // sshd do guest escuta na 22 E na porta pública do SSH (a DNAT host:sshPort -> VM:sshPort
-  // cai direto no sshd). Assim o cliente entra `ssh -p <sshPort> vps@<host>` sem gateway.
-  const sshPort = args.sshPort ?? null;
-  const sshdDropin =
-    sshPort && sshPort !== 22
-      ? `write_files:\n` +
-        `  - path: /etc/ssh/sshd_config.d/veloz-vps.conf\n` +
-        `    content: |\n` +
-        `      Port 22\n` +
-        `      Port ${sshPort}\n` +
-        `runcmd:\n` +
-        `  - [ systemctl, restart, ssh ]\n`
-      : "";
+  // sshd do guest fica STOCK na 22. O SSH público chega via DNAT host:sshPort -> VM:22
+  // (nada a configurar no guest — o Ubuntu 24.04 usa socket-activation e ignoraria Port extra).
   // Usuário com sudo NOPASSWD = "root livre"; sem senha; login por senha desligado.
   const userData =
     `#cloud-config\n` +
@@ -231,8 +254,7 @@ async function buildSeedIso(args: VpsProvisionArgs, vmName: string, allKeys: str
     `    sudo: 'ALL=(ALL) NOPASSWD:ALL'\n` +
     `    shell: /bin/bash\n` +
     `    lock_passwd: true\n` +
-    `    ssh_authorized_keys:\n${keys}\n` +
-    sshdDropin;
+    `    ssh_authorized_keys:\n${keys}\n`;
   const metaData = `instance-id: ${vmName}\nlocal-hostname: ${vmName}\n`;
   // netplan v2: IP estático; casa qualquer interface "en*" (virtio nomeia enpXsY/ensZ).
   const netCfg =
@@ -288,7 +310,7 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   if (await domainExists(vmName)) {
     // Idempotência: se já existe, revalida as portas e devolve os dados.
     const hostKey = await readGuestHostKey(args.ip);
-    if (args.ports) await programPortForwards(vmName, args.ip, args.ports).catch(() => {});
+    if (args.ports) await programPortForwards(vmName, args.ip, args.ports, args.sshPort).catch(() => {});
     const sshP = args.sshPort ?? 22;
     return { vmName, ip: args.ip, sshTarget: `${args.ip}:${sshP}`, guestHostKey: hostKey };
   }
@@ -335,7 +357,7 @@ export async function provision(args: VpsProvisionArgs): Promise<VpsProvisionRes
   // pode capturar/pinar depois se vier null aqui).
   const guestHostKey = await readGuestHostKey(args.ip);
   // Bloco de portas públicas do usuário (DNAT 1:1) — inclui a porta do SSH (sshd escuta nela).
-  if (args.ports) await programPortForwards(vmName, args.ip, args.ports);
+  if (args.ports) await programPortForwards(vmName, args.ip, args.ports, args.sshPort);
   const sshP = args.sshPort ?? 22;
   return { vmName, ip: args.ip, sshTarget: `${args.ip}:${sshP}`, guestHostKey };
 }
