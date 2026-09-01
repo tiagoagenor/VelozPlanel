@@ -4,10 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw, Maximize2, Minimize2, KeyRound, Terminal, Radio, Send, Trash2, Search, ChevronRight, ChevronDown, Plus, Key, Copy, X, Clock, PanelLeftClose, PanelLeft, Code2, ArrowLeft, ListOrdered, Check, Pin } from "lucide-react";
+import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw, Maximize2, Minimize2, KeyRound, Terminal, Radio, Send, Trash2, Search, ChevronRight, ChevronDown, Plus, Key, Copy, X, Clock, PanelLeftClose, PanelLeft, Code2, ArrowLeft, ListOrdered, Check, Pin, Boxes, Pencil, List, Braces } from "lucide-react";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
-import type { DbResult, DbMongoOp, RedisValue, DbSchema, DbTableMeta, SqlCharset } from "@velozplanel/contracts";
+import type { DbResult, RedisValue, DbSchema, DbTableMeta, SqlCharset } from "@velozplanel/contracts";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -16,8 +16,6 @@ import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/cn";
 
 const ENGINE_LABEL: Record<string, string> = { mysql: "MySQL", mariadb: "MariaDB", postgres: "PostgreSQL", mongodb: "MongoDB" };
-const MONGO_OPS: DbMongoOp[] = ["find", "aggregate", "count", "distinct", "insertOne", "updateOne", "deleteOne", "createCollection", "createIndex"];
-const MONGO_WRITE_OPS = new Set(["insertOne", "updateOne", "deleteOne", "createCollection", "createIndex"]);
 
 export default function StudioPage() {
   const { id } = useParams<{ id: string }>();
@@ -71,11 +69,14 @@ export default function StudioPage() {
     return <UnlockState id={id} />;
   }
 
-  // 4) IDE completa (SQL) ou console simples (mongo/redis)
+  // 4) IDE completa (SQL / MongoDB) ou console simples (redis)
   if (cfg.engine === "mysql" || cfg.engine === "mariadb" || cfg.engine === "postgres") {
     return <StudioIDE id={id} engine={cfg.engine} engineLabel={engineLabel} hasPassword={cfg.hasPassword} />;
   }
-  return <Console id={id} engine={cfg.engine} engineLabel={engineLabel} hasPassword={cfg.hasPassword} />;
+  if (cfg.engine === "mongodb") {
+    return <MongoStudio id={id} engineLabel={engineLabel} hasPassword={cfg.hasPassword} />;
+  }
+  return <Console id={id} engineLabel={engineLabel} hasPassword={cfg.hasPassword} />;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
@@ -130,7 +131,7 @@ function UnlockState({ id }: { id: string }) {
 
 /* ───────────────────────── Console ───────────────────────── */
 
-function Console({ id, engine, engineLabel, hasPassword }: { id: string; engine: string; engineLabel: string; hasPassword: boolean }) {
+function Console({ id, engineLabel, hasPassword }: { id: string; engineLabel: string; hasPassword: boolean }) {
   const [write, setWrite] = React.useState(false);
   const [confirmWrite, setConfirmWrite] = React.useState(false);
   const [showSettings, setShowSettings] = React.useState(false);
@@ -160,11 +161,7 @@ function Console({ id, engine, engineLabel, hasPassword }: { id: string; engine:
         </div>
       </div>
 
-      {engine === "redis" ? (
-        <RedisConsole id={id} write={write} />
-      ) : (
-        <MongoConsole id={id} write={write} />
-      )}
+      <RedisConsole id={id} write={write} />
 
       <Dialog
         open={confirmWrite}
@@ -1314,125 +1311,798 @@ function Info({ label, value }: { label: string; value: string }) {
   return <div><p className="text-text3">{label}</p><p className="font-medium text-text">{value}</p></div>;
 }
 
-function MongoConsole({ id, write }: { id: string; write: boolean }) {
-  const [op, setOp] = React.useState<DbMongoOp>("find");
-  const [collection, setCollection] = React.useState("");
-  const [argsText, setArgsText] = React.useState('{\n  "filter": {}\n}');
-  const [result, setResult] = React.useState<DbResult | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+/* ═══════════════════════════ MongoDB Data Studio (IDE estilo Compass) ═══════════════════════════ */
 
-  const collections = useQuery({
-    queryKey: ["studio-colls", id],
+const MONGO_PAGE_SIZE = 25;
+type MongoTab = "documentos" | "consulta" | "indices";
+type MongoActive = { db: string | null; coll: string | null };
+const MONGO_BANNED_STAGES = ["$out", "$merge", "$function", "$accumulator", "$where"];
+
+/** Executa uma operação Mongo pelo endpoint do Studio (fila FIFO por ambiente).
+ *  Só `op`/`collection`/`database`/`write` são de topo; os parâmetros da operação
+ *  (filter/sort/projection/pipeline/doc/update/keys/options…) vão dentro de `args`. */
+function mongoExec(
+  id: string,
+  input: { op: string; database?: string; collection?: string; write?: boolean; args?: Record<string, unknown> },
+): Promise<DbResult> {
+  return api.studioExec(id, { mongo: input } as Parameters<typeof api.studioExec>[1]);
+}
+/** Extrai o campo `.result` do EJSON canônico devolvido pelo wrapper. */
+function parseMongoResult(r: DbResult | undefined): unknown {
+  if (!r || r.kind !== "mongo") return undefined;
+  try {
+    const o = JSON.parse(r.ejson) as { result?: unknown };
+    return "result" in o ? o.result : o;
+  } catch {
+    return undefined;
+  }
+}
+/** Reconhece um "wrapper" escalar do Extended JSON canônico ({$oid}, {$numberInt}, {$date}…). */
+function scalarEjson(v: unknown): { text: string; kind: "oid" | "num" | "date" | "bin" | "regex" | "ts" } | null {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if ("$oid" in o) return { text: String(o.$oid), kind: "oid" };
+  if ("$numberInt" in o) return { text: String(o.$numberInt), kind: "num" };
+  if ("$numberLong" in o) return { text: String(o.$numberLong), kind: "num" };
+  if ("$numberDouble" in o) return { text: String(o.$numberDouble), kind: "num" };
+  if ("$numberDecimal" in o) return { text: String(o.$numberDecimal), kind: "num" };
+  if ("$date" in o) {
+    const d = o.$date;
+    if (typeof d === "string") return { text: d, kind: "date" };
+    if (d && typeof d === "object" && "$numberLong" in (d as object)) {
+      const ms = Number((d as { $numberLong: string }).$numberLong);
+      return { text: Number.isFinite(ms) ? new Date(ms).toISOString() : String(d), kind: "date" };
+    }
+    return { text: String(d), kind: "date" };
+  }
+  if ("$binary" in o) return { text: "binary", kind: "bin" };
+  if ("$timestamp" in o) return { text: "Timestamp", kind: "ts" };
+  if ("$regularExpression" in o) {
+    const re = o.$regularExpression as { pattern?: string; options?: string };
+    return { text: `/${re?.pattern ?? ""}/${re?.options ?? ""}`, kind: "regex" };
+  }
+  return null;
+}
+/** Converte um número EJSON (ou nativo) em number; null se não for numérico. */
+function toMongoNumber(v: unknown): number | null {
+  if (typeof v === "number") return v;
+  const s = scalarEjson(v);
+  if (s?.kind === "num") { const n = Number(s.text); return Number.isFinite(n) ? n : null; }
+  return null;
+}
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Renderiza um valor EJSON com realce de sintaxe (recursivo). */
+function MongoValue({ value, depth = 0 }: { value: unknown; depth?: number }): React.ReactElement {
+  const scalar = scalarEjson(value);
+  if (scalar) {
+    if (scalar.kind === "oid") return <span className="rounded bg-brand-soft px-1.5 py-0.5 text-brand-strong">ObjectId(&#39;{scalar.text}&#39;)</span>;
+    if (scalar.kind === "num") return <span className="text-warning">{scalar.text}</span>;
+    if (scalar.kind === "date") return <span className="text-text2">ISODate(&#39;{scalar.text}&#39;)</span>;
+    if (scalar.kind === "regex") return <span className="text-success">{scalar.text}</span>;
+    return <span className="rounded bg-bg px-1 text-text3">{scalar.text}</span>;
+  }
+  if (value === null || value === undefined) return <span className="italic text-text3">null</span>;
+  if (typeof value === "string") return <span className="text-success">&quot;{value}&quot;</span>;
+  if (typeof value === "number") return <span className="text-warning">{String(value)}</span>;
+  if (typeof value === "boolean") return <span className={value ? "text-success" : "text-danger"}>{String(value)}</span>;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-text3">[]</span>;
+    return (
+      <span>
+        <span className="text-text3">[</span>
+        {value.map((item, i) => (
+          <div key={i} className="pl-4">
+            <MongoValue value={item} depth={depth + 1} />
+            {i < value.length - 1 ? <span className="text-text3">,</span> : null}
+          </div>
+        ))}
+        <span className="text-text3">]</span>
+      </span>
+    );
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return <span className="text-text3">{"{}"}</span>;
+    return (
+      <span>
+        <span className="text-text3">{"{"}</span>
+        {entries.map(([k, val], i) => (
+          <div key={k} className="pl-4">
+            <span className="text-brand-strong">{k}</span>
+            <span className="text-text3">: </span>
+            <MongoValue value={val} depth={depth + 1} />
+            {i < entries.length - 1 ? <span className="text-text3">,</span> : null}
+          </div>
+        ))}
+        <span className="text-text3">{"}"}</span>
+      </span>
+    );
+  }
+  return <span>{String(value)}</span>;
+}
+
+function MongoStudio({ id, engineLabel, hasPassword }: { id: string; engineLabel: string; hasPassword: boolean }) {
+  const [active, setActive] = React.useState<MongoActive>({ db: null, coll: null });
+  const [tab, setTab] = React.useState<MongoTab>("documentos");
+  const [collapsed, setCollapsed] = React.useState(false);
+  const [fullscreen, setFullscreen] = React.useState(false);
+  const [write, setWrite] = React.useState(false);
+  const [confirmWrite, setConfirmWrite] = React.useState(false);
+  const [modal, setModal] = React.useState<null | "settings" | "newcoll">(null);
+  const [activeCount, setActiveCount] = React.useState<number | null>(null);
+  const qc = useQueryClient();
+
+  // restaura banco/coleção ativos por ambiente
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`mongo-active-${id}`);
+      if (raw) { const v = JSON.parse(raw) as MongoActive; if (v && typeof v === "object") setActive(v); }
+    } catch { /* ignore */ }
+  }, [id]);
+  const persist = React.useCallback((v: MongoActive) => {
+    setActive(v);
+    try { localStorage.setItem(`mongo-active-${id}`, JSON.stringify(v)); } catch { /* ignore */ }
+  }, [id]);
+
+  React.useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setFullscreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  const dbsQ = useQuery({
+    queryKey: ["mongo-dbs", id],
     queryFn: async () => {
-      const r = await api.studioExec(id, { mongo: { op: "listCollections", write: false } });
-      return r.kind === "mongo" ? (JSON.parse(r.ejson)?.result ?? []).map((c: { name?: string }) => c.name).filter(Boolean) : [];
+      const r = await mongoExec(id, { op: "listDatabases", write: false });
+      const res = parseMongoResult(r) as { databases?: { name?: string }[] } | undefined;
+      return (res?.databases ?? []).map((d) => d.name).filter((n): n is string => !!n);
     },
   });
 
+  // auto-seleciona o 1º banco quando a lista chega (ou quando o banco salvo não existe mais)
+  React.useEffect(() => {
+    const dbs = dbsQ.data;
+    if (!dbs || dbs.length === 0) return;
+    setActive((cur) => {
+      if (cur.db && dbs.includes(cur.db)) return cur;
+      const next: MongoActive = { db: dbs[0]!, coll: null };
+      try { localStorage.setItem(`mongo-active-${id}`, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, [dbsQ.data, id]);
+
+  function toggleWrite(v: boolean) { if (v) setConfirmWrite(true); else setWrite(false); }
+  function selectColl(db: string, coll: string) { persist({ db, coll }); setTab("documentos"); setActiveCount(null); }
+
+  return (
+    <div className={cn("flex h-full flex-col overflow-hidden bg-surface text-text", fullscreen && "fixed inset-0 z-50")}>
+      <div className="flex min-h-0 flex-1">
+        {collapsed ? (
+          <button onClick={() => setCollapsed(false)} title="Mostrar coleções" className="flex w-9 shrink-0 items-start justify-center border-r border-border bg-surface pt-3 text-text3 hover:text-text2">
+            <PanelLeft size={16} />
+          </button>
+        ) : (
+          <MongoSidebar
+            id={id} engineLabel={engineLabel} dbsQ={dbsQ} active={active}
+            onSelectDb={(db) => persist({ db, coll: active.db === db ? active.coll : null })}
+            onSelectColl={selectColl}
+            onNewColl={() => setModal("newcoll")}
+            onRefresh={() => { dbsQ.refetch(); qc.invalidateQueries({ queryKey: ["mongo-colls", id] }); }}
+            onCollapse={() => setCollapsed(true)}
+          />
+        )}
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          {!active.db || !active.coll ? (
+            <MongoEmptyState hasDb={!!active.db} />
+          ) : (
+            <>
+              <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+                <Boxes size={17} className="shrink-0 text-brand-strong" />
+                <span className="truncate font-mono text-[15px] font-semibold text-text">{active.db}.{active.coll}</span>
+                {activeCount != null ? <span className="shrink-0 rounded-full bg-bg px-2 py-0.5 font-mono text-xs text-text2">{nf(activeCount)} documentos</span> : null}
+                <IconBtn title="Recarregar" onClick={() => qc.invalidateQueries({ queryKey: ["mongo-docs", id, active.db, active.coll] })}><RefreshCw size={15} /></IconBtn>
+              </div>
+              <div className="flex items-stretch gap-1 border-b border-border-subtle px-3">
+                {([["documentos", "Documentos"], ["consulta", "Consulta"], ["indices", "Índices"]] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setTab(k)} className={cn("relative px-3 py-2.5 text-[13px]", tab === k ? "font-medium text-brand-strong" : "text-text2 hover:text-text")}>
+                    {label}
+                    {tab === k ? <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-brand-strong" /> : null}
+                  </button>
+                ))}
+              </div>
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {tab === "documentos" ? (
+                  <MongoDocumentsPane id={id} db={active.db} coll={active.coll} write={write} onRequestWrite={() => setConfirmWrite(true)} onCount={setActiveCount} />
+                ) : tab === "consulta" ? (
+                  <MongoQueryPane id={id} db={active.db} coll={active.coll} />
+                ) : (
+                  <MongoIndexesPane id={id} db={active.db} coll={active.coll} write={write} onRequestWrite={() => setConfirmWrite(true)} />
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <StatusBar
+        write={write} onToggleWrite={toggleWrite}
+        fullscreen={fullscreen} onToggleFullscreen={() => setFullscreen((f) => !f)}
+        onSettings={() => setModal("settings")}
+        version={null} engineLabel={engineLabel} charset={null} onCharset={() => {}}
+      />
+
+      <Dialog
+        open={confirmWrite}
+        onClose={() => setConfirmWrite(false)}
+        title="Habilitar escrita?"
+        description="O banco atende produção. Escrita pode alterar ou apagar dados de forma irreversível. Habilitar nesta sessão?"
+      >
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setConfirmWrite(false)}>Cancelar</Button>
+          <Button variant="danger" size="sm" onClick={() => { setWrite(true); setConfirmWrite(false); }}>Habilitar escrita</Button>
+        </div>
+      </Dialog>
+
+      {modal === "settings" ? (
+        <IdeSettingsDialog id={id} hasPassword={hasPassword} engineLabel={engineLabel} version={null} onClose={() => setModal(null)} />
+      ) : null}
+      {modal === "newcoll" ? (
+        <NewCollectionDialog id={id} db={active.db} write={write} onRequestWrite={() => { setModal(null); setConfirmWrite(true); }} onClose={() => setModal(null)}
+          onCreated={(name) => { setModal(null); qc.invalidateQueries({ queryKey: ["mongo-colls", id] }); if (active.db) selectColl(active.db, name); }} />
+      ) : null}
+    </div>
+  );
+}
+
+function MongoEmptyState({ hasDb }: { hasDb: boolean }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand-strong"><Boxes size={22} /></div>
+      <p className="text-sm text-text2">{hasDb ? "Selecione uma coleção à esquerda para ver os documentos." : "Selecione um banco à esquerda e depois uma coleção."}</p>
+    </div>
+  );
+}
+
+/* ───────────────────────── Navegador de bancos/coleções ───────────────────────── */
+
+function MongoSidebar({ id, engineLabel, dbsQ, active, onSelectDb, onSelectColl, onNewColl, onRefresh, onCollapse }: {
+  id: string; engineLabel: string; dbsQ: { data?: string[]; isLoading: boolean; isError: boolean }; active: MongoActive;
+  onSelectDb: (db: string) => void; onSelectColl: (db: string, coll: string) => void;
+  onNewColl: () => void; onRefresh: () => void; onCollapse: () => void;
+}) {
+  const [filter, setFilter] = React.useState("");
+  const f = filter.trim().toLowerCase();
+  const dbs = (dbsQ.data ?? []).filter((d) => !f || d.toLowerCase().includes(f));
+
+  return (
+    <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
+      <div className="px-3 pt-3">
+        <Link href={`/env/${id}`} className="flex items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] font-medium text-text2 hover:bg-bg hover:text-text">
+          <ChevronRight size={15} className="rotate-180" /> Voltar para ambiente
+        </Link>
+      </div>
+      <div className="flex items-center justify-between gap-2 px-3 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-strong"><Database size={14} /></span>
+          <span className="truncate text-sm font-semibold text-text">{engineLabel}</span>
+        </div>
+        <div className="flex items-center gap-0.5 text-text3">
+          <IconBtn title="Nova coleção" onClick={onNewColl}><Plus size={15} /></IconBtn>
+          <IconBtn title="Recarregar" onClick={onRefresh}><RefreshCw size={14} /></IconBtn>
+          <IconBtn title="Ocultar coleções" onClick={onCollapse}><PanelLeftClose size={14} /></IconBtn>
+        </div>
+      </div>
+      <div className="px-3 pb-2">
+        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-bg px-2">
+          <Search size={13} className="text-text3" />
+          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtrar…" className="w-full bg-transparent py-1.5 text-[13px] text-text outline-none placeholder:text-text3" />
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-2 pb-3 text-[13px]">
+        {dbsQ.isLoading ? <p className="px-2 py-4 text-text3">Carregando bancos…</p> : null}
+        {dbsQ.isError ? <p className="mx-1 my-2 rounded-lg bg-danger/10 px-2 py-2 text-xs text-danger">Falha ao listar bancos.</p> : null}
+        {!dbsQ.isLoading && dbs.length === 0 ? <p className="px-2 py-4 text-text3">Nenhum banco.</p> : null}
+        {dbs.map((db) => (
+          <MongoDbNode key={db} id={id} db={db} active={active} filter={f} onSelectDb={onSelectDb} onSelectColl={onSelectColl} />
+        ))}
+      </div>
+
+      <div className="px-3 py-2 border-t border-border-subtle">
+        <button onClick={onNewColl} className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-[13px] font-medium text-brand-strong hover:bg-bg">
+          <Plus size={14} /> Nova coleção
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function MongoDbNode({ id, db, active, filter, onSelectDb, onSelectColl }: {
+  id: string; db: string; active: MongoActive; filter: string;
+  onSelectDb: (db: string) => void; onSelectColl: (db: string, coll: string) => void;
+}) {
+  const [open, setOpen] = React.useState(active.db === db);
+  React.useEffect(() => { if (active.db === db) setOpen(true); }, [active.db, db]);
+
+  const collsQ = useQuery({
+    queryKey: ["mongo-colls", id, db],
+    enabled: open,
+    queryFn: async () => {
+      const r = await mongoExec(id, { op: "listCollections", database: db, write: false });
+      const res = parseMongoResult(r);
+      return (Array.isArray(res) ? res : []).map((c) => {
+        const o = c as { name?: string; type?: string };
+        return { name: o.name ?? "", type: o.type === "view" ? "view" : "collection" };
+      }).filter((c) => c.name);
+    },
+  });
+  const colls = (collsQ.data ?? []).filter((c) => !filter || c.name.toLowerCase().includes(filter));
+  const isActiveDb = active.db === db;
+
+  return (
+    <>
+      <div className={cn("group flex items-center gap-1 rounded-md pr-1 hover:bg-bg", isActiveDb && !active.coll && "bg-brand-soft hover:bg-brand-soft")} style={{ paddingLeft: 8 }}>
+        <button onClick={() => setOpen((o) => !o)} className="flex h-6 w-4 shrink-0 items-center justify-center text-text3">
+          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </button>
+        <Database size={14} className={cn("shrink-0", isActiveDb ? "text-brand-strong" : "text-text3")} />
+        <button onClick={() => { setOpen(true); onSelectDb(db); }} className={cn("flex-1 truncate py-1 text-left", isActiveDb ? "font-medium text-brand-strong" : "text-text2")}>{db}</button>
+        {collsQ.data ? <span className="shrink-0 pr-1 text-[11px] tabular-nums text-text3">{collsQ.data.length}</span> : null}
+      </div>
+      {open ? (
+        <>
+          {collsQ.isLoading ? <p className="py-1 text-text3" style={{ paddingLeft: 36 }}>Carregando…</p> : null}
+          {!collsQ.isLoading && colls.length === 0 ? <p className="py-1 text-xs text-text3" style={{ paddingLeft: 36 }}>Nenhuma coleção.</p> : null}
+          {colls.map((c) => {
+            const on = active.db === db && active.coll === c.name;
+            return (
+              <div key={c.name} className={cn("group flex items-center gap-1.5 rounded-md py-0.5 pr-1 hover:bg-bg", on && "bg-brand-soft hover:bg-brand-soft")} style={{ paddingLeft: 30 }}>
+                <Boxes size={14} className={cn("shrink-0", on ? "text-brand-strong" : "text-text3")} />
+                <button onClick={() => onSelectColl(db, c.name)} className={cn("flex-1 truncate py-0.5 text-left", on ? "font-medium text-brand-strong" : "text-text2")}>
+                  {c.name}{c.type === "view" ? <span className="ml-1 text-[10px] text-text3">view</span> : null}
+                </button>
+              </div>
+            );
+          })}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/* ───────────────────────── Aba Documentos ───────────────────────── */
+
+function MongoDocumentsPane({ id, db, coll, write, onRequestWrite, onCount }: {
+  id: string; db: string; coll: string; write: boolean; onRequestWrite: () => void; onCount: (n: number | null) => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [filterText, setFilterText] = React.useState("{}");
+  const [sortText, setSortText] = React.useState("");
+  const [projText, setProjText] = React.useState("");
+  const [showOpts, setShowOpts] = React.useState(false);
+  const [applied, setApplied] = React.useState<{ filter: unknown; sort?: unknown; projection?: unknown }>({ filter: {} });
+  const [page, setPage] = React.useState(0);
+  const [view, setView] = React.useState<"lista" | "json">("lista");
+  const [formErr, setFormErr] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState<null | { mode: "edit" | "new"; text: string }>(null);
+  const [deleting, setDeleting] = React.useState<Record<string, unknown> | null>(null);
+
+  React.useEffect(() => {
+    setFilterText("{}"); setSortText(""); setProjText(""); setApplied({ filter: {} }); setPage(0); setFormErr(null);
+  }, [db, coll]);
+
+  const appliedKey = JSON.stringify(applied);
+
+  const countQ = useQuery({
+    queryKey: ["mongo-count", id, db, coll, JSON.stringify(applied.filter)],
+    queryFn: async () => {
+      const r = await mongoExec(id, { op: "count", database: db, collection: coll, args: { filter: applied.filter } });
+      return toMongoNumber(parseMongoResult(r)) ?? 0;
+    },
+  });
+  const total = countQ.data ?? null;
+  React.useEffect(() => { onCount(total); }, [total, onCount]);
+
+  const docsQ = useQuery({
+    queryKey: ["mongo-docs", id, db, coll, page, appliedKey],
+    queryFn: async () => {
+      const r = await mongoExec(id, {
+        op: "find", database: db, collection: coll,
+        args: { filter: applied.filter, sort: applied.sort, projection: applied.projection, skip: page * MONGO_PAGE_SIZE, limit: MONGO_PAGE_SIZE },
+      });
+      const res = parseMongoResult(r);
+      return (Array.isArray(res) ? res : []) as Record<string, unknown>[];
+    },
+  });
+
+  function applyFind() {
+    try {
+      const filter = filterText.trim() ? JSON.parse(filterText) : {};
+      const sort = sortText.trim() ? JSON.parse(sortText) : undefined;
+      const projection = projText.trim() ? JSON.parse(projText) : undefined;
+      setApplied({ filter, sort, projection }); setPage(0); setFormErr(null);
+    } catch { setFormErr("JSON inválido em filtro, ordenação ou projeção."); }
+  }
+  function resetFind() { setFilterText("{}"); setSortText(""); setProjText(""); setApplied({ filter: {} }); setPage(0); setFormErr(null); }
+  function requireWrite(fn: () => void) { if (!write) onRequestWrite(); else fn(); }
+
+  const save = useMutation({
+    mutationFn: async () => {
+      if (!editing) return;
+      const parsed = JSON.parse(editing.text) as Record<string, unknown>;
+      if (editing.mode === "new") {
+        await mongoExec(id, { op: "insertOne", database: db, collection: coll, write: true, args: { doc: parsed } });
+      } else {
+        const { _id, ...rest } = parsed;
+        if (_id === undefined) throw new ApiError(400, "sem_id", "O documento precisa manter o campo _id.");
+        await mongoExec(id, { op: "updateOne", database: db, collection: coll, write: true, args: { filter: { _id }, update: { $set: rest } } });
+      }
+    },
+    onSuccess: () => {
+      setEditing(null);
+      qc.invalidateQueries({ queryKey: ["mongo-docs", id, db, coll] });
+      qc.invalidateQueries({ queryKey: ["mongo-count", id, db, coll] });
+      toast.show("success", "Documento salvo.");
+    },
+    onError: (e) => toast.show("error", e instanceof ApiError ? e.message : e instanceof Error ? e.message : "Falha ao salvar"),
+  });
+
+  const del = useMutation({
+    mutationFn: async () => {
+      if (!deleting) return;
+      await mongoExec(id, { op: "deleteOne", database: db, collection: coll, write: true, args: { filter: { _id: deleting._id } } });
+    },
+    onSuccess: () => {
+      setDeleting(null);
+      qc.invalidateQueries({ queryKey: ["mongo-docs", id, db, coll] });
+      qc.invalidateQueries({ queryKey: ["mongo-count", id, db, coll] });
+      toast.show("success", "Documento excluído.");
+    },
+    onError: (e) => toast.show("error", e instanceof ApiError ? e.message : "Falha ao excluir"),
+  });
+
+  const rows = docsQ.data ?? [];
+  const start = page * MONGO_PAGE_SIZE;
+  const lastPage = total != null ? Math.max(0, Math.ceil(total / MONGO_PAGE_SIZE) - 1) : null;
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* barra de filtro */}
+      <div className="flex flex-col gap-2 border-b border-border-subtle px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-bg px-3">
+            <span className="font-mono text-[13px] font-semibold text-text3">Filter</span>
+            <input value={filterText} onChange={(e) => setFilterText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") applyFind(); }}
+              placeholder={'{ "role": "admin" }'} spellCheck={false}
+              className="w-full bg-transparent py-2 font-mono text-[13px] text-text outline-none placeholder:text-text3" />
+          </div>
+          <Button size="sm" onClick={applyFind} disabled={docsQ.isFetching}><Play size={14} /> Find</Button>
+          <Button size="sm" variant="outline" onClick={resetFind}>Reset</Button>
+          <span className="h-5 w-px bg-border" />
+          <Button size="sm" variant="outline" onClick={() => setShowOpts((o) => !o)}>Opções</Button>
+          <Button size="sm" variant="outline" onClick={() => requireWrite(() => setEditing({ mode: "new", text: "{\n  \n}" }))}><Plus size={14} /> Novo documento</Button>
+        </div>
+        {showOpts ? (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-xs text-text3">Ordenação (sort)
+              <input value={sortText} onChange={(e) => setSortText(e.target.value)} placeholder={'{ "created_at": -1 }'} spellCheck={false} className="rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-[12.5px] text-text outline-none placeholder:text-text3" />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-text3">Projeção (projection)
+              <input value={projText} onChange={(e) => setProjText(e.target.value)} placeholder={'{ "senha": 0 }'} spellCheck={false} className="rounded-lg border border-border bg-bg px-2 py-1.5 font-mono text-[12.5px] text-text outline-none placeholder:text-text3" />
+            </label>
+          </div>
+        ) : null}
+        {formErr ? <p className="text-xs text-danger">{formErr}</p> : null}
+      </div>
+
+      {/* lista */}
+      <div className="min-h-0 flex-1 overflow-auto bg-bg/40 p-3">
+        {docsQ.isLoading ? <Loading /> : docsQ.isError ? (
+          <ErrorBox msg={docsQ.error instanceof ApiError ? docsQ.error.message : "Erro ao carregar documentos"} />
+        ) : rows.length === 0 ? (
+          <p className="p-6 text-center text-sm text-text3">Nenhum documento.</p>
+        ) : view === "json" ? (
+          <Card className="overflow-auto p-3"><div className="font-mono text-[12.5px] leading-relaxed"><MongoValue value={rows} /></div></Card>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {rows.map((doc, i) => {
+              const idScalar = scalarEjson(doc._id);
+              const others = Object.entries(doc).filter(([k]) => k !== "_id");
+              return (
+                <div key={i} className="overflow-hidden rounded-xl border border-border bg-surface shadow-[0_1px_2px_rgba(38,38,46,0.04)]">
+                  <div className="flex items-center gap-2 border-b border-border-subtle bg-bg/50 px-3.5 py-2">
+                    <span className="font-mono text-xs text-text3">_id:</span>
+                    {idScalar?.kind === "oid" ? (
+                      <span className="rounded-md bg-brand-soft px-2 py-0.5 font-mono text-xs text-brand-strong">ObjectId(&#39;{idScalar.text}&#39;)</span>
+                    ) : (
+                      <span className="font-mono text-xs text-text2"><MongoValue value={doc._id} /></span>
+                    )}
+                    <span className="ml-auto flex items-center gap-1 text-text3">
+                      <IconBtn title="Copiar documento" onClick={() => { navigator.clipboard?.writeText(JSON.stringify(doc, null, 2)); toast.show("success", "Documento copiado."); }}><Copy size={14} /></IconBtn>
+                      <IconBtn title={write ? "Editar documento" : "Habilite a escrita para editar"} onClick={() => requireWrite(() => setEditing({ mode: "edit", text: JSON.stringify(doc, null, 2) }))}><Pencil size={14} /></IconBtn>
+                      <IconBtn title={write ? "Excluir documento" : "Habilite a escrita para excluir"} onClick={() => requireWrite(() => setDeleting(doc))}><Trash2 size={14} /></IconBtn>
+                    </span>
+                  </div>
+                  <div className="px-4 py-3 font-mono text-[12.5px] leading-relaxed">
+                    {others.length === 0 ? <span className="text-text3">— sem outros campos —</span> : others.map(([k, v]) => (
+                      <div key={k}><span className="text-brand-strong">{k}</span><span className="text-text3">: </span><MongoValue value={v} /></div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* rodapé: view toggle + paginação */}
+      <div className="flex items-center gap-3 border-t border-border px-3 py-1.5">
+        <div className="flex items-center gap-0.5 rounded-lg bg-bg p-0.5">
+          <button onClick={() => setView("lista")} className={cn("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs", view === "lista" ? "bg-surface font-medium text-brand-strong shadow-sm" : "text-text2")}><List size={13} /> Lista</button>
+          <button onClick={() => setView("json")} className={cn("flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs", view === "json" ? "bg-surface font-medium text-brand-strong shadow-sm" : "text-text2")}><Braces size={13} /> JSON</button>
+        </div>
+        <span className="ml-auto px-1 font-mono text-xs tabular-nums text-text3">
+          {rows.length ? `${nf(start + 1)}–${nf(start + rows.length)}` : "0"} de {total != null ? nf(total) : "…"}
+        </span>
+        <IconBtn title="Anterior" onClick={() => setPage((p) => Math.max(0, p - 1))}><ChevronRight size={15} className="rotate-180" /></IconBtn>
+        <IconBtn title="Próxima" onClick={() => setPage((p) => (lastPage != null ? Math.min(lastPage, p + 1) : p + 1))}><ChevronRight size={15} /></IconBtn>
+      </div>
+
+      {editing ? (
+        <MongoDocDialog
+          title={editing.mode === "new" ? "Novo documento" : "Editar documento"}
+          text={editing.text}
+          onChange={(t) => setEditing({ ...editing, text: t })}
+          saving={save.isPending}
+          hint={editing.mode === "edit" ? "Os campos são gravados via $set. Mantenha o _id." : "Documento inserido via insertOne."}
+          onClose={() => setEditing(null)}
+          onSave={() => save.mutate()}
+        />
+      ) : null}
+
+      <Dialog open={!!deleting} onClose={() => setDeleting(null)} title="Excluir documento?" description="Esta ação remove o documento pelo _id e não pode ser desfeita.">
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setDeleting(null)}>Cancelar</Button>
+          <Button variant="danger" size="sm" disabled={del.isPending} onClick={() => del.mutate()}>{del.isPending ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Excluir</Button>
+        </div>
+      </Dialog>
+    </div>
+  );
+}
+
+function MongoDocDialog({ title, text, onChange, saving, hint, onClose, onSave }: {
+  title: string; text: string; onChange: (t: string) => void; saving: boolean; hint: string; onClose: () => void; onSave: () => void;
+}) {
+  return (
+    <Dialog open onClose={onClose} title={title} description={hint}>
+      <div className="flex flex-col gap-3">
+        <textarea value={text} onChange={(e) => onChange(e.target.value)} spellCheck={false}
+          className="h-64 w-full resize-y rounded-lg border border-border bg-bg p-3 font-mono text-[12.5px] text-text outline-none focus:border-brand-strong" />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+          <Button size="sm" disabled={saving} onClick={onSave}>{saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Salvar</Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/* ───────────────────────── Aba Consulta (find/aggregate bruto) ───────────────────────── */
+
+function MongoQueryPane({ id, db, coll }: { id: string; db: string; coll: string }) {
+  const [mode, setMode] = React.useState<"find" | "aggregate">("find");
+  const [text, setText] = React.useState('{\n  "filter": {},\n  "limit": 50\n}');
+  const [result, setResult] = React.useState<DbResult | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [ms, setMs] = React.useState<number | null>(null);
+
+  function setModeTemplate(m: "find" | "aggregate") {
+    setMode(m);
+    setText(m === "aggregate" ? '[\n  { "$match": {} }\n]' : '{\n  "filter": {},\n  "limit": 50\n}');
+    setResult(null); setError(null); setMs(null);
+  }
+
   const run = useMutation({
-    mutationFn: () => {
-      let args: Record<string, unknown> = {};
-      try { args = argsText.trim() ? JSON.parse(argsText) : {}; } catch { throw new ApiError(400, "json_invalido", "JSON dos argumentos inválido"); }
-      return api.studioExec(id, { mongo: { op, collection: collection || undefined, args, write } });
+    mutationFn: async () => {
+      let parsed: unknown;
+      try { parsed = text.trim() ? JSON.parse(text) : mode === "aggregate" ? [] : {}; }
+      catch { throw new ApiError(400, "json", "JSON inválido."); }
+      const t0 = performance.now();
+      let r: DbResult;
+      if (mode === "aggregate") {
+        if (!Array.isArray(parsed)) throw new ApiError(400, "pipe", "O pipeline deve ser um array de estágios.");
+        for (const stage of parsed) {
+          for (const k of Object.keys((stage ?? {}) as object)) {
+            if (MONGO_BANNED_STAGES.includes(k)) throw new ApiError(400, "stage", `O estágio ${k} não é permitido.`);
+          }
+        }
+        r = await mongoExec(id, { op: "aggregate", database: db, collection: coll, args: { pipeline: parsed } });
+      } else {
+        const spec = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
+        r = await mongoExec(id, {
+          op: "find", database: db, collection: coll,
+          args: { filter: spec.filter ?? {}, projection: spec.projection, sort: spec.sort, skip: spec.skip, limit: spec.limit ?? 50 },
+        });
+      }
+      setMs(Math.round(performance.now() - t0));
+      return r;
     },
     onSuccess: (r) => { setResult(r); setError(null); },
     onError: (e) => { setError(e instanceof ApiError ? e.message : "Erro"); setResult(null); },
   });
+  function exec() { if (text.trim()) run.mutate(); }
 
-  const needsColl = op !== "listCollections";
-  const isWriteOp = MONGO_WRITE_OPS.has(op);
+  const parsed = parseMongoResult(result ?? undefined);
+  const count = Array.isArray(parsed) ? parsed.length : parsed != null ? 1 : 0;
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[200px_1fr]">
-      <Card className="hidden max-h-[70vh] overflow-auto p-2 lg:block">
-        <div className="mb-1 flex items-center justify-between px-1">
-          <span className="text-xs font-semibold uppercase tracking-wide text-text3">Coleções</span>
-          <button onClick={() => collections.refetch()} className="text-text3 hover:text-text2"><RefreshCw size={13} /></button>
-        </div>
-        {(collections.data ?? []).map((c: string) => (
-          <button key={c} onClick={() => { setCollection(c); setOp("find"); }} className="flex w-full items-center gap-1.5 truncate rounded px-1.5 py-1 text-left text-[13px] text-text2 hover:bg-bg">
-            <Database size={13} className="shrink-0 text-text3" /> <span className="truncate">{c}</span>
-          </button>
-        ))}
-      </Card>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <select value={op} onChange={(e) => setOp(e.target.value as DbMongoOp)} className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-brand-strong">
-            {MONGO_OPS.map((o) => <option key={o} value={o}>{o}{MONGO_WRITE_OPS.has(o) ? " ✎" : ""}</option>)}
-          </select>
-          {needsColl ? <Input value={collection} onChange={(e) => setCollection(e.target.value)} placeholder="coleção" className="w-40" /> : null}
-        </div>
-        <textarea
-          value={argsText}
-          onChange={(e) => setArgsText(e.target.value)}
-          spellCheck={false}
-          placeholder='{ "filter": {}, "limit": 50 }  ou  { "pipeline": [ { "$match": {} } ] }'
-          className="h-36 w-full resize-y rounded-lg border border-border bg-surface p-3 font-mono text-[13px] text-text outline-none focus:border-brand-strong"
-        />
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => run.mutate()} disabled={run.isPending}>
-            {run.isPending ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Executar
-          </Button>
-          {isWriteOp && !write ? <span className="text-xs text-text3">Operação de escrita — habilite a escrita.</span> : null}
+          <select value={mode} onChange={(e) => setModeTemplate(e.target.value as "find" | "aggregate")} className="rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-text outline-none focus:border-brand-strong">
+            <option value="find">find</option>
+            <option value="aggregate">aggregate</option>
+          </select>
+          <Button size="sm" onClick={exec} disabled={run.isPending || !text.trim()}>{run.isPending ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />} Executar</Button>
+          <span className="text-xs text-text3">⌘/Ctrl + Enter · somente leitura</span>
         </div>
-        <ResultView result={result} error={error} />
+        {ms != null ? <span className="font-mono text-xs tabular-nums text-text3">{ms} ms · {count} doc(s)</span> : null}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); exec(); } }}
+          placeholder={mode === "aggregate" ? '[ { "$match": {} }, { "$group": { "_id": "$role", "n": { "$sum": 1 } } } ]' : '{ "filter": { "active": true }, "sort": { "created_at": -1 }, "limit": 50 }'}
+          spellCheck={false}
+          className="w-full resize-none border-b border-border bg-surface p-3 font-mono text-[13px] leading-relaxed text-text outline-none"
+          style={{ height: 180 }}
+        />
+        <div className="p-3">
+          {error ? <ErrorBox msg={error} /> : null}
+          {result && parsed !== undefined ? (
+            Array.isArray(parsed) && parsed.length === 0
+              ? <p className="text-sm text-text3">Sem resultados.</p>
+              : <Card className="overflow-auto p-3"><div className="font-mono text-[12.5px] leading-relaxed"><MongoValue value={parsed} /></div></Card>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 }
 
-function ResultView({ result, error }: { result: DbResult | null; error: string | null }) {
-  if (error) {
-    return <p role="alert" className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 font-mono text-xs text-danger"><AlertTriangle size={14} className="mt-0.5 shrink-0" /> {error}</p>;
-  }
-  if (!result) return null;
-  if (result.kind === "command") {
-    return <p className="rounded-lg bg-success/10 px-3 py-2 text-sm text-success">OK{result.affectedRows != null ? ` — ${result.affectedRows} linha(s) afetada(s)` : ""}.</p>;
-  }
-  if (result.kind === "mongo") {
-    let pretty = result.ejson;
-    try { pretty = JSON.stringify(JSON.parse(result.ejson).result ?? JSON.parse(result.ejson), null, 2); } catch { /* keep raw */ }
-    return (
-      <Card className="max-h-[55vh] overflow-auto p-0">
-        <pre className="p-3 font-mono text-[12.5px] text-text">{pretty}</pre>
-      </Card>
-    );
-  }
-  if (result.kind === "redis") {
-    return (
-      <Card className="max-h-[55vh] overflow-auto p-0">
-        <div className={cn("p-3 font-mono text-[12.5px]", result.replyType === "error" ? "text-danger" : "text-text")}>
-          <RedisReply value={result.value} replyType={result.replyType} />
-        </div>
-      </Card>
-    );
-  }
-  // rows
-  if (result.columns.length === 0) return <p className="text-sm text-text3">Sem resultados.</p>;
+/* ───────────────────────── Aba Índices ───────────────────────── */
+
+function MongoIndexesPane({ id, db, coll, write, onRequestWrite }: {
+  id: string; db: string; coll: string; write: boolean; onRequestWrite: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [showCreate, setShowCreate] = React.useState(false);
+
+  const idxQ = useQuery({
+    queryKey: ["mongo-indexes", id, db, coll],
+    queryFn: async () => {
+      const r = await mongoExec(id, { op: "listIndexes", database: db, collection: coll, write: false });
+      const res = parseMongoResult(r);
+      return (Array.isArray(res) ? res : []) as { name?: string; key?: Record<string, unknown>; unique?: boolean }[];
+    },
+  });
+  const statsQ = useQuery({
+    queryKey: ["mongo-collstats", id, db, coll],
+    queryFn: async () => {
+      const r = await mongoExec(id, { op: "aggregate", database: db, collection: coll, args: { pipeline: [{ $collStats: { storageStats: {} } }] } });
+      const res = parseMongoResult(r);
+      const first = Array.isArray(res) ? (res[0] as { storageStats?: { indexSizes?: Record<string, unknown> } }) : undefined;
+      return first?.storageStats?.indexSizes ?? {};
+    },
+  });
+
+  const create = useMutation({
+    mutationFn: async (v: { field: string; unique: boolean }) => {
+      await mongoExec(id, { op: "createIndex", database: db, collection: coll, write: true, args: { keys: { [v.field]: 1 }, options: v.unique ? { unique: true } : {} } });
+    },
+    onSuccess: () => { setShowCreate(false); qc.invalidateQueries({ queryKey: ["mongo-indexes", id, db, coll] }); qc.invalidateQueries({ queryKey: ["mongo-collstats", id, db, coll] }); toast.show("success", "Índice criado."); },
+    onError: (e) => toast.show("error", e instanceof ApiError ? e.message : "Falha ao criar índice"),
+  });
+
+  const sizes = statsQ.data ?? {};
+
   return (
-    <Card className="max-h-[55vh] overflow-auto p-0">
-      <table className="w-full border-collapse text-[12.5px]">
-        <thead className="sticky top-0 bg-surface">
-          <tr>{result.columns.map((c, i) => <th key={i} className="border-b border-border px-2 py-1.5 text-left font-semibold text-text2">{c}</th>)}</tr>
-        </thead>
-        <tbody>
-          {result.rows.map((row, ri) => (
-            <tr key={ri} className="hover:bg-bg">
-              {row.map((cell, ci) => <td key={ci} className="border-b border-border-subtle px-2 py-1 align-top font-mono text-text">{renderCell(cell)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {result.truncated ? <p className="px-2 py-1 text-xs text-text3">Resultado truncado.</p> : null}
-    </Card>
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-border-subtle px-4 py-2.5">
+        <span className="text-[13px] font-medium text-text2">Índices</span>
+        <Button size="sm" variant="outline" onClick={() => { if (!write) onRequestWrite(); else setShowCreate(true); }}><Plus size={14} /> Criar índice</Button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        {idxQ.isLoading ? <Loading /> : idxQ.isError ? (
+          <ErrorBox msg={idxQ.error instanceof ApiError ? idxQ.error.message : "Erro ao carregar índices"} />
+        ) : (
+          <div className="overflow-hidden rounded-xl border border-border">
+            <table className="w-full border-collapse text-[13px]">
+              <thead className="bg-bg text-left text-text2">
+                <tr><Th>Nome</Th><Th>Campos</Th><Th>Tipo</Th><Th>Tamanho</Th></tr>
+              </thead>
+              <tbody>
+                {(idxQ.data ?? []).map((ix) => {
+                  const keys = Object.entries(ix.key ?? {});
+                  const type = ix.unique || ix.name === "_id_" ? "UNIQUE" : keys.length > 1 ? "COMPOSTO" : "SIMPLES";
+                  const tone = type === "UNIQUE" ? "brand" : "neutral";
+                  const sz = toMongoNumber(sizes[ix.name ?? ""]);
+                  return (
+                    <tr key={ix.name} className="border-t border-border-subtle">
+                      <Td className="font-mono text-text">{ix.name}</Td>
+                      <Td className="font-mono text-text2">{keys.map(([k, v]) => `${k}: ${toMongoNumber(v) ?? String(v)}`).join(", ")}</Td>
+                      <Td><Pill tone={tone as "brand" | "neutral"}>{type}</Pill></Td>
+                      <Td className="font-mono text-text3">{sz != null ? fmtBytes(sz) : statsQ.isLoading ? "…" : "—"}</Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {showCreate ? <MongoCreateIndexDialog saving={create.isPending} onClose={() => setShowCreate(false)} onCreate={(v) => create.mutate(v)} /> : null}
+    </div>
   );
 }
 
-function renderCell(cell: unknown): React.ReactNode {
-  if (cell === null) return <span className="text-text3 italic">NULL</span>;
-  if (typeof cell === "object" && cell && "b" in cell) return <span className="rounded bg-bg px-1 text-text3">0x{(cell as unknown as { hex: string }).hex.slice(0, 24)}{(cell as unknown as { hex: string }).hex.length > 24 ? "…" : ""}</span>;
-  const s = String(cell);
-  return s.length > 200 ? s.slice(0, 200) + "…" : s;
+function MongoCreateIndexDialog({ saving, onClose, onCreate }: { saving: boolean; onClose: () => void; onCreate: (v: { field: string; unique: boolean }) => void }) {
+  const [field, setField] = React.useState("");
+  const [unique, setUnique] = React.useState(false);
+  return (
+    <Dialog open onClose={onClose} title="Criar índice" description="Índice ascendente ({ campo: 1 }) sobre um campo.">
+      <div className="flex flex-col gap-3">
+        <Label>Campo</Label>
+        <Input value={field} onChange={(e) => setField(e.target.value)} placeholder="ex.: email" autoFocus />
+        <label className="flex items-center gap-2 text-sm text-text2">
+          <input type="checkbox" checked={unique} onChange={(e) => setUnique(e.target.checked)} /> Único (unique)
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+          <Button size="sm" disabled={saving || !field.trim()} onClick={() => onCreate({ field: field.trim(), unique })}>{saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Criar</Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+function NewCollectionDialog({ id, db, write, onRequestWrite, onClose, onCreated }: {
+  id: string; db: string | null; write: boolean; onRequestWrite: () => void; onClose: () => void; onCreated: (name: string) => void;
+}) {
+  const toast = useToast();
+  const [name, setName] = React.useState("");
+  React.useEffect(() => { if (!write) onRequestWrite(); }, [write, onRequestWrite]);
+  const create = useMutation({
+    mutationFn: async () => {
+      if (!db) throw new ApiError(400, "sem_db", "Selecione um banco primeiro.");
+      await mongoExec(id, { op: "createCollection", database: db, collection: name.trim(), write: true });
+    },
+    onSuccess: () => { toast.show("success", "Coleção criada."); onCreated(name.trim()); },
+    onError: (e) => toast.show("error", e instanceof ApiError ? e.message : "Falha ao criar coleção"),
+  });
+  return (
+    <Dialog open onClose={onClose} title="Nova coleção" description={db ? `No banco ${db}.` : "Selecione um banco primeiro."}>
+      <div className="flex flex-col gap-3">
+        <Label>Nome da coleção</Label>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="ex.: usuarios" autoFocus disabled={!write} />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancelar</Button>
+          <Button size="sm" disabled={!write || !db || !name.trim() || create.isPending} onClick={() => create.mutate()}>{create.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Criar</Button>
+        </div>
+      </div>
+    </Dialog>
+  );
 }
 
 function SettingsDialog({ id, hasPassword, onClose }: { id: string; hasPassword: boolean; onClose: () => void }) {

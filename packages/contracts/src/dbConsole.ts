@@ -77,6 +77,7 @@ export const dbMongoOp = z.enum([
   "aggregate",
   "count",
   "distinct",
+  "listDatabases",
   "listCollections",
   "listIndexes",
   "insertOne",

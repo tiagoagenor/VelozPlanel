@@ -141,6 +141,7 @@ const MONGO_READ_OPS = new Set<DbMongoOp>([
   "aggregate",
   "count",
   "distinct",
+  "listDatabases",
   "listCollections",
   "listIndexes",
 ]);

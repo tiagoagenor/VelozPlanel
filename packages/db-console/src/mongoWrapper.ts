@@ -9,7 +9,7 @@
 export const MONGO_WRAPPER_JS = `
 (function () {
   var a = EJSON.parse(process.env.VP_ARGS);
-  var READ = ['find','aggregate','count','distinct','listCollections','listIndexes'];
+  var READ = ['find','aggregate','count','distinct','listDatabases','listCollections','listIndexes'];
   var WRITE = ['insertOne','insertMany','updateOne','updateMany','deleteOne','deleteMany','createCollection','createIndex'];
   if (READ.indexOf(a.op) < 0 && WRITE.indexOf(a.op) < 0) throw new Error('op_nao_permitida');
   if (a.write !== true && WRITE.indexOf(a.op) >= 0) throw new Error('escrita_requer_modo_escrita');
@@ -27,6 +27,11 @@ export const MONGO_WRAPPER_JS = `
     case 'aggregate': out = c.aggregate(a.pipeline || [], { maxTimeMS: T }).toArray(); break;
     case 'count': out = c.countDocuments(a.filter || {}, { maxTimeMS: T }); break;
     case 'distinct': out = c.distinct(a.field, a.filter || {}); break;
+    case 'listDatabases':
+      var _ld = db.getSiblingDB('admin').adminCommand({ listDatabases: 1, nameOnly: true });
+      var _sys = { admin: 1, local: 1, config: 1 };
+      out = { databases: (_ld.databases || []).filter(function (d) { return !_sys[d.name]; }) };
+      break;
     case 'listCollections': out = D.getCollectionInfos(); break;
     case 'listIndexes': out = c.getIndexes(); break;
     case 'insertOne': out = c.insertOne(a.doc); break;
