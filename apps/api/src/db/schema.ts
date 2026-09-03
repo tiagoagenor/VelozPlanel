@@ -39,6 +39,11 @@ export const nodes = pgTable("nodes", {
   httpHost: text("http_host"), // host onde as portas HTTP publicadas são alcançáveis (Abrir site). Fallback: publicHost. Ex.: nó local NAT = IP da LAN
   alertMessage: text("alert_message"), // aviso do super admin sobre a máquina (ex.: "instável") — mostrado na criação de ambiente
   agentUrl: text("agent_url"), // endpoint do Agente deste nó (ex.: http://10.77.0.2:4100 via WireGuard)
+  // "Edge por nó": quando true E publicHost é IPv4 público servível em 80/443, os
+  // subdomínios <sub>.jamees.top deste nó resolvem DIRETO pro nó (registro A específico)
+  // e o Caddy do nó termina o TLS — sem passar pelo proxy central do 187 (menos latência).
+  // Nó sem isso (ex.: atrás de NAT sem 80/443) fica no proxy central (fallback).
+  edgeMode: boolean("edge_mode").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
 });
 
@@ -398,6 +403,7 @@ export const envTools = pgTable("env_tools", {
   ip: text("ip"), // IP do sidecar na bridge do dono
   targetIp: text("target_ip"), // IP interno que o proxy alcança (a própria ferramenta)
   targetPort: integer("target_port"),
+  hostPort: integer("host_port"), // porta de host PUBLICADA do sidecar (efêmera) — p/ o reconciliador de vhost detectar troca no reboot
   passwordHash: text("password_hash"), // Jamees Studio: senha opcional (bcrypt); null = sem senha
   subdomain: text("subdomain"), // painel de serviço: subdomínio aleatório fixo sob jamees.com
 });
@@ -512,6 +518,9 @@ export const platformSettings = pgTable("platform_settings", {
   // Desconexão automática do SSH/SFTP por inatividade (super admin). Segundos.
   // 0 = desativado. Lido a cada login pelo gateway (vale para novas sessões).
   sshIdleTimeoutSeconds: integer("ssh_idle_timeout_seconds").notNull().default(900),
+  // Tamanho máximo de upload no gerenciador de arquivos, em MB (super admin).
+  // Teto absoluto de 2048 MB (2 GB) validado no contrato. Lido por requisição.
+  maxUploadMb: integer("max_upload_mb").notNull().default(200),
   domainPriceMonthCents: integer("domain_price_month_cents").notNull().default(100), // R$1,00/domínio/mês
   // Taxas por recurso — alimentam a calculadora "Calcular pela taxa" dos planos.
   // NÃO entram na cobrança (a cobrança usa o preço gravado do plano). Exceção:

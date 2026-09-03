@@ -8,8 +8,10 @@ import { getPlan } from "./plans";
 import * as agent from "./agent";
 import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv } from "./nodes";
 import { allocateAddress, allocateVpsAddress, vpsPortRange, releaseAddresses } from "./ipam";
+import { allocateHostPort } from "./host-port";
 import { serviceRuntime, makeCreds, stackAppEnv, serviceUiPort } from "./services";
 import * as cpIngress from "./cp-ingress";
+import { publishSub, unpublishSub } from "./sub-ingress";
 import { subdomainFromName } from "./subdomain";
 import { enablePanel } from "./service-panel";
 
@@ -31,6 +33,9 @@ async function provisionApp(env: EnvironmentRow, nodeId: string, agentUrl: strin
   const planSpec = await getPlan(env.plan);
   if (!planSpec) throw new PermanentJobError("plano inválido");
   const alloc = await allocateAddress(nodeId, env.ownerId, env.id, "app");
+  // Porta de host ESTÁVEL: reusa a já atribuída (idempotente em retry/recreate) ou
+  // aloca uma nova da faixa fixa. Fixa => sobrevive a reboot (o vhost não fica stale).
+  const hostPort = await allocateHostPort(nodeId, env.id, env.httpPort);
   const result = await agent.provision(agentUrl, {
     envId: env.id,
     name: env.name,
@@ -42,6 +47,7 @@ async function provisionApp(env: EnvironmentRow, nodeId: string, agentUrl: strin
     dotnetCmd: env.dotnetCmd,
     phpNodeVersion: env.phpNodeVersion,
     phpRoot: env.phpWebRoot,
+    hostPort,
     envVars: await envVarsFor(env.id),
     network: { name: alloc.bridgeName, subnet: alloc.subnet, gateway: alloc.gateway },
     ip: alloc.ip,
@@ -263,8 +269,7 @@ export async function runProvisionJob(job: JobRow): Promise<void> {
           sub = await subdomainFromName(fresh.name);
           await db.update(environments).set({ autoSubdomain: sub }).where(eq(environments.id, env.id));
         }
-        const ip = cpIngress.wgIpFromAgentUrl(agentUrl);
-        if (ip) await cpIngress.putSite(sub, `${ip}:${fresh.httpPort}`);
+        await publishSub(sub, nodeId, fresh.httpPort);
       }
     } catch {
       /* subdomínio é auxiliar — não bloqueia o provisionamento */
@@ -308,7 +313,7 @@ export async function runDeleteJob(job: JobRow): Promise<void> {
       if (target.domain) await agent.vpsUnpublish(vpsUrl, target.domain).catch(() => {});
       await agent.vpsAction(vpsUrl, "destroy", target.vmName); // confirma antes de apagar; falha → retry
     }
-    if (target.autoSubdomain) await cpIngress.removeSite(target.autoSubdomain).catch(() => {});
+    if (target.autoSubdomain) await unpublishSub(target.autoSubdomain, target.nodeId).catch(() => {});
     // Painéis de serviço (env_tools): remove o vhost do painel e, se for sidecar
     // (phpmyadmin/adminer), o container da ferramenta. O rabbitmq embutido não tem
     // containerId próprio; o jstudio não tem subdomínio/container.

@@ -13,6 +13,10 @@
 const DOWN = "https://speed.cloudflare.com/__down";
 const UP = "https://speed.cloudflare.com/__up";
 const SERVER = "speed.cloudflare.com";
+// O Cloudflare passou a responder 403 no /__down quando `bytes` chega a ~100 MB
+// (10^8) — antes aceitava bem mais. Tetamos a medição de download abaixo disso
+// (90 MB, comprovado 200) para não estourar o limite. O /__up ainda aceita ≥100 MB.
+const DOWN_MAX_BYTES = 90_000_000;
 
 export interface SpeedtestResult {
   downloadMbps: number;
@@ -95,7 +99,11 @@ export async function runSpeedtest(): Promise<SpeedtestResult> {
 
   const dlProbe = await runDownload(10_000_000, 20_000);
   const dlEst = mbps(dlProbe.bytes, dlProbe.seconds) || 10;
-  const dlBytes = Math.min(200_000_000, Math.max(20_000_000, Math.round(dlEst * 1_000_000))); // ~8s
+  // O Cloudflare passou a responder 403 no /__down para `bytes` >= ~100 MB (antes
+  // aceitava até 200 MB+). Tetamos em DOWN_MAX_BYTES (90 MB): uma requisição só,
+  // baixo consumo e sem risco de 429 por volume. Em link muito rápido a janela fica
+  // curta (~1s), com alguma variância — aceitável para o monitoramento horário.
+  const dlBytes = Math.min(DOWN_MAX_BYTES, Math.max(20_000_000, Math.round(dlEst * 1_000_000)));
   const dl = await runDownload(dlBytes, 45_000);
 
   const upProbe = await runUpload(5_000_000, 20_000);

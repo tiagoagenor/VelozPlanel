@@ -29,6 +29,8 @@ import {
   Lock,
   Search,
   Check,
+  FileArchive,
+  FolderInput,
 } from "lucide-react";
 import type { FileEntry } from "@velozplanel/contracts";
 import * as api from "@/lib/api";
@@ -47,27 +49,18 @@ const CODE_EXT = new Set([
 
 const PAGE_SIZE = 50;
 
-/** Teto de tamanho por arquivo no envio (~25 MiB, alinhado à API/Agente). */
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-
-/** Lê um arquivo do navegador como base64 (sem o prefixo `data:...;base64,`). */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () =>
-      reject(reader.error ?? new Error("não foi possível ler o arquivo"));
-    reader.readAsDataURL(file);
-  });
-}
+/** Teto padrão de upload (MB) enquanto o limite real (super admin) não carrega. */
+const DEFAULT_MAX_UPLOAD_MB = 200;
 
 function extOf(name: string): string {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";
+}
+
+/** Arquivo compactado que o painel sabe descompactar (.zip/.rar). */
+function isArchive(name: string): boolean {
+  const e = extOf(name);
+  return e === "zip" || e === "rar";
 }
 
 function iconFor(entry: FileEntry) {
@@ -154,6 +147,7 @@ function Tooltip({
 interface RowActionsProps {
   entry: FileEntry;
   onDownload: () => void;
+  onExtract: () => void;
   onRename: () => void;
   onChmod: () => void;
   onDelete: () => void;
@@ -167,6 +161,7 @@ interface RowActionsProps {
 function RowActions({
   entry,
   onDownload,
+  onExtract,
   onRename,
   onChmod,
   onDelete,
@@ -190,6 +185,18 @@ function RowActions({
             ) : (
               <Download size={16} aria-hidden="true" />
             )}
+          </button>
+        </Tooltip>
+      ) : null}
+      {entry.type === "file" && isArchive(entry.name) ? (
+        <Tooltip label="Descompactar">
+          <button
+            type="button"
+            onClick={onExtract}
+            aria-label={`Descompactar ${entry.name}`}
+            className={btn}
+          >
+            <FileArchive size={16} aria-hidden="true" />
           </button>
         </Tooltip>
       ) : null}
@@ -425,13 +432,19 @@ function UploadModal({
   onUploaded,
 }: UploadModalProps) {
   const toast = useToast();
+  // Limite de upload configurado pelo super admin (MB). Vale para a validação e
+  // os avisos. Enquanto carrega, usa o padrão.
+  const limitQuery = useQuery({ queryKey: ["upload-limit"], queryFn: api.getUploadLimit });
+  const maxMb = limitQuery.data?.maxUploadMb ?? DEFAULT_MAX_UPLOAD_MB;
+  const maxBytes = maxMb * 1024 * 1024;
   const [destDir, setDestDir] = React.useState(initialDir);
   const [chosen, setChosen] = React.useState<Chosen[]>([]);
   const [dragOver, setDragOver] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [progress, setProgress] = React.useState<{ current: number; total: number } | null>(
-    null,
-  );
+  // Progresso do envio: arquivo atual (index/total), nome e % por bytes.
+  const [progress, setProgress] = React.useState<
+    { index: number; total: number; name: string; pct: number } | null
+  >(null);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const seq = React.useRef(0);
 
@@ -475,7 +488,7 @@ function UploadModal({
     setChosen((prev) => prev.filter((c) => c.id !== cid));
   }
 
-  const oversized = chosen.filter((c) => c.file.size > MAX_UPLOAD_BYTES);
+  const oversized = chosen.filter((c) => c.file.size > maxBytes);
   const hasOversized = oversized.length > 0;
   const canSend = chosen.length > 0 && !hasOversized && !busy;
 
@@ -485,13 +498,23 @@ function UploadModal({
     let ok = 0;
     let fail = 0;
     for (let i = 0; i < chosen.length; i++) {
-      setProgress({ current: i + 1, total: chosen.length });
       const entry = chosen[i];
       if (!entry) continue;
       const { file } = entry;
+      setProgress({ index: i + 1, total: chosen.length, name: file.name, pct: 0 });
       try {
-        const b64 = await fileToBase64(file);
-        await api.uploadFile(id, destDir, file.name, b64);
+        // Envio binário com progresso real por bytes (XHR).
+        const { promise } = api.uploadFileWithProgress(
+          id,
+          destDir,
+          file.name,
+          file,
+          (frac) =>
+            setProgress((p) =>
+              p ? { ...p, pct: Math.min(100, Math.round(frac * 100)) } : p,
+            ),
+        );
+        await promise;
         ok++;
       } catch {
         fail++;
@@ -589,7 +612,7 @@ function UploadModal({
               Arraste arquivos aqui ou clique para selecionar
             </p>
             <p className="text-xs text-text3">
-              Vários arquivos, incluindo binários (imagens, zip). Máx. 25 MB por arquivo.
+              Vários arquivos, incluindo binários (imagens, zip). Máx. {maxMb} MB por arquivo.
             </p>
             <input
               ref={inputRef}
@@ -608,7 +631,7 @@ function UploadModal({
               </span>
               <ul className="max-h-44 flex-1 divide-y divide-border-subtle overflow-y-auto rounded-lg border border-border-subtle">
                 {chosen.map((c) => {
-                  const big = c.file.size > MAX_UPLOAD_BYTES;
+                  const big = c.file.size > maxBytes;
                   return (
                     <li
                       key={c.id}
@@ -626,7 +649,7 @@ function UploadModal({
                       {big ? (
                         <AlertTriangle
                           size={14}
-                          aria-label="Acima do limite de 25 MB"
+                          aria-label={`Acima do limite de ${maxMb} MB`}
                           className="shrink-0 text-danger"
                         />
                       ) : null}
@@ -646,18 +669,33 @@ function UploadModal({
               {hasOversized ? (
                 <p role="alert" className="flex items-center gap-1.5 text-xs text-danger">
                   <AlertTriangle size={13} aria-hidden="true" />
-                  {oversized.length} arquivo(s) acima de 25 MB. Remova-os para enviar.
+                  {oversized.length} arquivo(s) acima de {maxMb} MB. Remova-os para enviar.
                 </p>
               ) : null}
             </div>
           ) : null}
 
-          {/* Rodapé: progresso + ações */}
-          <div className="mt-auto flex items-center justify-between gap-2 pt-1">
-            <span aria-live="polite" className="text-sm text-text2">
-              {progress ? `Enviando ${progress.current}/${progress.total}…` : ""}
-            </span>
-            <div className="flex gap-2">
+          {/* Rodapé: barra de progresso (por arquivo) + ações */}
+          <div className="mt-auto flex flex-col gap-2 pt-1">
+            {progress ? (
+              <div className="flex flex-col gap-1" aria-live="polite">
+                <div className="flex items-center justify-between gap-2 text-xs text-text2">
+                  <span className="min-w-0 flex-1 truncate" title={progress.name}>
+                    Enviando {progress.index}/{progress.total}: {progress.name}
+                  </span>
+                  <span className="shrink-0 font-medium tabular-nums text-text">
+                    {progress.pct}%
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-border-subtle">
+                  <div
+                    className="h-full rounded-full bg-brand-strong transition-[width] duration-150"
+                    style={{ width: `${progress.pct}%` }}
+                  />
+                </div>
+              </div>
+            ) : null}
+            <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
                 Cancelar
               </Button>
@@ -754,6 +792,7 @@ export default function EnvArquivosPage() {
   const [renameValue, setRenameValue] = React.useState("");
   const [toChmod, setToChmod] = React.useState<FileEntry | null>(null);
   const [modeInput, setModeInput] = React.useState("");
+  const [toExtract, setToExtract] = React.useState<FileEntry | null>(null);
   const [downloadingName, setDownloadingName] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState("");
   const [page, setPage] = React.useState(1);
@@ -885,6 +924,19 @@ export default function EnvArquivosPage() {
     },
     onError: (err) =>
       toast.show("error", err instanceof Error ? err.message : "Falha ao alterar permissões."),
+  });
+
+  const extractMutation = useMutation({
+    mutationFn: (payload: { entry: FileEntry; mode: "here" | "folder" }) =>
+      api.extractFile(id, joinPath(currentPath, payload.entry.name), payload.mode),
+    onSuccess: (result) => {
+      toast.show("success", `${result.files} arquivo(s) extraído(s).`);
+      setChanged(true);
+      setToExtract(null);
+      refresh();
+    },
+    onError: (err) =>
+      toast.show("error", err instanceof Error ? err.message : "Falha ao descompactar."),
   });
 
   async function handleDownload(entry: FileEntry) {
@@ -1458,6 +1510,7 @@ export default function EnvArquivosPage() {
                       entry={entry}
                       downloading={downloadingName === entry.name}
                       onDownload={() => handleDownload(entry)}
+                      onExtract={() => setToExtract(entry)}
                       onRename={() => openRename(entry)}
                       onChmod={() => openChmod(entry)}
                       onDelete={() => setToDelete(entry)}
@@ -1581,6 +1634,81 @@ export default function EnvArquivosPage() {
             </Button>
           </div>
         </form>
+      </Dialog>
+
+      {/* Dialog: descompactar (.zip/.rar) — escolher o destino */}
+      <Dialog
+        open={toExtract !== null}
+        onClose={() => {
+          if (!extractMutation.isPending) setToExtract(null);
+        }}
+        title="Descompactar"
+        description={
+          toExtract
+            ? `Extrair "${toExtract.name}". O arquivo original é mantido.`
+            : ""
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text2">Onde você quer extrair o conteúdo?</p>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              disabled={extractMutation.isPending}
+              onClick={() =>
+                toExtract && extractMutation.mutate({ entry: toExtract, mode: "here" })
+              }
+              className="flex items-start gap-3 rounded-lg border border-border p-3 text-left hover:border-brand-strong hover:bg-brand-soft disabled:opacity-60"
+            >
+              <FolderInput
+                size={18}
+                className="mt-0.5 shrink-0 text-brand-strong"
+                aria-hidden="true"
+              />
+              <span>
+                <span className="block text-sm font-medium text-text">Extrair aqui</span>
+                <span className="block text-xs text-text3">
+                  Coloca os arquivos direto na pasta atual.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={extractMutation.isPending}
+              onClick={() =>
+                toExtract && extractMutation.mutate({ entry: toExtract, mode: "folder" })
+              }
+              className="flex items-start gap-3 rounded-lg border border-border p-3 text-left hover:border-brand-strong hover:bg-brand-soft disabled:opacity-60"
+            >
+              <FolderPlus
+                size={18}
+                className="mt-0.5 shrink-0 text-brand-strong"
+                aria-hidden="true"
+              />
+              <span>
+                <span className="block text-sm font-medium text-text">
+                  Em uma nova pasta
+                </span>
+                <span className="block text-xs text-text3">
+                  Cria uma pasta com o nome do arquivo e extrai dentro.
+                </span>
+              </span>
+            </button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm text-text3" aria-live="polite">
+              {extractMutation.isPending ? "Descompactando…" : ""}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setToExtract(null)}
+              disabled={extractMutation.isPending}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </div>
       </Dialog>
 
       {/* Dialog: permissões (chmod) — item único ou em massa */}

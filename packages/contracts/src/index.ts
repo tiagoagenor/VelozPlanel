@@ -719,6 +719,7 @@ export const node = z.object({
   httpHost: z.string().nullable(), // host onde as portas HTTP do site são alcançáveis (Abrir site). Fallback: publicHost. Nó local NAT = IP da LAN.
   alertMessage: z.string().nullable(), // aviso do super admin sobre a máquina (mostrado na criação)
   agentUrl: z.string().nullable(), // endpoint do Agente do nó (ex.: http://10.77.0.2:4100 via WireGuard)
+  edgeMode: z.boolean(), // subdomínios <sub>.jamees.top deste nó resolvem DIRETO pro nó (edge) em vez do proxy central 187
   lastSeenAt: z.string().datetime().nullable(),
 });
 export type Node = z.infer<typeof node>;
@@ -750,6 +751,7 @@ export const updateNodeInput = z.object({
     .optional(),
   alertMessage: z.string().max(500).nullable().optional(),
   region: z.string().trim().min(1).max(64).optional(), // nome da região (rótulo/chave)
+  edgeMode: z.boolean().optional(), // liga o "edge por nó" (só faz efeito com publicHost IPv4 servível em 80/443)
 });
 export type UpdateNodeInput = z.infer<typeof updateNodeInput>;
 
@@ -771,6 +773,20 @@ export const sshSecuritySettings = z.object({ idleTimeoutSeconds: z.number().int
 export type SshSecuritySettings = z.infer<typeof sshSecuritySettings>;
 export const setSshSecurityInput = z.object({ idleTimeoutSeconds: z.number().int().min(0).max(86400) });
 export type SetSshSecurityInput = z.infer<typeof setSshSecurityInput>;
+
+/**
+ * Tamanho máximo de upload de arquivos no gerenciador (super admin), em MB.
+ * Teto absoluto de 2048 MB (2 GB) — trava de segurança da infra. Aplicado por
+ * requisição (mudar no painel vale na hora, sem reiniciar nada).
+ */
+export const UPLOAD_MAX_MB_CEILING = 2048;
+export const uploadSettings = z.object({ maxUploadMb: z.number().int().min(1).max(UPLOAD_MAX_MB_CEILING) });
+export type UploadSettings = z.infer<typeof uploadSettings>;
+export const setUploadSettingsInput = z.object({ maxUploadMb: z.number().int().min(1).max(UPLOAD_MAX_MB_CEILING) });
+export type SetUploadSettingsInput = z.infer<typeof setUploadSettingsInput>;
+/** Limite de upload exposto a qualquer usuário logado (só leitura), para a UI. */
+export const uploadLimit = z.object({ maxUploadMb: z.number().int().positive() });
+export type UploadLimit = z.infer<typeof uploadLimit>;
 
 /* ─────────────── Métricas ─────────────── */
 
@@ -862,6 +878,24 @@ export const uploadFileInput = z.object({
   contentBase64: z.string(), // conteúdo do arquivo em base64
 });
 export type UploadFileInput = z.infer<typeof uploadFileInput>;
+
+/**
+ * Descompactar um arquivo .zip/.rar dentro do ambiente.
+ *  - `path`: caminho do arquivo compactado (absoluto, confinado à raiz).
+ *  - `mode`: "here" extrai na mesma pasta; "folder" cria uma subpasta com o
+ *    nome do arquivo (sem extensão) e extrai dentro.
+ * O arquivo original é sempre mantido.
+ */
+export const extractArchiveInput = z.object({
+  path: z.string().min(1),
+  mode: z.enum(["here", "folder"]),
+});
+export type ExtractArchiveInput = z.infer<typeof extractArchiveInput>;
+export const extractArchiveResult = z.object({
+  files: z.number().int().nonnegative(), // nº de arquivos extraídos
+  dir: z.string(), // pasta de destino final
+});
+export type ExtractArchiveResult = z.infer<typeof extractArchiveResult>;
 
 /** Renomear/mover dentro do mesmo diretório (só o nome final). */
 export const renameFileInput = z.object({

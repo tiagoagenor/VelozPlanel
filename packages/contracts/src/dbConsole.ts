@@ -202,6 +202,43 @@ export const dbSchema = z.object({
 });
 export type DbSchema = z.infer<typeof dbSchema>;
 
+/* ─────────────── Importação de dump SQL (mysql/postgres) ─────────────── */
+
+/** Resposta do upload de um arquivo .sql para importação (id do arquivo temporário). */
+export const dbImportUploadResult = z.object({ importId: z.string() });
+export type DbImportUploadResult = z.infer<typeof dbImportUploadResult>;
+
+/**
+ * Um evento do stream (SSE) de importação — um JSON por frame `data:`.
+ *  - start : total de statements detectados no arquivo.
+ *  - stmt  : resultado de UM statement (ok/erro) com preview e índice i/total.
+ *  - done  : resumo final (executados, falhos, tempo, se foi abortado).
+ *  - fatal : falha que impediu a importação (arquivo sumiu, cliente não subiu…).
+ */
+export const dbImportEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start"), total: z.number().int().nonnegative() }),
+  z.object({
+    type: z.literal("stmt"),
+    i: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+    preview: z.string(),
+    status: z.enum(["ok", "error"]),
+    error: z.string().optional(),
+    tookMs: z.number().int().nonnegative().optional(),
+  }),
+  z.object({
+    type: z.literal("done"),
+    ok: z.boolean(),
+    total: z.number().int().nonnegative(),
+    done: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    elapsedMs: z.number().int().nonnegative(),
+    aborted: z.boolean().optional(),
+  }),
+  z.object({ type: z.literal("fatal"), message: z.string() }),
+]);
+export type DbImportEvent = z.infer<typeof dbImportEvent>;
+
 /** Metadados completos de uma tabela (para as abas Estrutura e SQL). */
 export const dbTableMeta = z.object({
   name: z.string(),

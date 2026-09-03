@@ -9,6 +9,8 @@ import { agentUrlForEnv } from "../nodes";
 import * as agent from "../agent";
 import { listRRsets } from "../dns-service";
 import { listZones, getZone, replaceRRsets, deleteRRset, fqdnOf, canonicalizeContent, serialOf } from "../dns-pdns";
+import { migrateNodeSubs } from "../sub-ingress";
+import { wgIpFromAgentUrl } from "../cp-ingress";
 
 /**
  * Rotas internas máquina-a-máquina (NÃO usam cookie de sessão). Usadas pelo
@@ -236,6 +238,28 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     await deleteRRset(b.zone, b.name, b.type);
     const z = await getZone(b.zone);
     return { zone: b.zone, name: fqdnOf(b.zone, b.name), type: b.type, deleted: true, serialAfter: serialOf(z) };
+  });
+
+  // POST /internal/nodes/self/public-ip { ip } — DDNS do nó de casa (IP dinâmico).
+  // O nó fala por WireGuard direto com 10.100.0.1:4000 (sem proxy) → o IP WG de
+  // ORIGEM identifica QUAL nó é (casa com wgIpFromAgentUrl(nodes.agent_url)). Se o
+  // IP público mudou, atualiza nodes.public_host e, se o nó está em edge, re-aponta
+  // os A dos subs edge (migrateNodeSubs). Idempotente; trocar de IP NÃO reemite cert.
+  fastify.post("/internal/nodes/self/public-ip", async (req, reply) => {
+    if (!tokenOk(req.headers["x-internal-token"])) return reply.code(401).send({ error: "unauthorized" });
+    const ip = (req.body as { ip?: unknown } | undefined)?.ip;
+    if (typeof ip !== "string" || !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip.trim())) {
+      return reply.code(400).send({ error: "bad_ip" });
+    }
+    const newIp = ip.trim();
+    const srcWg = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "");
+    const all = await db.select().from(nodes);
+    const node = all.find((n) => wgIpFromAgentUrl(n.agentUrl) === srcWg);
+    if (!node) return reply.code(404).send({ error: "node_not_found_for_wg", srcWg });
+    if (node.publicHost === newIp) return { nodeId: node.id, publicHost: newIp, changed: false };
+    await db.update(nodes).set({ publicHost: newIp }).where(eq(nodes.id, node.id));
+    if (node.edgeMode) void migrateNodeSubs(node.id).catch(() => {});
+    return { nodeId: node.id, publicHost: newIp, changed: true, edgeReapplied: node.edgeMode };
   });
 
   // POST /internal/sftp/verify — verifica a SENHA do SFTP para um username e,

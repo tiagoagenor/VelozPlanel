@@ -32,6 +32,7 @@ import * as dockerDriver from "./docker.js";
 import * as kvm from "./kvm.js";
 import * as ingress from "./ingress.js";
 import * as files from "./files.js";
+import * as extract from "./extract.js";
 import { startSshGateway } from "./ssh.js";
 import { startSftpGateway } from "./sftp.js";
 import * as deploy from "./deploy.js";
@@ -64,6 +65,13 @@ app.addHook("onRequest", async (req, reply) => {
   }
 });
 
+// Upload em streaming: entrega o corpo cru como stream (não bufferiza) para o
+// handler escrever direto no `docker exec`. O limite de tamanho é aplicado ao
+// vivo (contagem de bytes), não pelo `bodyLimit`.
+app.addContentTypeParser("application/octet-stream", (_req, payload, done) => {
+  done(null, payload);
+});
+
 /* ─────────────── Schemas de entrada ─────────────── */
 
 const provisionBody = z.object({
@@ -80,6 +88,7 @@ const provisionBody = z.object({
   dotnetCmd: z.string().nullable().optional(),
   phpNodeVersion: z.string().nullable().optional(),
   phpRoot: z.string().nullable().optional(),
+  hostPort: z.number().int().positive().nullable().optional(),
   envVars: z.array(z.object({ key: z.string(), value: z.string(), buildTime: z.boolean().optional() })).optional(),
   network: z.object({
     name: z.string().min(1),
@@ -154,6 +163,10 @@ const uploadBody = z.object({
   contentBase64: z.string().min(1),
 });
 const mkPathBody = z.object({ path: z.string().min(1) });
+const extractBody = z.object({
+  path: z.string().min(1),
+  mode: z.enum(["here", "folder"]),
+});
 const renameBody = z.object({
   path: z.string().min(1),
   newName: z.string().min(1),
@@ -713,6 +726,66 @@ app.get("/db/redis/subscribe/:id", async (req, reply) => {
   });
 });
 
+// Jamees Studio — importação de dump SQL: sobe o arquivo (bytes crus) no host do Agente.
+app.post("/db/import/upload", { bodyLimit: 2048 * 1024 * 1024 }, async (req, reply) => {
+  try {
+    const r = await dockerDriver.saveSqlImport(req.body as NodeJS.ReadableStream);
+    return reply.code(200).send(r);
+  } catch (err) {
+    if ((err as { code?: string })?.code === "file_too_large") {
+      return reply.code(413).send({ error: "file_too_large", message: (err as Error).message });
+    }
+    req.log.error({ err }, "db import upload failed");
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// Jamees Studio — stream SSE do progresso da importação (a API valida posse/senha/running).
+const importStreamQuery = z.object({
+  containerId: z.string().min(1),
+  envId: z.string().min(1),
+  engine: z.enum(["mysql", "mariadb", "postgres"]),
+  database: z.string().min(1).max(64),
+  stopOnError: z.enum(["0", "1"]).optional().default("1"),
+});
+app.get("/db/import/stream/:importId", async (req, reply) => {
+  const p = z.object({ importId: z.string().regex(/^[a-f0-9]{16,64}$/) }).safeParse(req.params);
+  if (!p.success) return reply.code(400).send({ error: "bad_request" });
+  const q = importStreamQuery.safeParse(req.query);
+  if (!q.success) return reply.code(400).send({ error: "bad_request", message: q.error.message });
+  const sub = dockerDriver.runSqlImport({
+    importId: p.data.importId,
+    containerId: q.data.containerId,
+    envId: q.data.envId,
+    engine: q.data.engine,
+    database: q.data.database,
+    stopOnError: q.data.stopOnError === "1",
+  });
+  reply.hijack();
+  const raw = reply.raw;
+  raw.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  raw.write("retry: 3000\n\n");
+  let buf = "";
+  sub.stream.on("data", (chunk: Buffer) => {
+    buf += chunk.toString("utf8");
+    const parts = buf.split("\n");
+    buf = parts.pop() ?? "";
+    for (const line of parts) if (line) raw.write(`data: ${line}\n\n`);
+  });
+  sub.stream.on("end", () => raw.end());
+  sub.stream.on("error", () => raw.end());
+  const hb = setInterval(() => raw.write(": ping\n\n"), 25_000);
+  req.raw.on("close", () => {
+    clearInterval(hb);
+    sub.kill();
+  });
+});
+
 const attachNetworkBody = z.object({
   containerId: z.string().min(1),
   network: z.object({
@@ -795,6 +868,22 @@ app.get("/container/:id/ip", async (req, reply) => {
   }
 });
 
+// Porta de host publicada AGORA pelo container (read-only). O reconciliador de
+// vhost da API usa isso para detectar troca de porta efêmera (ex.: reboot do nó)
+// e reescrever o Caddy do CP apontando para a porta viva.
+app.get("/container/:id/port", async (req, reply) => {
+  const parsed = containerIdParams.safeParse(req.params);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: "bad_request", message: parsed.error.message });
+  }
+  try {
+    const port = await dockerDriver.publishedPort(parsed.data.id);
+    return reply.send({ port });
+  } catch (err) {
+    return reply.code(dockerErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
 app.get("/disk/:id", async (req, reply) => {
   const parsed = containerIdParams.safeParse(req.params);
   if (!parsed.success) {
@@ -871,6 +960,39 @@ app.post("/files/:cid/upload", async (req, reply) => {
     return reply.code(200).send({ ok: true });
   } catch (err) {
     req.log.error({ err }, "files.upload failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/upload-stream?path= — envia um arquivo (bytes crus em streaming)
+// Teto de corpo alto só aqui (não bufferiza; o limite real vem da API).
+app.post("/files/:cid/upload-stream", { bodyLimit: 2048 * 1024 * 1024 }, async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const q = filesPathQuery.safeParse(req.query);
+  if (!p.success || !q.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    await files.uploadStream(p.data.cid, q.data.path, req.body as NodeJS.ReadableStream);
+    return reply.code(200).send({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "files.uploadStream failed");
+    return reply.code(fileErrorStatus(err)).send(errorPayload(err));
+  }
+});
+
+// POST /files/:cid/extract {path,mode} — descompacta um .zip/.rar
+app.post("/files/:cid/extract", async (req, reply) => {
+  const p = filesCidParams.safeParse(req.params);
+  const b = extractBody.safeParse(req.body);
+  if (!p.success || !b.success) {
+    return reply.code(400).send({ error: "bad_request", message: "parâmetros inválidos" });
+  }
+  try {
+    const result = await extract.extractArchive(p.data.cid, b.data.path, b.data.mode);
+    return reply.code(200).send(result);
+  } catch (err) {
+    req.log.error({ err }, "files.extract failed");
     return reply.code(fileErrorStatus(err)).send(errorPayload(err));
   }
 });

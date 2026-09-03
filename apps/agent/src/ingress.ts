@@ -66,14 +66,25 @@ export async function putSite(domain: string, upstream: string, opts: SiteOption
   // porta ainda, e um cliente pode tentar forjar X-Forwarded-*. Adicionamos:
   //   - health check ativo -> derruba o upstream e cai no 502 amigável se não responder;
   //   - X-Forwarded-For/Proto/Host forçados com o valor REAL (descarta o do cliente).
-  let proxyBody = "";
+  // Cabeçalhos de proxy PADRÃO em TODO vhost de ambiente: entrega ao app o Host
+  // original e o IP REAL do cliente (X-Real-IP + X-Forwarded-*), sempre com o valor
+  // REAL do Caddy (descarta o que o cliente tentar injetar). O Caddy já manda Host e
+  // X-Forwarded-* por padrão, mas NÃO o X-Real-IP; explicitar deixa previsível e
+  // cobre apps que leem X-Real-IP (convenção nginx). Ver [[headers-fingerprint]].
+  const forwardHeaders =
+    `\t\theader_up Host {host}\n` +
+    `\t\theader_up X-Real-IP {remote_host}\n` +
+    `\t\theader_up X-Forwarded-For {remote_host}\n` +
+    `\t\theader_up X-Forwarded-Proto {scheme}\n` +
+    `\t\theader_up X-Forwarded-Host {host}\n`;
+  let proxyBody = ` {\n` + forwardHeaders + `\t}`;
   let errorsBlock = "";
   if (opts.vps) {
+    // VPS: além dos headers, health check ativo → cai no 502 amigável se a VM ainda
+    // não tem web na porta.
     proxyBody =
       ` {\n` +
-      `\t\theader_up X-Forwarded-For {remote_host}\n` +
-      `\t\theader_up X-Forwarded-Proto {scheme}\n` +
-      `\t\theader_up X-Forwarded-Host {host}\n` +
+      forwardHeaders +
       `\t\thealth_uri /\n` +
       `\t\thealth_interval 15s\n` +
       `\t\thealth_timeout 5s\n` +

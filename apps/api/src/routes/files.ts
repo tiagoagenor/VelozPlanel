@@ -6,17 +6,22 @@ import {
   fileList,
   fileContent,
   writeFileInput,
-  uploadFileInput,
   mkPathInput,
   renameFileInput,
   chmodInput,
+  extractArchiveInput,
+  extractArchiveResult,
+  uploadLimit,
   apiError,
 } from "@velozplanel/contracts";
-import type { FileList, FileContent, RuntimeKind } from "@velozplanel/contracts";
+import type { FileList, FileContent, RuntimeKind, ExtractArchiveResult } from "@velozplanel/contracts";
+import { eq } from "drizzle-orm";
 import { ApiHttpError, requireUser } from "../auth";
 import * as agent from "../agent";
 import { loadEnvironmentForUser } from "./environments";
 import { agentUrlForEnv } from "../nodes";
+import { db } from "../db/client";
+import { platformSettings } from "../db/schema";
 import type { EnvironmentRow } from "../db/schema";
 
 /**
@@ -30,6 +35,16 @@ import type { EnvironmentRow } from "../db/schema";
 
 const idParams = z.object({ id: z.string().uuid() });
 const pathQuery = z.object({ path: z.string().optional() });
+// Upload em streaming: pasta de destino + nome do arquivo vão na query (o corpo
+// é o binário cru). `filename` sem barras (confinamento reforçado na rota).
+const uploadQuery = z.object({
+  dir: z.string().min(1),
+  filename: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[^/\\]+$/, "nome de arquivo inválido (sem barras)"),
+});
 
 /**
  * Modelo de confinamento por runtime (tudo padronizado em /app):
@@ -99,8 +114,46 @@ function sanitizeFilename(name: string): string {
   return clean.length > 0 ? clean : "download";
 }
 
+/** Lê o limite de upload configurado (super admin), em bytes. Default 200 MB. */
+async function maxUploadBytes(): Promise<number> {
+  const rows = await db
+    .select({ v: platformSettings.maxUploadMb })
+    .from(platformSettings)
+    .where(eq(platformSettings.id, 1))
+    .limit(1);
+  const mb = rows[0]?.v ?? 200;
+  return mb * 1024 * 1024;
+}
+
 export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // O upload de arquivo trafega os BYTES CRUS (sem base64) em streaming. Este
+  // parser NÃO bufferiza: entrega o stream da requisição como `req.body` para
+  // repassarmos direto ao Agente. O limite de tamanho é aplicado ao vivo (por
+  // contagem de bytes) — não pelo `bodyLimit` do Fastify. Escopo: só as rotas
+  // de arquivos (encapsulamento do plugin).
+  app.addContentTypeParser(
+    "application/octet-stream",
+    (_req, payload, done) => {
+      done(null, payload);
+    },
+  );
+
+  // GET /upload-limit — limite de upload (MB) para a UI. Qualquer usuário logado.
+  app.get(
+    "/upload-limit",
+    { schema: { response: { 200: uploadLimit, 401: apiError } } },
+    async (req): Promise<{ maxUploadMb: number }> => {
+      await requireUser(req);
+      const rows = await db
+        .select({ v: platformSettings.maxUploadMb })
+        .from(platformSettings)
+        .where(eq(platformSettings.id, 1))
+        .limit(1);
+      return { maxUploadMb: rows[0]?.v ?? 200 };
+    },
+  );
 
   // GET /environments/:id/files?path= — lista um diretório
   app.get(
@@ -204,13 +257,20 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
     },
   );
 
-  // POST /environments/:id/files/upload — envia um arquivo (binário via base64)
+  // POST /environments/:id/files/upload?dir=&filename= — envia um arquivo
+  // transmitindo os BYTES CRUS (application/octet-stream) em streaming. O limite
+  // de tamanho (super admin) é aplicado ao vivo pela contagem de bytes; ao
+  // ultrapassar, o envio é abortado com 413.
   app.post(
     "/environments/:id/files/upload",
     {
+      // Teto de corpo alto SÓ nesta rota (o limite real é o do super admin,
+      // aplicado ao vivo por contagem de bytes). Evita o pré-check global do
+      // Content-Length barrar o envio antes de começarmos a transmitir.
+      bodyLimit: 2048 * 1024 * 1024,
       schema: {
         params: idParams,
-        body: uploadFileInput,
+        querystring: uploadQuery,
         response: {
           200: z.object({ ok: z.boolean() }),
           400: apiError,
@@ -230,15 +290,51 @@ export async function filesRoutes(fastify: FastifyInstance): Promise<void> {
       const agentUrl = await agentUrlForEnv(env);
       const root = confineRootFor(env.runtimeKind as RuntimeKind);
       // Confina a pasta de destino à raiz…
-      const destDir = resolveWithinRoot(root, req.body.dir);
-      // …e o `filename` (já validado pelo contract: sem barras) forma o caminho
-      // final, que confinamos de novo por segurança em profundidade.
-      const target = resolveWithinRoot(root, `${destDir}/${req.body.filename}`);
+      const destDir = resolveWithinRoot(root, req.query.dir);
+      // …e o `filename` (validado na query: sem barras) forma o caminho final,
+      // que confinamos de novo por segurança em profundidade.
+      const target = resolveWithinRoot(root, `${destDir}/${req.query.filename}`);
       if (target === root) {
         throw new ApiHttpError(400, "invalid_path", "caminho de destino inválido");
       }
-      await agent.uploadFile(agentUrl, containerId, target, req.body.contentBase64);
+      const maxBytes = await maxUploadBytes();
+      // `req.body` é o stream cru da requisição (ver content-type parser acima).
+      const source = req.body as unknown as NodeJS.ReadableStream;
+      await agent.uploadStream(agentUrl, containerId, target, source, maxBytes);
       return { ok: true };
+    },
+  );
+
+  // POST /environments/:id/files/extract — descompacta um .zip/.rar
+  app.post(
+    "/environments/:id/files/extract",
+    {
+      schema: {
+        params: idParams,
+        body: extractArchiveInput,
+        response: {
+          200: extractArchiveResult,
+          400: apiError,
+          401: apiError,
+          403: apiError,
+          404: apiError,
+          409: apiError,
+          413: apiError,
+          502: apiError,
+        },
+      },
+    },
+    async (req): Promise<ExtractArchiveResult> => {
+      const user = await requireUser(req);
+      const env = await loadEnvironmentForUser(req.params.id, user);
+      const containerId = requireRunningContainer(env);
+      const agentUrl = await agentUrlForEnv(env);
+      const root = confineRootFor(env.runtimeKind as RuntimeKind);
+      const target = resolveWithinRoot(root, req.body.path);
+      if (target === root) {
+        throw new ApiHttpError(400, "invalid_path", "caminho inválido");
+      }
+      return agent.extractArchive(agentUrl, containerId, target, req.body.mode);
     },
   );
 

@@ -20,6 +20,7 @@ import { agentUrlForEnv } from "./nodes";
 import { allocateAddress } from "./ipam";
 import * as agent from "./agent";
 import * as cpIngress from "./cp-ingress";
+import { publishSub, unpublishSub } from "./sub-ingress";
 
 // Kinds que representam o PAINEL ADMIN de um ambiente (1 por env). Não inclui
 // "jstudio" (o console embutido do Data Studio, que é outra coisa).
@@ -56,6 +57,7 @@ async function upsertPanelRow(
     enabled?: boolean;
     subdomain?: string | null;
     targetPort?: number | null;
+    hostPort?: number | null;
     containerId?: string | null;
     ip?: string | null;
     targetIp?: string | null;
@@ -71,6 +73,7 @@ async function upsertPanelRow(
       enabled: patch.enabled ?? false,
       subdomain: patch.subdomain ?? null,
       targetPort: patch.targetPort ?? null,
+      hostPort: patch.hostPort ?? null,
       containerId: patch.containerId ?? null,
       ip: patch.ip ?? null,
       targetIp: patch.targetIp ?? null,
@@ -129,12 +132,10 @@ export async function enablePanel(env: EnvironmentRow): Promise<string | null> {
 async function enableEmbedded(env: EnvironmentRow): Promise<string | null> {
   const uiPort = serviceUiPort(env.typeId ?? "");
   if (!uiPort || !env.httpPort || !env.nodeId) return null;
-  const agentUrl = await agentUrlForEnv({ nodeId: env.nodeId });
-  const ip = cpIngress.wgIpFromAgentUrl(agentUrl);
-  if (!ip) return null;
   const existing = await loadPanelRow(env.id);
   const sub = existing?.subdomain ?? (await generatePanelSubdomain());
-  await cpIngress.putSite(sub, `${ip}:${env.httpPort}`, cpIngress.TOOL_ZONE);
+  // Despacha edge (Caddy do nó) vs central (187), igual ao subdomínio do ambiente.
+  await publishSub(sub, env.nodeId, env.httpPort, cpIngress.TOOL_ZONE);
   await upsertPanelRow(env.id, "rabbitmq_mgmt", { enabled: true, subdomain: sub, targetPort: uiPort });
   return sub;
 }
@@ -174,7 +175,9 @@ async function enableSidecar(env: EnvironmentRow, tool: ToolSpec): Promise<strin
     publishPort: tool.port,
   });
   if (!res.httpPort) return null; // sem porta publicada — não dá pra rotear
-  await cpIngress.putSite(sub, `${wgIp}:${res.httpPort}`, cpIngress.TOOL_ZONE);
+  // Despacha edge (Caddy do nó) vs central (187). O upstream é a porta publicada do
+  // container SIDECAR (não a do app) — por isso passamos res.httpPort.
+  await publishSub(sub, env.nodeId, res.httpPort, cpIngress.TOOL_ZONE);
   await upsertPanelRow(env.id, tool.kind, {
     enabled: true,
     subdomain: sub,
@@ -182,6 +185,7 @@ async function enableSidecar(env: EnvironmentRow, tool: ToolSpec): Promise<strin
     ip: alloc.ip,
     targetIp: addr.ip,
     targetPort: tool.port,
+    hostPort: res.httpPort, // porta de host publicada do sidecar (p/ reconciliar no reboot)
   });
   return sub;
 }
@@ -189,7 +193,7 @@ async function enableSidecar(env: EnvironmentRow, tool: ToolSpec): Promise<strin
 /** Desliga o painel: remove o vhost e (se sidecar) o container da ferramenta. */
 export async function disablePanel(env: EnvironmentRow): Promise<void> {
   const existing = await loadPanelRow(env.id);
-  if (existing?.subdomain) await cpIngress.removeSite(existing.subdomain, cpIngress.TOOL_ZONE);
+  if (existing?.subdomain) await unpublishSub(existing.subdomain, env.nodeId, cpIngress.TOOL_ZONE);
   // Sidecar tem containerId próprio (o embutido do rabbitmq não). Remove o container.
   if (existing?.containerId && env.nodeId) {
     try {

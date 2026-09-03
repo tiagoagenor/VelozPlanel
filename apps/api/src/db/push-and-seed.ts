@@ -38,6 +38,7 @@ async function createSchema(): Promise<void> {
   `;
   await sql`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS public_host text`;
   await sql`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_url text`;
+  await sql`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS edge_mode boolean NOT NULL DEFAULT false`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS environments (
@@ -441,6 +442,7 @@ async function createSchema(): Promise<void> {
   `;
   // Jamees Studio: senha opcional do painel (hash bcrypt; null = sem senha).
   await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS password_hash text`;
+  await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS host_port integer`;
   // Painel de serviço (rabbitmq): subdomínio aleatório fixo sob jamees.com.
   await sql`ALTER TABLE env_tools ADD COLUMN IF NOT EXISTS subdomain text`;
   // 1 linha por (env, ferramenta) — idempotência do flag liga/desliga.
@@ -500,6 +502,7 @@ async function createSchema(): Promise<void> {
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS default_region text`;
   await sql`UPDATE platform_settings SET default_region='local' WHERE default_region IS NULL`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS ssh_idle_timeout_seconds integer NOT NULL DEFAULT 900`;
+  await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS max_upload_mb integer NOT NULL DEFAULT 200`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_vcpu_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_ram_gb_month_cents integer NOT NULL DEFAULT 2000`;
   await sql`ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS rate_disk_gb_month_cents integer NOT NULL DEFAULT 25`;

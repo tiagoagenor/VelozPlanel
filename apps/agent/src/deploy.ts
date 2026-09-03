@@ -193,12 +193,18 @@ async function killContainer(c: Docker.Container): Promise<void> {
   await c.remove({ force: true }).catch(() => {});
 }
 
-/** Gera a deploy key ed25519, guarda a privada no volume de build e devolve a pública. */
+/**
+ * Gera a deploy key RSA (4096), guarda a privada no volume de build e devolve a pública.
+ * RSA — e não ed25519 — porque alguns servidores de git exigem chaves `ssh-rsa`
+ * (ex.: "Valid keys will start with ssh-rsa"). O arquivo continua nomeado
+ * `id_ed25519` por compatibilidade com ambientes já existentes: o nome é cosmético,
+ * o ssh usa a chave via `-i` explícito.
+ */
 export async function generateDeployKey(
   envId: string,
   image: string,
 ): Promise<{ publicKey: string; fingerprint: string }> {
-  const pair = utils.generateKeyPairSync("ed25519");
+  const pair = utils.generateKeyPairSync("rsa", { bits: 4096 });
   const parts = pair.public.trim().split(/\s+/);
   const publicKey = `${parts[0]} ${parts[1]} velozplanel-deploy`;
   const raw = Buffer.from(parts[1] ?? "", "base64");

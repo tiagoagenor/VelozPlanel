@@ -4,10 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw, Maximize2, Minimize2, KeyRound, Terminal, Radio, Send, Trash2, Search, ChevronRight, ChevronDown, Plus, Key, Copy, X, Clock, PanelLeftClose, PanelLeft, Code2, ArrowLeft, ListOrdered, Check, Pin, Boxes, Pencil, List, Braces } from "lucide-react";
+import { Table2, Play, Loader2, Lock, Power, AlertTriangle, Database, RefreshCw, Maximize2, Minimize2, KeyRound, Terminal, Radio, Send, Trash2, Search, ChevronRight, ChevronDown, Plus, Key, Copy, X, Clock, PanelLeftClose, PanelLeft, Code2, ArrowLeft, ListOrdered, Check, Pin, Boxes, Pencil, List, Braces, Upload, FileUp, CircleStop } from "lucide-react";
 import * as api from "@/lib/api";
 import { ApiError } from "@/lib/api";
-import type { DbResult, RedisValue, DbSchema, DbTableMeta, SqlCharset } from "@velozplanel/contracts";
+import type { DbResult, RedisValue, DbSchema, DbTableMeta, SqlCharset, DbImportEvent } from "@velozplanel/contracts";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -202,7 +202,8 @@ function WriteToggle({ write, onToggle }: { write: boolean; onToggle: (v: boolea
 type SqlEngine = "mysql" | "mariadb" | "postgres";
 type IdeTab =
   | { key: string; kind: "table"; name: string; tableType: "table" | "view"; pinned?: boolean }
-  | { key: string; kind: "query"; title: string };
+  | { key: string; kind: "query"; title: string }
+  | { key: string; kind: "import"; title: string };
 
 const PAGE_SIZE = 100;
 const nf = (n: number) => n.toLocaleString("pt-BR");
@@ -272,6 +273,12 @@ function StudioIDE({ id, engine, engineLabel, hasPassword }: { id: string; engin
     setTabs((prev) => [...prev, { key, kind: "query", title: `Consulta ${n}` }]);
     setActiveKey(key);
   }, []);
+  // Importação: uma única aba reaproveitável (não faz sentido abrir várias).
+  const openImport = React.useCallback(() => {
+    const key = "import:1";
+    setTabs((prev) => (prev.some((t) => t.key === key) ? prev : [...prev, { key, kind: "import", title: "Importar SQL" }]));
+    setActiveKey(key);
+  }, []);
   const closeTab = React.useCallback((key: string) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.key === key);
@@ -330,15 +337,17 @@ function StudioIDE({ id, engine, engineLabel, hasPassword }: { id: string; engin
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <TabStrip tabs={tabs} activeKey={activeKey} onSelect={setActiveKey} onClose={closeTab} onNewQuery={openQuery} onTogglePin={togglePin} />
+          <TabStrip tabs={tabs} activeKey={activeKey} onSelect={setActiveKey} onClose={closeTab} onNewQuery={openQuery} onNewImport={openImport} onTogglePin={togglePin} />
           <div className="min-h-0 flex-1 overflow-hidden">
             {tabs.length === 0 ? (
-              <EmptyState onOpenQuery={openQuery} onNewTable={() => setModal("newtable")} />
+              <EmptyState onOpenQuery={openQuery} onNewTable={() => setModal("newtable")} onImport={openImport} />
             ) : (
               tabs.map((t) => (
                 <div key={t.key} className={cn("h-full", t.key === activeKey ? "" : "hidden")}>
                   {t.kind === "table" ? (
                     <TablePane id={id} engine={engine} name={t.name} tableType={t.tableType} write={write} active={t.key === activeKey} onRequestWrite={() => setConfirmWrite(true)} onToggleWrite={toggleWrite} charset={charset} />
+                  ) : t.kind === "import" ? (
+                    <ImportPane id={id} engine={engine} onDone={() => schemaQ.refetch()} />
                   ) : (
                     <QueryPane id={id} engine={engine} schema={schema} write={write} active={t.key === activeKey} charset={charset} />
                   )}
@@ -536,8 +545,8 @@ function LeafRow({ label, count }: { label: string; count: number }) {
 
 /* ───────────────────────── Abas ───────────────────────── */
 
-function TabStrip({ tabs, activeKey, onSelect, onClose, onNewQuery, onTogglePin }: {
-  tabs: IdeTab[]; activeKey: string | null; onSelect: (k: string) => void; onClose: (k: string) => void; onNewQuery: () => void; onTogglePin: (k: string) => void;
+function TabStrip({ tabs, activeKey, onSelect, onClose, onNewQuery, onNewImport, onTogglePin }: {
+  tabs: IdeTab[]; activeKey: string | null; onSelect: (k: string) => void; onClose: (k: string) => void; onNewQuery: () => void; onNewImport: () => void; onTogglePin: (k: string) => void;
 }) {
   return (
     <div className="flex min-h-[38px] items-stretch gap-0 border-b border-border bg-bg/40">
@@ -545,11 +554,12 @@ function TabStrip({ tabs, activeKey, onSelect, onClose, onNewQuery, onTogglePin 
         {tabs.map((t) => {
           const activeT = t.key === activeKey;
           const isTable = t.kind === "table";
+          const isImport = t.kind === "import";
           const preview = isTable && !t.pinned;
           const pinned = isTable && !!t.pinned;
           return (
             <div key={t.key} className={cn("group flex items-center gap-1.5 border-r border-border px-3 py-2 text-[13px]", activeT ? "bg-surface text-text" : "text-text2 hover:bg-surface/60")}>
-              {isTable ? <Table2 size={13} className="shrink-0 text-text3" /> : <Code2 size={13} className="shrink-0 text-text3" />}
+              {isTable ? <Table2 size={13} className="shrink-0 text-text3" /> : isImport ? <FileUp size={13} className="shrink-0 text-text3" /> : <Code2 size={13} className="shrink-0 text-text3" />}
               <button onClick={() => onSelect(t.key)} onDoubleClick={() => isTable && onTogglePin(t.key)} className={cn("max-w-[160px] truncate", preview && "italic")}>{isTable ? t.name : t.title}</button>
               {isTable ? (
                 <button onClick={() => onTogglePin(t.key)} title={pinned ? "Desafixar aba" : "Fixar aba"} className={cn("flex h-4 w-4 items-center justify-center rounded", pinned ? "text-brand-strong" : "text-text3 opacity-0 hover:text-text2 group-hover:opacity-100")}>
@@ -561,20 +571,272 @@ function TabStrip({ tabs, activeKey, onSelect, onClose, onNewQuery, onTogglePin 
           );
         })}
       </div>
+      <button onClick={onNewImport} title="Importar arquivo SQL" className="flex shrink-0 items-center gap-1.5 border-l border-border px-3 text-[13px] text-text2 hover:bg-surface hover:text-text"><Upload size={15} /> Importar</button>
       <button onClick={onNewQuery} title="Nova consulta" className="flex shrink-0 items-center gap-1.5 border-l border-border px-3 text-[13px] text-text2 hover:bg-surface hover:text-text"><Plus size={15} /> Nova consulta</button>
     </div>
   );
 }
 
-function EmptyState({ onOpenQuery, onNewTable }: { onOpenQuery: () => void; onNewTable: () => void }) {
+function EmptyState({ onOpenQuery, onNewTable, onImport }: { onOpenQuery: () => void; onNewTable: () => void; onImport: () => void }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-soft text-brand-strong"><Table2 size={22} /></div>
-      <p className="text-sm text-text2">Selecione uma tabela à esquerda para ver os dados,<br />ou abra uma consulta SQL.</p>
+      <p className="text-sm text-text2">Selecione uma tabela à esquerda para ver os dados,<br />abra uma consulta SQL ou importe um dump.</p>
       <div className="flex gap-2">
         <Button size="sm" variant="outline" onClick={onOpenQuery}><Code2 size={15} /> Nova consulta</Button>
         <Button size="sm" variant="outline" onClick={onNewTable}><Plus size={15} /> Nova tabela</Button>
+        <Button size="sm" variant="outline" onClick={onImport}><Upload size={15} /> Importar SQL</Button>
       </div>
+    </div>
+  );
+}
+
+/* ───────────────────────── Aba de importação de dump SQL ───────────────────────── */
+
+type ImportPhase = "idle" | "uploading" | "running" | "done";
+type ImportLogRow = { i: number; preview: string; status: "ok" | "error"; error?: string };
+type ImportSummary = { ok: boolean; total: number; done: number; failed: number; elapsedMs: number; aborted?: boolean };
+
+function ImportPane({ id, engine, onDone }: { id: string; engine: SqlEngine; onDone: () => void }) {
+  const engineLabel = ENGINE_LABEL[engine] ?? engine;
+  const [source, setSource] = React.useState<"file" | "paste">("file");
+  const [file, setFile] = React.useState<File | null>(null);
+  const [text, setText] = React.useState("");
+  const [stopOnError, setStopOnError] = React.useState(true);
+  const [confirm, setConfirm] = React.useState(false);
+  const [dragOver, setDragOver] = React.useState(false);
+
+  const [phase, setPhase] = React.useState<ImportPhase>("idle");
+  const [uploadPct, setUploadPct] = React.useState(0);
+  const [total, setTotal] = React.useState(0);
+  const [cur, setCur] = React.useState(0); // maior i visto (execução é sequencial)
+  const [failCount, setFailCount] = React.useState(0);
+  const [current, setCurrent] = React.useState(""); // preview do statement em execução
+  const [log, setLog] = React.useState<ImportLogRow[]>([]);
+  const [summary, setSummary] = React.useState<ImportSummary | null>(null);
+  const [fatal, setFatal] = React.useState<string | null>(null);
+
+  const abortRef = React.useRef<AbortController | null>(null);
+  const uploadRef = React.useRef<{ abort: () => void } | null>(null);
+  const logEndRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => () => { abortRef.current?.abort(); uploadRef.current?.abort(); }, []);
+  React.useEffect(() => { logEndRef.current?.scrollIntoView({ block: "end" }); }, [log.length]);
+
+  const hasInput = source === "file" ? !!file : text.trim().length > 0;
+  const busy = phase === "uploading" || phase === "running";
+
+  function reset() {
+    setPhase("idle"); setUploadPct(0); setTotal(0); setCur(0); setFailCount(0);
+    setCurrent(""); setLog([]); setSummary(null); setFatal(null);
+  }
+
+  function pickFile(f: File | null) {
+    if (!f) return;
+    setFile(f);
+    reset();
+  }
+
+  async function run() {
+    setConfirm(false);
+    reset();
+    const blob: Blob = source === "file" ? file! : new Blob([text], { type: "application/sql" });
+    if (!blob || (source === "file" && !file)) return;
+    setPhase("uploading");
+    let importId: string;
+    try {
+      const up = api.studioImportUpload(id, blob, (frac) => setUploadPct(frac));
+      uploadRef.current = up;
+      ({ importId } = await up.promise);
+    } catch (e) {
+      uploadRef.current = null;
+      setPhase("done");
+      setFatal(e instanceof ApiError ? e.message : "Falha ao enviar o arquivo.");
+      return;
+    }
+    uploadRef.current = null;
+    setPhase("running");
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    try {
+      const res = await fetch(api.studioImportStreamUrl(id, importId, stopOnError), { credentials: "include", cache: "no-store", signal: ac.signal });
+      if (!res.ok || !res.body) { setPhase("done"); setFatal(`Falha ao iniciar a importação (${res.status}).`); return; }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop() ?? "";
+        for (const frame of frames) {
+          for (const raw of frame.split("\n")) {
+            if (!raw.startsWith("data: ")) continue;
+            let evt: DbImportEvent;
+            try { evt = JSON.parse(raw.slice(6)) as DbImportEvent; } catch { continue; }
+            if (evt.type === "start") { setTotal(evt.total); }
+            else if (evt.type === "stmt") {
+              const e = evt;
+              setCur((c) => Math.max(c, e.i));
+              setCurrent(e.preview);
+              if (e.status === "error") setFailCount((n) => n + 1);
+              setLog((prev) => [...prev.slice(-400), { i: e.i, preview: e.preview, status: e.status, error: e.error }]);
+            }
+            else if (evt.type === "done") { setSummary({ ok: evt.ok, total: evt.total, done: evt.done, failed: evt.failed, elapsedMs: evt.elapsedMs, aborted: evt.aborted }); setCurrent(""); }
+            else if (evt.type === "fatal") { setFatal(evt.message); }
+          }
+        }
+      }
+    } catch {
+      if (!ac.signal.aborted) setFatal("Conexão com o servidor interrompida.");
+    } finally {
+      abortRef.current = null;
+      setPhase("done");
+      onDone();
+    }
+  }
+
+  function cancel() {
+    abortRef.current?.abort();
+    uploadRef.current?.abort();
+    setPhase("done");
+  }
+
+  const pct = total > 0 ? Math.round((cur / total) * 100) : 0;
+
+  return (
+    <div className="flex h-full flex-col gap-3 overflow-auto bg-bg/40 p-4">
+      {/* Configuração */}
+      <Card className="flex flex-col gap-3 p-4">
+        <div className="flex items-center gap-2">
+          <FileUp size={16} className="text-brand-strong" />
+          <h3 className="text-sm font-semibold text-text">Importar dump SQL para {engineLabel}</h3>
+        </div>
+        <p className="text-[13px] text-text2">
+          Envie um arquivo <code className="rounded bg-bg px-1">.sql</code> (ou cole o conteúdo). Os comandos rodam na ordem do arquivo,
+          numa única sessão. O progresso aparece abaixo, statement a statement.
+        </p>
+
+        <div className="flex w-fit gap-1 rounded-lg border border-border bg-bg p-0.5 text-[13px]">
+          {(["file", "paste"] as const).map((s) => (
+            <button key={s} disabled={busy} onClick={() => setSource(s)}
+              className={cn("rounded-md px-3 py-1", source === s ? "bg-surface text-text shadow-sm" : "text-text2 hover:text-text", busy && "opacity-50")}>
+              {s === "file" ? "Arquivo" : "Colar SQL"}
+            </button>
+          ))}
+        </div>
+
+        {source === "file" ? (
+          <label
+            onDragOver={(e) => { e.preventDefault(); if (!busy) setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!busy) pickFile(e.dataTransfer.files?.[0] ?? null); }}
+            className={cn("flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed px-4 py-8 text-center", dragOver ? "border-brand-strong bg-brand-soft/40" : "border-border bg-bg hover:border-text3", busy && "pointer-events-none opacity-60")}>
+            <Upload size={22} className="text-text3" />
+            {file ? (
+              <span className="text-[13px] text-text">{file.name} <span className="text-text3">· {fmtBytes(file.size)}</span></span>
+            ) : (
+              <span className="text-[13px] text-text2">Arraste um arquivo <b>.sql</b> aqui ou <span className="text-brand-strong">clique para escolher</span></span>
+            )}
+            <input type="file" accept=".sql,.txt,text/plain,application/sql" className="hidden" disabled={busy}
+              onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+          </label>
+        ) : (
+          <textarea value={text} disabled={busy} onChange={(e) => setText(e.target.value)} spellCheck={false}
+            placeholder={"-- cole aqui o SQL a importar\nCREATE TABLE ...;\nINSERT INTO ...;"}
+            className="h-40 w-full resize-y rounded-lg border border-border bg-bg p-3 font-mono text-[12.5px] text-text outline-none focus:border-brand-strong" />
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2 text-[13px] text-text2">
+            <input type="checkbox" checked={stopOnError} disabled={busy} onChange={(e) => setStopOnError(e.target.checked)} className="accent-[var(--brand-strong)]" />
+            Parar no primeiro erro
+          </label>
+          <div className="flex items-center gap-2">
+            {busy ? (
+              <Button size="sm" variant="outline" onClick={cancel}><CircleStop size={15} /> Cancelar</Button>
+            ) : null}
+            <Button size="sm" variant="danger" disabled={!hasInput || busy} onClick={() => setConfirm(true)}>
+              {phase === "uploading" ? <><Loader2 size={15} className="animate-spin" /> Enviando…</> : phase === "running" ? <><Loader2 size={15} className="animate-spin" /> Importando…</> : <><Play size={15} /> Importar</>}
+            </Button>
+          </div>
+        </div>
+
+        {phase === "uploading" ? (
+          <div className="flex items-center gap-2 text-[12px] text-text2">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg"><div className="h-full rounded-full bg-brand-strong transition-all" style={{ width: `${Math.round(uploadPct * 100)}%` }} /></div>
+            <span className="tabular-nums">{Math.round(uploadPct * 100)}%</span>
+          </div>
+        ) : null}
+      </Card>
+
+      {/* Progresso da execução */}
+      {phase === "running" || phase === "done" || summary || fatal ? (
+        <Card className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+          {fatal ? (
+            <div className="flex items-center gap-2 rounded-lg bg-danger/10 px-3 py-2 text-[13px] text-danger"><AlertTriangle size={15} /> {fatal}</div>
+          ) : null}
+
+          {total > 0 || phase !== "idle" ? (
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px]">
+                <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><Check size={14} /> {nf(Math.max(0, cur - failCount))} feitos</span>
+                {failCount > 0 ? <span className="flex items-center gap-1 text-danger"><X size={14} /> {nf(failCount)} com erro</span> : null}
+                <span className="text-text3">{nf(cur)} / {nf(total)} statements</span>
+                <span className="ml-auto tabular-nums text-text2">{pct}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-bg">
+                <div className={cn("h-full rounded-full transition-all", failCount > 0 ? "bg-amber-500" : "bg-brand-strong")} style={{ width: `${pct}%` }} />
+              </div>
+              {phase === "running" && current ? (
+                <div className="flex items-center gap-2 truncate text-[12px] text-text2"><Loader2 size={13} className="shrink-0 animate-spin" /> <span className="truncate font-mono">{current}</span></div>
+              ) : null}
+            </>
+          ) : null}
+
+          {summary ? (
+            <div className={cn("flex items-center gap-2 rounded-lg px-3 py-2 text-[13px]",
+              summary.aborted || !summary.ok ? "bg-amber-500/10 text-amber-700 dark:text-amber-400" : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")}>
+              {summary.aborted || !summary.ok ? <AlertTriangle size={15} /> : <Check size={15} />}
+              {summary.aborted
+                ? `Importação interrompida — ${nf(summary.done)} executados, ${nf(summary.failed)} com erro.`
+                : summary.ok
+                  ? `Importação concluída — ${nf(summary.done)} statements em ${(summary.elapsedMs / 1000).toFixed(1)}s.`
+                  : `Concluída com erros — ${nf(summary.done)} ok, ${nf(summary.failed)} com erro.`}
+            </div>
+          ) : null}
+
+          {/* Log rolável do que já foi feito */}
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-bg font-mono text-[12px]">
+            {log.length === 0 ? (
+              <p className="p-3 text-text3">O que for sendo executado aparece aqui…</p>
+            ) : (
+              <div className="divide-y divide-border/60">
+                {log.map((r, k) => (
+                  <div key={k} className={cn("flex items-start gap-2 px-3 py-1", r.status === "error" ? "bg-danger/5" : "")}>
+                    {r.status === "ok" ? <Check size={13} className="mt-0.5 shrink-0 text-emerald-500" /> : <X size={13} className="mt-0.5 shrink-0 text-danger" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="text-text3">#{r.i}</span> <span className={cn("break-all", r.status === "error" ? "text-danger" : "text-text2")}>{r.preview}</span>
+                      {r.error ? <span className="mt-0.5 block break-all text-danger/90">↳ {r.error}</span> : null}
+                    </span>
+                  </div>
+                ))}
+                <div ref={logEndRef} />
+              </div>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
+      <Dialog open={confirm} onClose={() => setConfirm(false)} title="Executar importação?"
+        description={`Os comandos do arquivo serão executados no banco (${engineLabel}) e PODEM criar, alterar ou apagar dados de forma irreversível. Continuar?`}>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setConfirm(false)}>Cancelar</Button>
+          <Button variant="danger" size="sm" onClick={run}><Play size={15} /> Importar agora</Button>
+        </div>
+      </Dialog>
     </div>
   );
 }

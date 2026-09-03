@@ -16,6 +16,7 @@ import {
   Blocks,
   ScrollText,
   Activity,
+  SlidersHorizontal,
   X,
   Menu,
   LogOut,
@@ -51,6 +52,7 @@ const NAV: NavItem[] = [
   { label: "Planos e preços", href: "/admin/planos-e-precos", icon: Tags },
   { label: "Cobrança", href: "/admin/faturamento", icon: Receipt },
   { label: "Módulos", href: "/admin/modulos", icon: Blocks },
+  { label: "Configurações", href: "/admin/configuracoes", icon: SlidersHorizontal },
   { label: "Auditoria", href: "/admin/auditoria", icon: ScrollText },
 ];
 

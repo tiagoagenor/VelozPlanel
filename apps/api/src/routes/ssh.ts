@@ -272,8 +272,9 @@ async function loadKeys(envId: string): Promise<SshKeyRow[]> {
 export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // POST /ssh/generate — gera um par ed25519 NO SERVIDOR, SEM ambiente (fluxo de criação
+  // POST /ssh/generate — gera um par RSA (4096) NO SERVIDOR, SEM ambiente (fluxo de criação
   // de VPS). Devolve a PRIVADA uma única vez; nada é armazenado. Autenticado.
+  // RSA porque alguns servidores de git só aceitam chaves `ssh-rsa`.
   app.post(
     "/ssh/generate",
     { schema: { body: generateKeypairInput, response: { 200: generatedKeypairSchema, 401: apiError, 500: apiError } } },
@@ -281,7 +282,7 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
       await requireUser(req);
       reply.header("cache-control", "no-store");
       reply.header("pragma", "no-cache");
-      const pair = sshUtils.generateKeyPairSync("ed25519");
+      const pair = sshUtils.generateKeyPairSync("rsa", { bits: 4096 });
       const [type, blob] = pair.public.trim().split(/\s+/);
       const parsed = parseAndFingerprint(`${type} ${blob} ${req.body.label.trim()}`);
       if (!parsed.ok) throw new ApiHttpError(500, "keygen_failed", "falha ao gerar a chave");
@@ -433,9 +434,10 @@ export async function sshRoutes(fastify: FastifyInstance): Promise<void> {
         throw new ApiHttpError(409, "too_many_keys", `limite de ${MAX_KEYS_PER_ENV} chaves por ambiente atingido; remova alguma antes de gerar outra`);
       }
 
-      // Gera o par ed25519 (CSPRNG do OpenSSL via ssh2). public = linha
-      // authorized_keys; private = formato OpenSSH (id_ed25519).
-      const pair = sshUtils.generateKeyPairSync("ed25519");
+      // Gera o par RSA 4096 (CSPRNG do OpenSSL via ssh2). public = linha
+      // authorized_keys (`ssh-rsa …`); private = formato OpenSSH.
+      // RSA porque alguns servidores de git só aceitam chaves `ssh-rsa`.
+      const pair = sshUtils.generateKeyPairSync("rsa", { bits: 4096 });
       // Rotula a linha pública com o label (não afeta o fingerprint, que é do blob).
       const [type, blob] = pair.public.trim().split(/\s+/);
       const parsed = parseAndFingerprint(`${type} ${blob} ${req.body.label}`);

@@ -12,6 +12,8 @@ import {
   setDefaultRegionInput,
   sshSecuritySettings,
   setSshSecurityInput,
+  uploadSettings,
+  setUploadSettingsInput,
   auditEntry as auditEntrySchema,
   wgPeer as wgPeerSchema,
   addWgPeerInput,
@@ -375,6 +377,28 @@ export async function adminRoutes(fastify: FastifyInstance): Promise<void> {
       await db.update(platformSettings).set({ sshIdleTimeoutSeconds: req.body.idleTimeoutSeconds }).where(eq(platformSettings.id, 1));
       await recordAudit(actor, "settings.ssh_idle_timeout", String(req.body.idleTimeoutSeconds), "", req);
       return { idleTimeoutSeconds: req.body.idleTimeoutSeconds };
+    },
+  );
+
+  // Tamanho máximo de upload de arquivos no gerenciador (em MB).
+  app.get(
+    "/admin/upload-settings",
+    { schema: { response: { 200: uploadSettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ maxUploadMb: number }> => {
+      await requireAdmin(req);
+      const rows = await db.select({ v: platformSettings.maxUploadMb }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1);
+      return { maxUploadMb: rows[0]?.v ?? 200 };
+    },
+  );
+  app.put(
+    "/admin/upload-settings",
+    { schema: { body: setUploadSettingsInput, response: { 200: uploadSettings, 401: apiError, 403: apiError } } },
+    async (req): Promise<{ maxUploadMb: number }> => {
+      const actor = await requireAdmin(req);
+      await db.insert(platformSettings).values({ id: 1 }).onConflictDoNothing();
+      await db.update(platformSettings).set({ maxUploadMb: req.body.maxUploadMb }).where(eq(platformSettings.id, 1));
+      await recordAudit(actor, "settings.max_upload_mb", String(req.body.maxUploadMb), "", req);
+      return { maxUploadMb: req.body.maxUploadMb };
     },
   );
 

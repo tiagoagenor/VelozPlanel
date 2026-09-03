@@ -4,7 +4,7 @@ import { z } from "zod";
 import { speedtestResult, apiError } from "@velozplanel/contracts";
 import type { SpeedtestResult } from "@velozplanel/contracts";
 import { requireAdmin } from "../auth";
-import { recentSpeedtests, runSpeedtestOnLocal } from "../speedtest";
+import { recentSpeedtests, runManualSpeedtest } from "../speedtest";
 import type { SpeedtestRunRow } from "../db/schema";
 
 function toDto(r: SpeedtestRunRow): SpeedtestResult {
@@ -47,7 +47,7 @@ export async function speedtestRoutes(fastify: FastifyInstance): Promise<void> {
     { schema: { response: { 200: speedtestResult, 401: apiError, 403: apiError, 500: apiError } } },
     async (req): Promise<SpeedtestResult> => {
       await requireAdmin(req);
-      const row = await runSpeedtestOnLocal("manual", req.log);
+      const row = await runManualSpeedtest(req.log);
       return toDto(row);
     },
   );

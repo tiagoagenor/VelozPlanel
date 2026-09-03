@@ -44,6 +44,8 @@ import { getPlan } from "../plans";
 import * as agent from "../agent";
 import { agentUrlForEnv, vpsAgentUrlForEnv, pickNodeForNewEnv, httpHostForNode, publicHostForNode } from "../nodes";
 import { allocateAddress, ownerNetworkFor, vpsPortRange, vpsSlotFor } from "../ipam";
+import { allocateHostPort } from "../host-port";
+import { publishSub, unpublishSub } from "../sub-ingress";
 
 /** Porta EXCLUSIVA da borda HTTP das VPS (domínio -> VM:web); nunca 80. */
 const VPS_HTTP_EDGE_PORT = Number(process.env.VP_VPS_HTTP_PORT ?? 8080);
@@ -69,16 +71,13 @@ async function envVarsForProvision(envId: string): Promise<{ key: string; value:
   return rows.map((r) => ({ key: r.key, value: decryptSecret(r.valueEncrypted), buildTime: r.buildTime }));
 }
 
-/** Reescreve o vhost do Caddy do CP do subdomínio com a porta atual (best-effort). */
+/**
+ * Publica/atualiza o subdomínio com a porta atual (best-effort). Despacha entre edge
+ * por nó e proxy central conforme o nó (ver sub-ingress.ts). Mantido como wrapper para
+ * os call sites (start / troca de runtime / troca de subdomínio).
+ */
 async function syncSubVhost(sub: string | null, nodeId: string | null, httpPort: number | null): Promise<void> {
-  if (!sub || !nodeId || !httpPort) return;
-  try {
-    const [n] = await db.select({ agentUrl: nodes.agentUrl }).from(nodes).where(eq(nodes.id, nodeId)).limit(1);
-    const ip = cpIngress.wgIpFromAgentUrl(n?.agentUrl);
-    if (ip) await cpIngress.putSite(sub, `${ip}:${httpPort}`);
-  } catch {
-    /* best-effort — não bloqueia a operação */
-  }
+  await publishSub(sub, nodeId, httpPort);
 }
 
 export async function toEnvironment(r: EnvironmentRow): Promise<Environment> {
@@ -773,7 +772,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
       } catch {
         throw new ApiHttpError(409, "subdomain_taken", "esse subdomínio acabou de ser tomado; tente outro.");
       }
-      if (old && old.toLowerCase() !== sub) await cpIngress.removeSite(old);
+      if (old && old.toLowerCase() !== sub) await unpublishSub(old, env.nodeId);
       await syncSubVhost(sub, env.nodeId, env.httpPort);
       return await toEnvironment(updated[0] ?? env);
     },
@@ -1132,6 +1131,8 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
           netInfo = { name: a.bridgeName, subnet: a.subnet, gateway: a.gateway };
         }
       }
+      // Porta de host estável: reusa a já atribuída (a URL não muda ao trocar runtime).
+      const hostPort = env.nodeId ? await allocateHostPort(env.nodeId, env.id, env.httpPort) : null;
       const result = await agent.provision(agentUrl, {
         envId: env.id,
         name: env.name,
@@ -1143,6 +1144,7 @@ export async function environmentRoutes(fastify: FastifyInstance): Promise<void>
         dotnetCmd: env.dotnetCmd,
         phpNodeVersion: env.phpNodeVersion,
         phpRoot: env.phpWebRoot,
+        hostPort,
         envVars: await envVarsForProvision(env.id),
         network: netInfo,
         ip: appIp,

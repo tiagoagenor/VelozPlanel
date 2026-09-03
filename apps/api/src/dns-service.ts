@@ -23,8 +23,7 @@ import { dnsZonesMeta, envDomains, environments, users } from "./db/schema";
 import type { DnsZoneMetaRow, EnvironmentRow } from "./db/schema";
 import { ApiHttpError } from "./auth";
 import { recordAudit } from "./audit";
-import { httpHostForNode, agentUrlForNode } from "./nodes";
-import * as agent from "./agent";
+import { publicTargetForNode, publishDomainVhost, unpublishVhostHost } from "./sub-ingress";
 import { classifyRRset } from "./dns-protect";
 import { verifyZone, discoverZone, resolveA } from "./dns-resolver";
 import * as pdns from "./dns-pdns";
@@ -390,7 +389,7 @@ export async function verifyAndRecord(zone: string): Promise<VerifyResult> {
   let match = false;
   if (primary) {
     const env = (await db.select().from(environments).where(eq(environments.id, primary.environmentId)).limit(1))[0];
-    if (env) expected = await httpHostForNode(env.nodeId);
+    if (env) expected = await publicTargetForNode(env.nodeId);
     const fqdn = primary.label === "@" ? z : `${primary.label}.${z}`;
     resolvedTo = await resolveA(fqdn);
     match = expected !== null && resolvedTo.includes(expected);
@@ -417,34 +416,24 @@ function fqdnFor(zone: string, label: string): string {
  */
 async function publishForEnv(env: EnvironmentRow, zone: string, labels: string[]): Promise<void> {
   if (!env.httpPort) return;
-  let agentUrl: string;
-  try {
-    agentUrl = await agentUrlForNode(env.nodeId);
-  } catch {
-    return;
-  }
-  const upstream = `127.0.0.1:${env.httpPort}`;
   for (const label of labels) {
     const fqdn = fqdnFor(zone, label);
     try {
-      await agent.publishSite(agentUrl, fqdn, upstream);
+      // Despacha edge (Caddy do nó, loopback) vs central (Caddy do 187, via WireGuard),
+      // igual ao subdomínio — nunca depende do IP de LAN. O registro A já foi criado
+      // com publicTargetForNode (IP do nó edge, ou 187).
+      await publishDomainVhost(fqdn, env.nodeId, env.httpPort);
       await db.update(envDomains).set({ published: true }).where(and(eq(envDomains.zone, zone), eq(envDomains.label, label)));
     } catch {
-      /* nó sem Caddy gerenciável ou agente fora — segue como dns_pronto */
+      /* nó/agente fora — segue como dns_pronto */
     }
   }
 }
 
 async function unpublishForEnv(env: EnvironmentRow | undefined, zone: string, labels: string[]): Promise<void> {
   if (!env) return;
-  let agentUrl: string;
-  try {
-    agentUrl = await agentUrlForNode(env.nodeId);
-  } catch {
-    return;
-  }
   for (const label of labels) {
-    await agent.unpublishSite(agentUrl, fqdnFor(zone, label)).catch(() => {});
+    await unpublishVhostHost(fqdnFor(zone, label), env.nodeId).catch(() => {});
   }
 }
 
@@ -458,7 +447,7 @@ export async function pointEnvironment(
   await loadZoneForUser(z, user);
   const env = await loadEnvForUser(input.environmentId, user);
 
-  const host = await httpHostForNode(env.nodeId);
+  const host = await publicTargetForNode(env.nodeId);
   if (!host || !isIPv4(host)) {
     throw new ApiHttpError(409, "no_host", "este ambiente ainda não tem um IP público para receber o domínio");
   }
@@ -561,7 +550,7 @@ export async function effectiveForZone(zone: string, user: SessionUser): Promise
 
   for (const link of links) {
     const env = (await db.select().from(environments).where(eq(environments.id, link.environmentId)).limit(1))[0];
-    const host = env ? await httpHostForNode(env.nodeId) : null;
+    const host = env ? await publicTargetForNode(env.nodeId) : null;
     const fqdn = fqdnFor(z, link.label);
     const aRR = rrsets.find((r) => r.name === link.label && r.type === "A");
     const managed = !!host && !!aRR && aRR.records.includes(host);
@@ -624,7 +613,7 @@ export async function effectiveForZone(zone: string, user: SessionUser): Promise
 export async function domainsForEnvironment(user: SessionUser, envId: string): Promise<DnsPoint[]> {
   const env = await loadEnvForUser(envId, user);
   const links = await db.select().from(envDomains).where(eq(envDomains.environmentId, envId));
-  const host = await httpHostForNode(env.nodeId);
+  const host = await publicTargetForNode(env.nodeId);
 
   const byZone = new Map<string, typeof links>();
   for (const l of links) {

@@ -16,7 +16,7 @@ import {
 } from "@velozplanel/contracts";
 import type { DbStudioConfig, StudioEngine, DbResult, DbSchema, DbTableMeta, SessionUser } from "@velozplanel/contracts";
 import { db } from "../db/client";
-import { envTools } from "../db/schema";
+import { envTools, platformSettings } from "../db/schema";
 import {
   ApiHttpError,
   requireUser,
@@ -100,6 +100,12 @@ async function gateSqlStudio(req: FastifyRequest): Promise<{ env: EnvRow; engine
   return { env, engine };
 }
 
+/** Limite de upload configurado (super admin), em bytes. Default 200 MB. */
+async function maxUploadBytes(): Promise<number> {
+  const rows = await db.select({ v: platformSettings.maxUploadMb }).from(platformSettings).where(eq(platformSettings.id, 1)).limit(1);
+  return (rows[0]?.v ?? 200) * 1024 * 1024;
+}
+
 /** Executa um SELECT read-only no banco do ambiente (para introspecção). */
 async function runReadSql(env: EnvRow, engine: SqlEngine, sql: string): Promise<DbResult> {
   const agentUrl = await agentUrlForEnv(env);
@@ -113,6 +119,12 @@ async function runReadSql(env: EnvRow, engine: SqlEngine, sql: string): Promise<
 
 export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // Upload do dump .sql trafega os BYTES CRUS (sem base64) em streaming. Parser
+  // encapsulado neste plugin: entrega o stream da requisição como `req.body`.
+  app.addContentTypeParser("application/octet-stream", (_req, payload, done) => {
+    done(null, payload);
+  });
 
   // GET — estado do Studio para este ambiente.
   app.get(
@@ -289,6 +301,76 @@ export async function dbConsoleRoutes(fastify: FastifyInstance): Promise<void> {
       }
       if (env.state !== "running" || !env.containerId) throw new ApiHttpError(409, "ambiente_parado", "inicie o ambiente");
       const { url, headers } = agent.redisSubscribeStream(await agentUrlForEnv(env), env.containerId, req.query);
+      let upstream: Response;
+      try {
+        upstream = await fetch(url, { headers });
+      } catch {
+        return reply.code(502).send({ error: "agent_unreachable", message: "não foi possível falar com o Agente" });
+      }
+      if (!upstream.ok || !upstream.body) return reply.code(502).send({ error: "agent_error", message: `Agente respondeu ${upstream.status}` });
+      reply.hijack();
+      const raw = reply.raw;
+      raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      const reader = upstream.body.getReader();
+      const pump = async (): Promise<void> => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) raw.write(Buffer.from(value));
+          }
+        } catch {
+          /* encerrado */
+        } finally {
+          raw.end();
+        }
+      };
+      void pump();
+      req.raw.on("close", () => void reader.cancel().catch(() => {}));
+    },
+  );
+
+  // POST import/upload — sobe um dump .sql (bytes crus) para o Agente e devolve o importId.
+  app.post(
+    "/environments/:id/studio/import/upload",
+    {
+      // Teto alto SÓ nesta rota; o limite real (super admin) é aplicado ao vivo por bytes.
+      bodyLimit: 2048 * 1024 * 1024,
+      schema: {
+        params: idParams,
+        response: { 200: z.object({ importId: z.string() }), 400: apiError, 401: apiError, 403: apiError, 404: apiError, 409: apiError, 413: apiError, 502: apiError },
+      },
+    },
+    async (req): Promise<{ importId: string }> => {
+      const { env } = await gateSqlStudio(req);
+      const agentUrl = await agentUrlForEnv(env);
+      const source = req.body as unknown as NodeJS.ReadableStream;
+      return agent.dbImportUpload(agentUrl, source, await maxUploadBytes());
+    },
+  );
+
+  // GET import/stream — proxy do stream SSE de progresso da importação.
+  const importQuery = z.object({
+    importId: z.string().regex(/^[a-f0-9]{16,64}$/),
+    stopOnError: z.enum(["0", "1"]).optional().default("1"),
+  });
+  app.get(
+    "/environments/:id/studio/import/stream",
+    { schema: { params: idParams, querystring: importQuery } },
+    async (req, reply) => {
+      const { env, engine } = await gateSqlStudio(req);
+      const { url, headers } = agent.dbImportStream(await agentUrlForEnv(env), req.query.importId, {
+        containerId: env.containerId!,
+        envId: env.id,
+        engine,
+        database: DEFAULT_DB,
+        stopOnError: req.query.stopOnError === "1",
+      });
       let upstream: Response;
       try {
         upstream = await fetch(url, { headers });

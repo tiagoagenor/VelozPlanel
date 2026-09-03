@@ -1,10 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { PassThrough, Writable } from "node:stream";
 import Docker from "dockerode";
-import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, PhpIniConfig } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, DbImportEvent, PhpIniConfig } from "@velozplanel/contracts";
 import { isSqlEngine, DEFAULT_PHP_INI } from "@velozplanel/contracts";
-import { buildSqlExec, buildMongoExec, buildRedisExec, parseExec, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
+import { buildSqlExec, buildMongoExec, buildRedisExec, parseExec, splitSqlStatements, type ExecPlan, type ExecOutput } from "@velozplanel/db-console";
 
 /**
  * Wrapper dockerode do Agente VelozPlanel.
@@ -43,6 +45,10 @@ export interface ProvisionArgs {
   phpNodeVersion?: string | null; // versão Node (via nvm) para ambientes PHP
   envVars?: EnvVarPair[]; // variáveis de ambiente gerenciadas (Env real do Docker)
   phpRoot?: string | null; // docroot do php -S (público = /app/www)
+  // Porta de host ESTÁVEL (persistida no painel). Fixa => o Docker religa a MESMA
+  // porta no reboot, então o vhost do Caddy do CP nunca fica stale. Ausente/null =>
+  // porta efêmera (Docker escolhe). Colisão da fixa cai no fallback efêmero.
+  hostPort?: number | null;
   // Rede por-dono: quando presente, o app nasce na bridge do dono (IP fixo) em vez
   // da docker0 — assim app e serviços/bancos do MESMO dono se alcançam. A porta
   // publicada (PortBindings) e o supervisor continuam iguais.
@@ -299,7 +305,7 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
     const script =
       setup +
       `touch /.veloz-env-capable; mkdir -p /app; ` +
-      `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
+      `trap 'kill "\$VPPID" 2>/dev/null; kill -"\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `[ -f /.vp-python-cmd ] || { [ -n "\$VP_PY_CMD" ] && printf '%s' "\$VP_PY_CMD" | base64 -d > /.vp-python-cmd; }; ` +
       `while :; do ` +
       LOAD_ENV +
@@ -308,7 +314,10 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
       `if [ -z "\$CMD" ] && [ ! -f "/app/\$START" ]; then printf '%s' '${PYTHON_SERVER}' > "/app/\$START"; fi; ` +
       // deps vendorizadas pelo deploy (pip --target=.vp-vendor) sempre no path.
       `export PYTHONPATH="/app/.vp-vendor\${PYTHONPATH:+:\$PYTHONPATH}"; ` +
-      `cd /app; if [ -n "\$CMD" ]; then sh -c "\$CMD" & else python3 "\$START" & fi; ` +
+      // setsid: mesmo motivo do .NET — o PID gravado vira líder de grupo, o
+      // restart mata gunicorn + workers (ou o wrapper) sem órfão na :80.
+      `SS="\$(command -v setsid 2>/dev/null)"; ` +
+      `cd /app; if [ -n "\$CMD" ]; then if [ -n "\$SS" ]; then \$SS sh -c "\$CMD" & else sh -c "exec \$CMD" & fi; else \$SS python3 "\$START" & fi; ` +
       `VPPID=\$!; echo "\$VPPID" > /.vp-python-pid; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
       `done`;
@@ -340,7 +349,7 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
     const script =
       setup +
       `touch /.veloz-env-capable; mkdir -p /app; ` +
-      `trap 'kill "\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
+      `trap 'kill "\$VPPID" 2>/dev/null; kill -"\$VPPID" 2>/dev/null; exit 0' TERM INT; ` +
       `[ -f /.vp-dotnet-cmd ] || { [ -n "\$VP_DOTNET_CMD" ] && printf '%s' "\$VP_DOTNET_CMD" | base64 -d > /.vp-dotnet-cmd; }; ` +
       `while :; do ` +
       LOAD_ENV +
@@ -357,9 +366,15 @@ function cmdFor(runtime: RuntimeSpec, startupScript?: string | null): string[] {
       `printf '%s' '${DOTNET_CSPROJ_B64}' | base64 -d | sed "s/__TFM__/\$TFM/" > /app/app.csproj; ` +
       `CSPROJ=/app/app.csproj; fi; ` +
       `cd /app; ` +
-      `if [ -n "\$CMD" ]; then sh -c "\$CMD" & ` +
-      `elif [ -n "\$RC" ]; then dotnet "\${RC%.runtimeconfig.json}.dll" & ` +
-      `else dotnet run --project "\$CSPROJ" & fi; ` +
+      // setsid → o app vira LÍDER de sessão, então \$! (o PID gravado) é o líder
+      // do grupo e o restart mata o GRUPO todo (pega o wrapper `sh -c`, o filho
+      // do `dotnet run`, etc.) sem deixar órfão segurando a :80. Se por algum
+      // motivo não houver setsid, o ramo \$CMD usa `exec` (o wrapper vira o
+      // próprio dotnet, PID matável) — cobre o caso comum de comando único.
+      `SS="\$(command -v setsid 2>/dev/null)"; ` +
+      `if [ -n "\$CMD" ]; then if [ -n "\$SS" ]; then \$SS sh -c "\$CMD" & else sh -c "exec \$CMD" & fi; ` +
+      `elif [ -n "\$RC" ]; then \$SS dotnet "\${RC%.runtimeconfig.json}.dll" & ` +
+      `else \$SS dotnet run --project "\$CSPROJ" & fi; ` +
       `VPPID=\$!; echo "\$VPPID" > /.vp-dotnet-pid; echo "\$VPPID" > /.vp-app-pid; wait "\$VPPID"; ` +
       `sleep 1; ` +
       `done`;
@@ -397,6 +412,27 @@ function envFileTransport(vars: EnvVarPair[]): string {
 }
 
 /**
+ * Snippet de shell que encerra o app pelo PID gravado E pelo GRUPO de processos
+ * dele, com SIGTERM → espera → SIGKILL. .NET e Python nascem via `setsid` (ver
+ * cmdFor) → o PID gravado é LÍDER de sessão, então `kill -"$P"` derruba o grupo
+ * inteiro (pega dotnet run, gunicorn workers, wrapper `sh -c` e filhos) e libera
+ * a :80 ANTES do supervisor relançar. Para php/node/caddy (não-líderes) o
+ * `kill -"$P"` é no-op inofensivo (não existe grupo com esse PGID) e mata só o
+ * processo — mesmo efeito de antes, agora com o reforço do SIGKILL. Corrige o
+ * bug em que matar só o wrapper deixava o processo real órfão segurando a :80.
+ */
+function killAppSnippet(pidFile: string): string {
+  return (
+    `P="$(cat ${pidFile} 2>/dev/null)"; ` +
+    `if [ -n "$P" ]; then ` +
+    `kill -TERM "$P" 2>/dev/null; kill -TERM -"$P" 2>/dev/null; ` +
+    `i=0; while [ $i -lt 10 ] && kill -0 "$P" 2>/dev/null; do sleep 1; i=$((i+1)); done; ` +
+    `kill -KILL "$P" 2>/dev/null; kill -KILL -"$P" 2>/dev/null; ` +
+    `fi; true`
+  );
+}
+
+/**
  * Grava as variáveis gerenciadas em /veloz/env e reinicia o PROCESSO do app
  * (não o container) para que o app as veja como env REAL. Se o container é
  * antigo (sem /.veloz-env-capable), grava mesmo assim mas devolve applied:false
@@ -411,7 +447,7 @@ export async function writeEnvFileAndRestart(
   const capable = (await execCapture(containerId, ["sh", "-c", "[ -f /.veloz-env-capable ] && echo YES || echo NO"])).includes("YES");
   await execCapture(containerId, ["sh", "-c", write]);
   if (!capable) return { applied: false, reason: "recreate_required" };
-  await execCapture(containerId, ["sh", "-c", `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`]);
+  await execCapture(containerId, ["sh", "-c", killAppSnippet("/.vp-app-pid")]);
   return { applied: true };
 }
 
@@ -449,7 +485,7 @@ export async function applyPhpRoot(
     (useRouter
       ? `printf '%s' '${routerB64}' | base64 -d > /.vp-php-router.php; `
       : `rm -f /.vp-php-router.php; `) +
-    `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`;
+    killAppSnippet("/.vp-app-pid");
   const ex = await c.exec({ Cmd: ["sh", "-c", script], AttachStdout: false, AttachStderr: false });
   await ex.start({});
 }
@@ -589,7 +625,7 @@ export async function writePhpConfig(
     "-c",
     `printf '%s' '${b64}' | base64 -d > ${PHP_INI_CONTAINER_PATH} 2>/dev/null || true`,
   ]);
-  await execCapture(containerId, ["sh", "-c", `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`]);
+  await execCapture(containerId, ["sh", "-c", killAppSnippet("/.vp-app-pid")]);
   return clean;
 }
 
@@ -617,7 +653,7 @@ export async function applyNodeStart(
   await write.start({});
   // mata o node atual (pelo pid registrado); o supervisor reinicia sozinho.
   const kill = await c.exec({
-    Cmd: ["sh", "-c", `kill "$(cat /.vp-node-pid 2>/dev/null)" 2>/dev/null || true`],
+    Cmd: ["sh", "-c", killAppSnippet("/.vp-node-pid")],
     AttachStdout: false,
     AttachStderr: false,
   });
@@ -634,7 +670,7 @@ export async function applyPythonStart(containerId: string, startFile: string): 
   });
   await write.start({});
   const kill = await c.exec({
-    Cmd: ["sh", "-c", `kill "$(cat /.vp-python-pid 2>/dev/null)" 2>/dev/null || true`],
+    Cmd: ["sh", "-c", killAppSnippet("/.vp-python-pid")],
     AttachStdout: false,
     AttachStderr: false,
   });
@@ -652,7 +688,7 @@ export async function applyPythonCmd(containerId: string, cmd: string | null): P
   const w = await c.exec({ Cmd: ["sh", "-c", write], AttachStdout: false, AttachStderr: false });
   await w.start({});
   const kill = await c.exec({
-    Cmd: ["sh", "-c", `kill "$(cat /.vp-python-pid 2>/dev/null)" 2>/dev/null || true`],
+    Cmd: ["sh", "-c", killAppSnippet("/.vp-python-pid")],
     AttachStdout: false,
     AttachStderr: false,
   });
@@ -671,7 +707,7 @@ export async function applyDotnetCmd(containerId: string, cmd: string | null): P
   const w = await c.exec({ Cmd: ["sh", "-c", write], AttachStdout: false, AttachStderr: false });
   await w.start({});
   const kill = await c.exec({
-    Cmd: ["sh", "-c", `kill "$(cat /.vp-dotnet-pid 2>/dev/null)" 2>/dev/null || true`],
+    Cmd: ["sh", "-c", killAppSnippet("/.vp-dotnet-pid")],
     AttachStdout: false,
     AttachStderr: false,
   });
@@ -701,7 +737,7 @@ export async function dotnetEffectiveCmd(containerId: string): Promise<string> {
 export async function restartDotnet(containerId: string): Promise<void> {
   const c = docker.getContainer(containerId);
   const kill = await c.exec({
-    Cmd: ["sh", "-c", `kill "$(cat /.vp-dotnet-pid 2>/dev/null)" 2>/dev/null || true`],
+    Cmd: ["sh", "-c", killAppSnippet("/.vp-dotnet-pid")],
     AttachStdout: false,
     AttachStderr: false,
   });
@@ -811,7 +847,8 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
   if (attachNet) {
     await ensureNetwork(args.network!.name, args.network!.subnet, args.network!.gateway, args.ownerId!);
   }
-  const container = await docker.createContainer({
+  const desiredHostPort0 = args.hostPort ?? null;
+  const createAppContainer = (hostPort: number | null) => docker.createContainer({
     Image: image,
     // Estático usa caddy:2-alpine (ENTRYPOINT=caddy) → força /bin/sh p/ rodar o script.
     ...(runtime.kind === "static" ? { Entrypoint: ["/bin/sh"] } : {}),
@@ -853,8 +890,9 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       SecurityOpt: ["no-new-privileges"],
       Binds: binds.length ? binds : undefined, // LXCFS (htop/free veem o plano)
       CpusetCpus: cpuset || undefined, // cores visíveis = ceil(vcpu) (htop/nproc corretos)
-      // HostPort "" => Docker escolhe uma porta efêmera livre no host.
-      PortBindings: { "80/tcp": [{ HostIp: "0.0.0.0", HostPort: "" }] },
+      // HostPort fixo (persistido) sobrevive a reboot: o Docker religa a MESMA
+      // porta, então o vhost do Caddy do CP não fica stale. "" => efêmera (fallback).
+      PortBindings: { "80/tcp": [{ HostIp: "0.0.0.0", HostPort: hostPort ? String(hostPort) : "" }] },
     },
     // Rede por-dono (IP fixo) quando informada; senão cai na docker0 (legado).
     ...(attachNet
@@ -862,7 +900,26 @@ export async function provision(args: ProvisionArgs): Promise<ProvisionResult> {
       : {}),
   });
 
-  await container.start();
+  let desiredHostPort = desiredHostPort0;
+  let container = await createAppContainer(desiredHostPort);
+  try {
+    await container.start();
+  } catch (err) {
+    const msg = String((err as { message?: string })?.message ?? "");
+    const portTaken = /port is already allocated|address already in use|Bind for/i.test(msg);
+    if (desiredHostPort && portTaken) {
+      // Porta fixa ocupada (raro — a faixa é disjunta do range efêmero do Docker):
+      // recria com efêmera; o reconciliador de vhost reescreve o Caddy com a porta
+      // real no próximo ciclo. Melhor degradar do que falhar o provision.
+      await container.remove({ force: true }).catch(() => {});
+      desiredHostPort = null;
+      container = await createAppContainer(null);
+      await container.start();
+    } else {
+      await container.remove({ force: true }).catch(() => {});
+      throw err;
+    }
+  }
 
   // Materializa /veloz/env (para o re-apply "ao vivo" futuro; na 1ª subida o
   // Env do Docker já basta). Não falha o provision se der erro.
@@ -1190,6 +1247,28 @@ export async function containerIp(containerId: string): Promise<string | null> {
   }
 }
 
+/**
+ * Porta de host publicada AGORA por um container (a 1ª binding encontrada), ou null
+ * se nenhuma. Read-only: o reconciliador de vhost compara com o que o painel tem
+ * registrado e reescreve o Caddy quando a porta efêmera mudou (ex.: reboot do nó).
+ */
+export async function publishedPort(containerId: string): Promise<number | null> {
+  try {
+    const info = await docker.getContainer(containerId).inspect();
+    const ports = (info.NetworkSettings?.Ports ?? {}) as Record<
+      string,
+      { HostPort?: string }[] | null
+    >;
+    for (const key of Object.keys(ports)) {
+      const b = ports[key]?.[0]?.HostPort;
+      if (b) return Number(b);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Altera RAM/vCPU de um container a quente (docker update). */
 export async function updateResources(
   containerId: string,
@@ -1338,7 +1417,7 @@ export function cleanLog(s: string): string {
  *  supervisor relê o arquivo de start e sobe de novo em ~1s — mesmo container,
  *  mesma porta publicada, /app preservado (aplica edições feitas via Arquivos). */
 export async function restartApp(containerId: string): Promise<void> {
-  await execCapture(containerId, ["sh", "-c", `kill "$(cat /.vp-app-pid 2>/dev/null)" 2>/dev/null || true`]);
+  await execCapture(containerId, ["sh", "-c", killAppSnippet("/.vp-app-pid")]);
 }
 
 /** Snapshot das últimas `tail` linhas de log do container (stdout+stderr). */
@@ -1373,7 +1452,6 @@ async function execDb(containerId: string, plan: ExecPlan): Promise<ExecOutput> 
   const c = docker.getContainer(containerId);
   const ex = await c.exec({ Cmd: plan.cmd, Env: plan.env, AttachStdout: true, AttachStderr: true, Tty: false });
   const stream = await ex.start({ hijack: true, stdin: false });
-  const { Writable } = await import("node:stream");
   const MAX_BYTES = 12 * 1024 * 1024;
   const outChunks: Buffer[] = [];
   const errChunks: Buffer[] = [];
@@ -1481,7 +1559,6 @@ export async function redisSubscribeStream(
   target: string,
   db: number,
 ): Promise<RedisSubStream> {
-  const { PassThrough } = await import("node:stream");
   const verb = mode === "pattern" ? "psubscribe" : "subscribe";
   const dbn = Number.isInteger(db) ? Math.max(0, Math.min(15, db)) : 0;
   // `timeout 3600` reap um assinante abandonado (docker exec não expõe kill do processo).
@@ -1532,4 +1609,353 @@ export function redisPubSubMessage(line: string): { type: string; channel?: stri
   if (type === "subscribe" || type === "psubscribe" || type === "unsubscribe" || type === "punsubscribe")
     return { type, channel: f[1] };
   return { type: type || "raw", payload: line };
+}
+
+/* ─────────────── Importação de dump SQL (mysql/postgres) ─────────────── */
+
+const IMPORT_DIR = path.join(os.tmpdir(), "vp-sql-import");
+const IMPORT_MAX_BYTES = 512 * 1024 * 1024; // teto do .sql (é dividido em memória)
+const IMPORT_TTL_MS = 60 * 60_000; // 1h — varre uploads abandonados (não consumidos)
+const IMPORT_WALL_MS = 6 * 60 * 60_000; // 6h — teto total de uma importação
+const IMPORT_STMT_MS = 30 * 60_000; // 30min — teto por statement (evita travar em lock)
+
+class ImportTooLargeError extends Error {
+  code = "file_too_large";
+  constructor() {
+    super(`arquivo acima do limite de ${Math.floor(IMPORT_MAX_BYTES / (1024 * 1024))} MB para importação`);
+  }
+}
+
+function importPath(importId: string): string {
+  return path.join(IMPORT_DIR, `${importId}.sql`);
+}
+
+/** Escape de valor único para `sh -c` (aspas simples). */
+function shQuote(v: string): string {
+  return `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Garante o diretório temporário e varre uploads velhos (best-effort). */
+async function ensureImportDir(): Promise<void> {
+  await fs.mkdir(IMPORT_DIR, { recursive: true });
+  try {
+    const now = Date.now();
+    for (const name of await fs.readdir(IMPORT_DIR)) {
+      const fp = path.join(IMPORT_DIR, name);
+      const st = await fs.stat(fp).catch(() => null);
+      if (st && now - st.mtimeMs > IMPORT_TTL_MS) await fs.rm(fp).catch(() => {});
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Salva um upload de dump SQL no host do Agente (streaming, com teto de bytes). */
+export async function saveSqlImport(source: NodeJS.ReadableStream): Promise<{ importId: string }> {
+  await ensureImportDir();
+  const importId = randomBytes(16).toString("hex");
+  const fp = importPath(importId);
+  const { createWriteStream } = await import("node:fs");
+  const ws = createWriteStream(fp);
+  let total = 0;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      source.on("data", (chunk: Buffer) => {
+        total += chunk.length;
+        if (total > IMPORT_MAX_BYTES) {
+          reject(new ImportTooLargeError());
+          return;
+        }
+        if (!ws.write(chunk)) {
+          source.pause();
+          ws.once("drain", () => source.resume());
+        }
+      });
+      source.on("end", () => ws.end(() => resolve()));
+      source.on("error", reject);
+      ws.on("error", reject);
+    });
+  } catch (e) {
+    try {
+      ws.destroy();
+    } catch {
+      /* noop */
+    }
+    await fs.rm(fp).catch(() => {});
+    throw e;
+  }
+  return { importId };
+}
+
+/** Monta o Cmd do cliente nativo (stdin aberto, stderr no stdout via `2>&1`). */
+function buildImportCmd(engine: "mysql" | "mariadb" | "postgres", database: string, stopOnError: boolean): string[] {
+  if (engine === "postgres") {
+    const oes = stopOnError ? "1" : "0";
+    const script =
+      `export PGPASSWORD="$POSTGRES_PASSWORD"; ` +
+      `exec psql -U "$POSTGRES_USER" -d ${shQuote(database)} -q -v ON_ERROR_STOP=${oes} 2>&1`;
+    return ["sh", "-c", script];
+  }
+  const pwEnv = engine === "mariadb" ? "MARIADB_ROOT_PASSWORD" : "MYSQL_ROOT_PASSWORD";
+  const bin = engine === "mariadb" ? "mariadb" : "mysql";
+  const force = stopOnError ? "" : "--force ";
+  const script =
+    `export MYSQL_PWD="$${pwEnv}"; ` +
+    `exec ${bin} -uroot --default-character-set=utf8mb4 ${force}--database ${shQuote(database)} 2>&1`;
+  return ["sh", "-c", script];
+}
+
+function clip(s: string, max = 2000): string {
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+export interface SqlImportArgs {
+  containerId: string;
+  envId: string;
+  engine: "mysql" | "mariadb" | "postgres";
+  database: string;
+  importId: string;
+  stopOnError: boolean;
+}
+
+/**
+ * Executa um dump SQL statement-a-statement numa ÚNICA sessão do cliente nativo
+ * (mysql/psql), preservando estado de sessão (SET, DELIMITER, COPY FROM stdin).
+ * Após cada statement injeta um marcador para saber quando terminou e atribuir
+ * erros. Emite eventos NDJSON (um por linha) no stream de retorno; o servidor os
+ * embrulha em SSE. `kill()` aborta (fecha a sessão) na desconexão do cliente.
+ */
+export function runSqlImport(args: SqlImportArgs): { stream: NodeJS.ReadableStream; kill: () => void } {
+  const out = new PassThrough();
+  let killed = false;
+  let stdin: (NodeJS.ReadWriteStream & { destroy?: () => void }) | null = null;
+
+  const emit = (evt: DbImportEvent): void => {
+    if (!out.destroyed) out.write(JSON.stringify(evt) + "\n");
+  };
+  const kill = (): void => {
+    killed = true;
+    try {
+      stdin?.destroy?.();
+    } catch {
+      /* noop */
+    }
+  };
+
+  void (async () => {
+    const fp = importPath(args.importId);
+
+    if (dbConsoleLocks.has(args.envId)) {
+      emit({ type: "fatal", message: "já existe uma operação em andamento neste banco" });
+      out.end();
+      return;
+    }
+    dbConsoleLocks.add(args.envId);
+    const startedAt = Date.now();
+
+    const finish = async (): Promise<void> => {
+      dbConsoleLocks.delete(args.envId);
+      await fs.rm(fp).catch(() => {});
+    };
+
+    let sqlText: string;
+    try {
+      const raw = await fs.readFile(fp);
+      if (raw.length > IMPORT_MAX_BYTES) throw new Error("too_large");
+      sqlText = raw.toString("utf8");
+    } catch {
+      await finish();
+      emit({ type: "fatal", message: "arquivo de importação não encontrado ou expirado" });
+      out.end();
+      return;
+    }
+
+    let chunks;
+    try {
+      chunks = splitSqlStatements(args.engine, sqlText);
+    } catch {
+      await finish();
+      emit({ type: "fatal", message: "não foi possível interpretar o arquivo SQL" });
+      out.end();
+      return;
+    }
+    const total = chunks.length;
+    emit({ type: "start", total });
+    if (total === 0) {
+      await finish();
+      emit({ type: "done", ok: true, total: 0, done: 0, failed: 0, elapsedMs: Date.now() - startedAt });
+      out.end();
+      return;
+    }
+
+    const isMysql = args.engine === "mysql" || args.engine === "mariadb";
+    const nonce = randomBytes(4).toString("hex");
+    const mark = (i: number): string => `__VPIMP_${nonce}_${i}__`;
+    const errRe = isMysql ? /^ERROR\b/i : /^(ERROR|FATAL|PANIC):/i;
+
+    let stream: NodeJS.ReadWriteStream & { destroy?: () => void };
+    let ex: Docker.Exec;
+    try {
+      const c = docker.getContainer(args.containerId);
+      ex = await c.exec({
+        Cmd: buildImportCmd(args.engine, args.database, args.stopOnError),
+        AttachStdin: true,
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty: false,
+      });
+      stream = (await ex.start({ hijack: true, stdin: true })) as typeof stream;
+    } catch {
+      await finish();
+      emit({ type: "fatal", message: "não foi possível iniciar o cliente de banco no container" });
+      out.end();
+      return;
+    }
+    stdin = stream;
+
+    // Parser da saída (stdout+stderr mesclados via 2>&1), por linhas.
+    let lineBuf = "";
+    let currentMark = "";
+    let markResolve: (() => void) | null = null;
+    let pending: string[] = []; // linhas desde o último marcador (para detectar erro)
+    let ended = false;
+    const sink = new Writable({
+      write(chunk, _enc, cb) {
+        lineBuf += chunk.toString("utf8");
+        let nl: number;
+        while ((nl = lineBuf.indexOf("\n")) >= 0) {
+          const line = lineBuf.slice(0, nl).replace(/\r$/, "");
+          lineBuf = lineBuf.slice(nl + 1);
+          if (currentMark && line.trim() === currentMark) {
+            const r = markResolve;
+            markResolve = null;
+            currentMark = "";
+            r?.();
+          } else if (pending.length < 200) {
+            pending.push(line);
+          }
+        }
+        cb();
+      },
+    });
+    docker.modem.demuxStream(stream, sink, sink);
+    const onDone = (): void => {
+      ended = true;
+      markResolve?.();
+    };
+    stream.on("end", onDone);
+    stream.on("close", onDone);
+    stream.on("error", onDone);
+
+    const writeStdin = (s: string): Promise<void> =>
+      new Promise((resolve) => {
+        if (ended || killed) return resolve();
+        let ok = true;
+        try {
+          ok = (stream as NodeJS.WritableStream).write(s);
+        } catch {
+          return resolve();
+        }
+        if (ok) return resolve();
+        const done = (): void => {
+          (stream as NodeJS.EventEmitter).removeListener("drain", done);
+          resolve();
+        };
+        stream.once("drain", done);
+        setTimeout(done, 5000); // fallback anti-trava por backpressure
+      });
+
+    const waitMark = (i: number, timeoutMs: number): Promise<"ok" | "ended" | "timeout"> =>
+      new Promise((resolve) => {
+        if (ended) return resolve("ended");
+        currentMark = mark(i);
+        let settled = false;
+        const t = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          markResolve = null;
+          currentMark = "";
+          resolve("timeout");
+        }, timeoutMs);
+        markResolve = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(t);
+          resolve(ended ? "ended" : "ok");
+        };
+      });
+
+    let done = 0;
+    let failed = 0;
+    let aborted = false;
+    let lastEmit = 0;
+
+    for (let idx = 0; idx < chunks.length; idx++) {
+      if (killed) {
+        aborted = true;
+        break;
+      }
+      if (Date.now() - startedAt > IMPORT_WALL_MS) {
+        aborted = true;
+        break;
+      }
+      const i = idx + 1;
+      const preview = chunks[idx]!.preview;
+      pending = [];
+      const markerStmt = isMysql ? `SELECT '${mark(i)}' AS _vp;` : `\\echo ${mark(i)}`;
+      await writeStdin(chunks[idx]!.feed + "\n" + markerStmt + "\n");
+      const res = await waitMark(i, IMPORT_STMT_MS);
+      const errLines = pending.filter((l) => errRe.test(l.trim()));
+
+      if (res === "ended") {
+        // O cliente saiu antes do marcador → erro no statement atual (modo parar-no-erro).
+        failed++;
+        const msg = errLines.join(" ").trim() || pending.slice(-3).join(" ").trim() || "execução interrompida";
+        emit({ type: "stmt", i, total, preview, status: "error", error: clip(msg) });
+        if (idx + 1 < chunks.length) aborted = true;
+        break;
+      }
+      if (res === "timeout") {
+        failed++;
+        emit({ type: "stmt", i, total, preview, status: "error", error: "tempo limite do statement excedido" });
+        aborted = true;
+        break;
+      }
+      if (errLines.length) {
+        failed++;
+        emit({ type: "stmt", i, total, preview, status: "error", error: clip(errLines.join(" ")) });
+        if (args.stopOnError) {
+          aborted = true;
+          break;
+        }
+      } else {
+        done++;
+        const now = Date.now();
+        // Throttle dos "ok" (dumps enormes): sempre emite o último; erros nunca são throttled.
+        if (now - lastEmit >= 40 || i === total) {
+          lastEmit = now;
+          emit({ type: "stmt", i, total, preview, status: "ok" });
+        }
+      }
+    }
+
+    try {
+      (stream as NodeJS.WritableStream).end();
+    } catch {
+      /* noop */
+    }
+    await finish();
+    emit({
+      type: "done",
+      ok: failed === 0 && !aborted,
+      total,
+      done,
+      failed,
+      elapsedMs: Date.now() - startedAt,
+      aborted,
+    });
+    out.end();
+  })();
+
+  return { stream: out, kill };
 }

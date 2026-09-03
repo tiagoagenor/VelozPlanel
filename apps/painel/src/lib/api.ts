@@ -88,6 +88,9 @@ import type {
   DnsPoint,
   PointInput,
   PointResult,
+  UploadLimit,
+  UploadSettings,
+  ExtractArchiveResult,
 } from "@velozplanel/contracts";
 
 /**
@@ -208,7 +211,7 @@ export function listNodes(): Promise<Node[]> {
  */
 export function updateNode(
   id: string,
-  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null; region?: string },
+  patch: { publicHost?: string | null; httpHost?: string | null; alertMessage?: string | null; region?: string; edgeMode?: boolean },
 ): Promise<Node> {
   return request<Node>(`/nodes/${id}`, {
     method: "PATCH",
@@ -299,6 +302,58 @@ export function getStudioSchema(id: string): Promise<DbSchema> {
 /** Metadados de uma tabela (colunas, PK, índices, FKs, triggers, DDL). */
 export function getStudioTable(id: string, name: string): Promise<DbTableMeta> {
   return studioSerialize(id, () => request<DbTableMeta>(`/environments/${id}/studio/table/${encodeURIComponent(name)}`));
+}
+
+/**
+ * Importação de dump SQL: sobe o arquivo (bytes crus, com barra de %) e devolve
+ * o `importId`. O progresso da EXECUÇÃO vem depois pelo stream SSE (ver
+ * `studioImportStreamUrl`). `file` pode ser um File selecionado ou um Blob de
+ * texto colado.
+ */
+export function studioImportUpload(
+  id: string,
+  file: Blob,
+  onProgress?: (fraction: number) => void,
+): { promise: Promise<{ importId: string }>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<{ importId: string }>((resolve, reject) => {
+    xhr.open("POST", `${API_BASE}/environments/${id}/studio/import/upload`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    if (xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(1);
+        try {
+          resolve(JSON.parse(xhr.responseText) as { importId: string });
+        } catch {
+          reject(new ApiError(xhr.status, "Resposta inválida do servidor.", "bad_response"));
+        }
+        return;
+      }
+      let d: { error?: string; message?: string } = {};
+      try {
+        d = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        /* corpo não-JSON */
+      }
+      reject(new ApiError(xhr.status, d.message ?? xhr.statusText, d.error));
+    };
+    xhr.onerror = () => reject(new ApiError(0, "Não foi possível falar com a API.", "network_error"));
+    xhr.onabort = () => reject(new ApiError(0, "Envio cancelado.", "aborted"));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
+/** URL do stream SSE de progresso da importação (consumido com fetch + cookie). */
+export function studioImportStreamUrl(id: string, importId: string, stopOnError: boolean): string {
+  const qs = new URLSearchParams({ importId, stopOnError: stopOnError ? "1" : "0" });
+  return `${API_BASE}/environments/${id}/studio/import/stream?${qs.toString()}`;
 }
 
 export function startEnvironment(id: string): Promise<Environment> {
@@ -679,20 +734,76 @@ export function writeFile(
   });
 }
 
+/** Limite de upload configurado pelo super admin (em MB). Qualquer usuário logado lê. */
+export function getUploadLimit(): Promise<UploadLimit> {
+  return request<UploadLimit>("/upload-limit");
+}
+
 /**
- * Envia (cria/sobrescreve) um arquivo numa pasta de destino. O conteúdo vai
- * em base64 (suporta binário: imagens, zip etc.). `dir` é a pasta de destino
- * (confinada à raiz na API) e `filename` o nome final (sem barras).
+ * Envia (cria/sobrescreve) um arquivo numa pasta de destino, transmitindo os
+ * BYTES CRUS (application/octet-stream) via XMLHttpRequest para obter progresso
+ * real de envio (%). `dir` é a pasta de destino (confinada à raiz na API) e
+ * `filename` o nome final (sem barras). `onProgress` recebe 0..1.
+ *
+ * Usa XHR (não `fetch`) porque só o XHR expõe `upload.onprogress`. Retorna um
+ * objeto com `.promise` e `.abort()` para permitir cancelar o envio.
  */
-export function uploadFile(
+export function uploadFileWithProgress(
   id: string,
   dir: string,
   filename: string,
-  contentBase64: string,
-): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/environments/${id}/files/upload`, {
+  file: Blob,
+  onProgress?: (fraction: number) => void,
+): { promise: Promise<{ ok: boolean }>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const url =
+    `${API_BASE}/environments/${id}/files/upload` +
+    `?dir=${encodeURIComponent(dir)}&filename=${encodeURIComponent(filename)}`;
+  const promise = new Promise<{ ok: boolean }>((resolve, reject) => {
+    xhr.open("POST", url);
+    xhr.withCredentials = true; // manda o cookie de sessão
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    if (xhr.upload) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(1);
+        resolve({ ok: true });
+        return;
+      }
+      // Extrai a mensagem de erro do corpo JSON, se houver.
+      let d: { error?: string; message?: string } = {};
+      try {
+        d = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch {
+        /* corpo não-JSON */
+      }
+      reject(new ApiError(xhr.status, d.message ?? xhr.statusText, d.error));
+    };
+    xhr.onerror = () =>
+      reject(new ApiError(0, "Não foi possível falar com a API.", "network_error"));
+    xhr.onabort = () => reject(new ApiError(0, "Envio cancelado.", "aborted"));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
+/**
+ * Descompacta um arquivo .zip/.rar dentro do ambiente. `mode`: "here" extrai na
+ * mesma pasta; "folder" cria uma subpasta com o nome do arquivo. O original é
+ * sempre mantido. Pode demorar em arquivos grandes.
+ */
+export function extractFile(
+  id: string,
+  path: string,
+  mode: "here" | "folder",
+): Promise<ExtractArchiveResult> {
+  return request<ExtractArchiveResult>(`/environments/${id}/files/extract`, {
     method: "POST",
-    body: { dir, filename, contentBase64 },
+    body: { path, mode },
   });
 }
 
@@ -845,6 +956,14 @@ export function getSshSecurity(): Promise<{ idleTimeoutSeconds: number }> {
 }
 export function setSshIdleTimeout(idleTimeoutSeconds: number): Promise<{ idleTimeoutSeconds: number }> {
   return request<{ idleTimeoutSeconds: number }>("/admin/ssh-security", { method: "PUT", body: { idleTimeoutSeconds } });
+}
+
+/* ── Configurações gerais (upload) ── */
+export function getUploadSettings(): Promise<UploadSettings> {
+  return request<UploadSettings>("/admin/upload-settings");
+}
+export function setUploadSettings(maxUploadMb: number): Promise<UploadSettings> {
+  return request<UploadSettings>("/admin/upload-settings", { method: "PUT", body: { maxUploadMb } });
 }
 
 /* ── Auditoria ── */

@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Caddy de BORDA do nó de casa (sp-local, atrás de NAT, SEM sudo).
+# Termina TLS (Let's Encrypt) para os <sub>.jamees.top que o nó publica em
+# /etc/caddy/managed/*.caddy (escritos pelo AGENTE via /ingress/site).
+#
+# Diferenças cruciais para o Caddyfile das VPS (/opt/veloz-vps/Caddyfile):
+#   - NÃO tem `auto_https off`  → precisamos que o Caddy EMITA certificado.
+#   - NÃO tem `admin off`       → `--watch` recarrega via admin API (localhost:2019);
+#                                 com admin off o --watch NÃO recarrega.
+#   - `http_port 8081`          → tira o Caddy da :80 (apache ocupa a 80). O
+#                                 desafio HTTP-01 e o redirect http→https passam a
+#                                 escutar 8081; como o roteador só encaminha 443,
+#                                 a emissão/renovação usa TLS-ALPN-01 na :443.
+#
+# O roteador encaminha APENAS a 443 do WAN → :443 deste host. É o suficiente para
+# TLS-ALPN-01 (desafio 100% sobre a 443). A :80 externa não é encaminhada; links
+# devem usar https:// (http:// externo simplesmente não conecta).
+# ─────────────────────────────────────────────────────────────────────────────
+{
+	# Troque pelo e-mail real do dono (conta ACME / avisos de expiração LE).
+	email admin@jamees.top
+
+	# Servidor HTTP (redirect + solver HTTP-01) fora da :80, que é do apache.
+	http_port 8081
+	# https_port continua 443 (padrão) — é a única porta encaminhada no roteador.
+
+	# admin fica no padrão (localhost:2019) — necessário para `--watch` recarregar.
+}
+
+# Site de SAÚDE: mantém a :443 SEMPRE escutando (cert self-signed via `tls internal`,
+# sem ACME → sem risco de rate-limit do LE). Sem isso, com o managed vazio o Caddy
+# não abriria porta nenhuma e o guard do painel (TCP na 443) falharia ANTES de ligar
+# o edge. Responde só a este hostname reservado; não interfere nos subs reais.
+edge-health.jamees.top {
+	tls internal
+	respond "edge-ok" 200
+}
+
+# Vhosts gerenciados: um arquivo por <sub>.jamees.top, escrito pelo agente.
+# Cada bloco é um "bare domain" (ex.: `novo.jamees.top { reverse_proxy 127.0.0.1:PORTA }`)
+# → dispara auto_https (emite cert LE via TLS-ALPN-01 na 443). NÃO defina
+# auto_https off aqui, senão nenhum cert é emitido.
+import /etc/caddy/managed/*.caddy

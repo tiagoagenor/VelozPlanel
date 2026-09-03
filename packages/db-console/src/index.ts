@@ -10,6 +10,8 @@ export { buildSqlExec, buildMongoExec, buildRedisExec } from "./build";
 export type { ExecPlan } from "./build";
 export { parseExec } from "./parse";
 export type { ExecOutput } from "./parse";
+export { splitSqlStatements } from "./split";
+export type { SqlChunk } from "./split";
 export { MONGO_WRAPPER_JS } from "./mongoWrapper";
 
 import type { StudioEngine } from "@velozplanel/contracts";

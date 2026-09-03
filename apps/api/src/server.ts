@@ -54,6 +54,7 @@ import { domainsRoutes } from "./routes/domains";
 import { dbConsoleRoutes } from "./routes/db-console";
 import { speedtestRoutes } from "./routes/speedtest";
 import { startMetricsCollector } from "./metrics-collector";
+import { startVhostReconciler } from "./vhost-reconciler";
 import { startBillingScheduler } from "./billing";
 import { startProvisionWorker } from "./worker";
 import { startDnsVerifier } from "./dns-verifier";
@@ -166,6 +167,7 @@ async function main(): Promise<void> {
   );
 
   const stopCollector = startMetricsCollector(app.log);
+  const stopVhostReconciler = startVhostReconciler(app.log);
   const stopBilling = startBillingScheduler(app.log);
   const stopWorker = startProvisionWorker(app.log);
   const stopDnsVerifier = startDnsVerifier(app.log);
@@ -175,6 +177,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     app.log.info(`recebido ${signal}, encerrando…`);
     stopCollector();
+    stopVhostReconciler();
     stopBilling();
     stopWorker();
     stopDnsVerifier();

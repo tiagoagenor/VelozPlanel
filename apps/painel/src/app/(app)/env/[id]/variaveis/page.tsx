@@ -50,11 +50,18 @@ export default function EnvVarsPage() {
   const [importOpen, setImportOpen] = React.useState(false);
   const [importText, setImportText] = React.useState("");
   const [importing, setImporting] = React.useState(false);
+  // edições pendentes (não salvas) — trava a saída da página e mostra aviso.
+  const [dirty, setDirty] = React.useState(false);
+  // diálogo de confirmação quando salvar for APAGAR variáveis já salvas.
+  const [confirmRemove, setConfirmRemove] = React.useState<string[] | null>(null);
+  // chaves que existem no servidor agora — base para detectar remoção.
+  const serverKeys = React.useMemo(() => new Set((q.data?.vars ?? []).map((v) => v.key)), [q.data]);
 
   // Não-escondidas: valor exibido (auto-revela). Escondidas: o servidor NÃO manda
   // o valor (só se vê no container) → ficam mascaradas e sem "revelar".
   React.useEffect(() => {
     if (!q.data) return;
+    setDirty(false); // recarregou do servidor → base limpa (edições anteriores já foram descartadas).
     setRows(q.data.vars.map((v) => ({ key: v.key, value: "", hidden: v.hidden, available: false, valueDirty: false })));
     if (q.data.vars.length > 0) {
       (async () => {
@@ -73,6 +80,15 @@ export default function EnvVarsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q.data]);
 
+  // Trava a saída (recarregar/fechar/navegar p/ fora) enquanto houver edições
+  // não salvas — o que você digitou só vive no navegador até clicar em Salvar.
+  React.useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
   const save = useMutation({
     // envia hidden sempre; value só das linhas EDITADAS (as intocadas vão sem
     // value → o backend mantém o valor atual, nunca zera).
@@ -81,6 +97,7 @@ export default function EnvVarsPage() {
         vars: rows.filter((r) => r.key.trim()).map((r) => ({ key: r.key.trim(), buildTime: true, hidden: r.hidden, ...(r.valueDirty ? { value: r.value } : {}) })),
       }),
     onSuccess: (r) => {
+      setDirty(false);
       qc.setQueryData(["env-vars", id], r); // dispara o efeito → recarrega + auto-revela
       toast.show("success", r.message ?? "Salvo.");
     },
@@ -90,14 +107,25 @@ export default function EnvVarsPage() {
   /** Olho da linha: esconde/mostra. Só funciona se temos o valor (available);
    *  escondida já salva não tem valor no painel → não dá pra revelar. */
   function toggleHidden(i: number) {
+    setDirty(true);
     setRows((rs) => rs.map((r, j) => (j === i && r.available ? { ...r, hidden: !r.hidden } : r)));
   }
 
   function update(i: number, patch: Partial<Row>) {
+    setDirty(true);
     setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
-  function addRow() { setRows((rs) => [...rs, { key: "", value: "", hidden: false, available: true, valueDirty: true }]); }
-  function removeRow(i: number) { setRows((rs) => rs.filter((_, j) => j !== i)); }
+  function addRow() { setDirty(true); setRows((rs) => [...rs, { key: "", value: "", hidden: false, available: true, valueDirty: true }]); }
+  function removeRow(i: number) { setDirty(true); setRows((rs) => rs.filter((_, j) => j !== i)); }
+
+  /** Salvar: se a gravação for APAGAR variáveis já salvas no servidor (removidas da
+   *  lista, ou lista esvaziada), confirma antes — evita zerar tudo sem querer. */
+  function onSaveClick() {
+    const curKeys = new Set(rows.map((r) => r.key.trim()).filter(Boolean));
+    const removed = [...serverKeys].filter((k) => !curKeys.has(k));
+    if (removed.length > 0) { setConfirmRemove(removed); return; }
+    save.mutate();
+  }
 
   /** Mescla as variáveis do .env colado nas linhas atuais (sobrescreve chaves iguais). */
   function mergeImport(base: Row[], parsed: { key: string; value: string }[]): Row[] {
@@ -124,6 +152,7 @@ export default function EnvVarsPage() {
     }
     setImporting(true);
     try {
+      setDirty(true);
       setRows(mergeImport(rows, parsed));
       setImportOpen(false);
       setImportText("");
@@ -185,10 +214,15 @@ export default function EnvVarsPage() {
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" onClick={addRow}><Plus size={16} /> Adicionar</Button>
             <Button variant="outline" onClick={() => { setImportText(""); setImportOpen(true); }}><FileUp size={16} /> Importar .env</Button>
-            <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            <Button onClick={onSaveClick} disabled={save.isPending}>
               {save.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               {save.isPending ? "Salvando…" : "Salvar e aplicar"}
             </Button>
+            {dirty && !save.isPending && (
+              <span className="flex items-center gap-1.5 self-center text-sm text-warning">
+                <span className="inline-block size-2 rounded-full bg-warning" /> Alterações não salvas
+              </span>
+            )}
           </div>
         </div>
       </Card>
@@ -226,6 +260,27 @@ export default function EnvVarsPage() {
           <p className="text-xs text-text3">
             Depois de importar, revise a lista e clique em <strong>Salvar e aplicar</strong> para gravar.
           </p>
+        </div>
+      </Dialog>
+
+      <Dialog
+        open={confirmRemove !== null}
+        onClose={() => setConfirmRemove(null)}
+        title="Apagar variáveis já salvas?"
+        description="Salvar agora vai remover variáveis que já estão gravadas neste ambiente. Esta ação não tem desfazer."
+      >
+        <div className="flex flex-col gap-3">
+          <ul className="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning/5 p-3 font-mono text-sm text-text">
+            {(confirmRemove ?? []).map((k) => (
+              <li key={k} className="flex items-center gap-2"><Trash2 size={14} className="shrink-0 text-danger" /> {k}</li>
+            ))}
+          </ul>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setConfirmRemove(null)}>Cancelar</Button>
+            <Button variant="danger" onClick={() => { setConfirmRemove(null); save.mutate(); }}>
+              <Trash2 size={16} /> Apagar e salvar
+            </Button>
+          </div>
         </div>
       </Dialog>
     </div>

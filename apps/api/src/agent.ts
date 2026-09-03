@@ -1,4 +1,5 @@
-import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, PhpIniConfig } from "@velozplanel/contracts";
+import type { RuntimeSpec, StudioEngine, DbRunSqlInput, DbRunMongoInput, DbRunRedisInput, DbResult, PhpIniConfig, ExtractArchiveResult } from "@velozplanel/contracts";
+import { Transform } from "node:stream";
 import { ApiHttpError } from "./auth";
 
 /**
@@ -20,6 +21,7 @@ export interface ProvisionInput {
   dotnetCmd?: string | null;
   phpNodeVersion?: string | null;
   phpRoot?: string | null;
+  hostPort?: number | null; // porta de host estável (sobrevive a reboot); null => efêmera
   envVars?: { key: string; value: string; buildTime?: boolean }[];
   network?: { name: string; subnet: string; gateway: string } | null;
   ip?: string | null;
@@ -151,6 +153,12 @@ export function start(agentUrl: string, containerId: string): Promise<{ httpPort
 
 export function containerIp(agentUrl: string, containerId: string): Promise<{ ip: string | null }> {
   return call<{ ip: string | null }>(agentUrl, "GET", `/container/${encodeURIComponent(containerId)}/ip`);
+}
+
+// Porta de host publicada AGORA pelo container (null = nenhuma). Usado pelo
+// reconciliador de vhost para detectar troca de porta efêmera após reboot do nó.
+export function containerPort(agentUrl: string, containerId: string): Promise<{ port: number | null }> {
+  return call<{ port: number | null }>(agentUrl, "GET", `/container/${encodeURIComponent(containerId)}/port`, undefined, 8_000);
 }
 
 export function removeVolume(agentUrl: string, name: string): Promise<void> {
@@ -438,6 +446,92 @@ export function uploadFile(
   );
 }
 
+/** Timeout amplo para uploads/extrações grandes (arquivos de centenas de MB). */
+const UPLOAD_STREAM_TIMEOUT_MS = 30 * 60_000; // 30 min
+const EXTRACT_TIMEOUT_MS = 15 * 60_000; // 15 min
+
+/**
+ * Envia um arquivo para o container transmitindo os BYTES CRUS em streaming
+ * (sem base64, sem bufferizar tudo em memória). Conta os bytes no caminho e
+ * ABORTA com 413 se ultrapassar `maxBytes` (limite configurado pelo super
+ * admin). O Agente grava direto no `docker exec` (stdin), então nem a API nem o
+ * Agente seguram o arquivo inteiro na memória.
+ */
+export async function uploadStream(
+  agentUrl: string,
+  containerId: string,
+  path: string,
+  source: NodeJS.ReadableStream,
+  maxBytes: number,
+): Promise<void> {
+  let exceeded = false;
+  let total = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        exceeded = true;
+        cb(new Error("file_too_large"));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+  source.on("error", (e) => limiter.destroy(e as Error));
+  source.pipe(limiter);
+
+  const headers: Record<string, string> = { "content-type": "application/octet-stream" };
+  if (process.env.VP_INTERNAL_TOKEN) headers["x-agent-token"] = process.env.VP_INTERNAL_TOKEN;
+  const url = `${agentUrl}/files/${encodeURIComponent(containerId)}/upload-stream?path=${encodeURIComponent(path)}`;
+
+  const tooLarge = () =>
+    new ApiHttpError(
+      413,
+      "file_too_large",
+      `arquivo acima do limite de ${Math.floor(maxBytes / (1024 * 1024))} MB`,
+    );
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: limiter as unknown as ReadableStream,
+      // Node/undici exige `duplex: "half"` para enviar corpo em streaming.
+      duplex: "half",
+      signal: AbortSignal.timeout(UPLOAD_STREAM_TIMEOUT_MS),
+    } as RequestInit & { duplex: "half" });
+  } catch (cause) {
+    if (exceeded) throw tooLarge();
+    throw new ApiHttpError(
+      502,
+      "agent_unreachable",
+      `não foi possível falar com o Agente em ${agentUrl}`,
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    if (res.status === 413 || exceeded) throw tooLarge();
+    throw new ApiHttpError(502, "agent_error", `Agente respondeu ${res.status}: ${text}`);
+  }
+}
+
+/** Descompacta um .zip/.rar dentro do container (extração no host do Agente). */
+export function extractArchive(
+  agentUrl: string,
+  containerId: string,
+  path: string,
+  mode: "here" | "folder",
+): Promise<ExtractArchiveResult> {
+  return call<ExtractArchiveResult>(
+    agentUrl,
+    "POST",
+    `/files/${encodeURIComponent(containerId)}/extract`,
+    { path, mode },
+    EXTRACT_TIMEOUT_MS,
+  );
+}
+
 export function mkdir(
   agentUrl: string,
   containerId: string,
@@ -505,6 +599,80 @@ export function dbExec(
   body: { containerId: string; envId: string; engine: StudioEngine; sql?: DbRunSqlInput; mongo?: DbRunMongoInput ; redis?: DbRunRedisInput },
 ): Promise<DbResult> {
   return call<DbResult>(agentUrl, "POST", "/db/exec", body, 40_000);
+}
+
+/**
+ * Jamees Studio: sobe um dump .sql (bytes crus em streaming) para o host do
+ * Agente e devolve o `importId`. Conta os bytes no caminho e aborta com 413 se
+ * ultrapassar `maxBytes`. Nem a API nem o Agente seguram o arquivo inteiro em
+ * memória no envio (só o Agente ao dividir os statements).
+ */
+export async function dbImportUpload(
+  agentUrl: string,
+  source: NodeJS.ReadableStream,
+  maxBytes: number,
+): Promise<{ importId: string }> {
+  let exceeded = false;
+  let total = 0;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        exceeded = true;
+        cb(new Error("file_too_large"));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+  source.on("error", (e) => limiter.destroy(e as Error));
+  source.pipe(limiter);
+
+  const headers: Record<string, string> = { "content-type": "application/octet-stream" };
+  if (process.env.VP_INTERNAL_TOKEN) headers["x-agent-token"] = process.env.VP_INTERNAL_TOKEN;
+
+  const tooLarge = (): ApiHttpError =>
+    new ApiHttpError(413, "file_too_large", `arquivo acima do limite de ${Math.floor(maxBytes / (1024 * 1024))} MB`);
+
+  let res: Response;
+  try {
+    res = await fetch(`${agentUrl}/db/import/upload`, {
+      method: "POST",
+      headers,
+      body: limiter as unknown as ReadableStream,
+      duplex: "half",
+      signal: AbortSignal.timeout(UPLOAD_STREAM_TIMEOUT_MS),
+    } as RequestInit & { duplex: "half" });
+  } catch {
+    if (exceeded) throw tooLarge();
+    throw new ApiHttpError(502, "agent_unreachable", `não foi possível falar com o Agente em ${agentUrl}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    if (res.status === 413 || exceeded) throw tooLarge();
+    throw new ApiHttpError(502, "agent_error", `Agente respondeu ${res.status}: ${text}`);
+  }
+  const data = (await res.json().catch(() => null)) as { importId?: string } | null;
+  if (!data?.importId) throw new ApiHttpError(502, "agent_error", "resposta inválida do Agente no upload de importação");
+  return { importId: data.importId };
+}
+
+/** Jamees Studio: URL+headers do stream SSE de progresso da importação (a API proxia). */
+export function dbImportStream(
+  agentUrl: string,
+  importId: string,
+  params: { containerId: string; envId: string; engine: StudioEngine; database: string; stopOnError: boolean },
+): { url: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = {};
+  if (process.env.VP_INTERNAL_TOKEN) headers["x-agent-token"] = process.env.VP_INTERNAL_TOKEN;
+  const qs = new URLSearchParams({
+    containerId: params.containerId,
+    envId: params.envId,
+    engine: params.engine,
+    database: params.database,
+    stopOnError: params.stopOnError ? "1" : "0",
+  });
+  return { url: `${agentUrl}/db/import/stream/${encodeURIComponent(importId)}?${qs.toString()}`, headers };
 }
 
 /** Jamees Studio: URL+headers do stream SSE de pub/sub do Redis (a API proxia). */

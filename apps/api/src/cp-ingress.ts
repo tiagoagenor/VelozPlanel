@@ -34,21 +34,39 @@ export function wgIpFromAgentUrl(agentUrl: string | null | undefined): string | 
   return m?.[1] ?? null;
 }
 
-/** Publica/atualiza o vhost do subdomínio apontando para o upstream (IP:porta na WG). */
-export async function putSite(sub: string, upstream: string, zone: string = SUB_ZONE): Promise<void> {
-  const host = subFqdn(sub, zone);
+/** Publica/atualiza o vhost de um HOST COMPLETO (fqdn) apontando para o upstream. */
+export async function putSiteHost(host: string, upstream: string): Promise<void> {
   if (!safeHost(host) || !safeUpstream(upstream)) return;
   // `header -Via/-Server/-X-Powered-By`: remove a assinatura da stack da resposta
   // final (Via: 1.1 Caddy do proxy, Server nas páginas de erro e o que o app do
   // cliente setar) — dificulta fingerprint de atacante.
-  const block = `${host} {\n\tencode gzip zstd\n\theader -Via\n\theader -Server\n\theader -X-Powered-By\n\treverse_proxy ${upstream}\n}\n`;
+  // Mesmos cabeçalhos de proxy padrão do edge por nó (ingress.putSite): entrega Host
+  // e o IP real do cliente ao app (X-Real-IP + X-Forwarded-*). No caminho central o
+  // "cliente" que chega aqui é o navegador real (187 é public-facing), então
+  // {remote_host} é o IP verdadeiro.
+  const forwardHeaders =
+    `\t\theader_up Host {host}\n` +
+    `\t\theader_up X-Real-IP {remote_host}\n` +
+    `\t\theader_up X-Forwarded-For {remote_host}\n` +
+    `\t\theader_up X-Forwarded-Proto {scheme}\n` +
+    `\t\theader_up X-Forwarded-Host {host}\n`;
+  const block = `${host} {\n\tencode gzip zstd\n\theader -Via\n\theader -Server\n\theader -X-Powered-By\n\treverse_proxy ${upstream} {\n${forwardHeaders}\t}\n}\n`;
   await fs.mkdir(DIR, { recursive: true });
   await fs.writeFile(path.join(DIR, `${host}.caddy`), block, { mode: 0o644 });
 }
 
-/** Remove o vhost do subdomínio (libera o nome e para de renovar o cert). */
-export async function removeSite(sub: string, zone: string = SUB_ZONE): Promise<void> {
-  const host = subFqdn(sub, zone);
+/** Remove o vhost de um HOST COMPLETO (libera o nome e para de renovar o cert). */
+export async function removeSiteHost(host: string): Promise<void> {
   if (!safeHost(host)) return;
   await fs.rm(path.join(DIR, `${host}.caddy`), { force: true }).catch(() => {});
+}
+
+/** Publica/atualiza o vhost do subdomínio apontando para o upstream (IP:porta na WG). */
+export async function putSite(sub: string, upstream: string, zone: string = SUB_ZONE): Promise<void> {
+  await putSiteHost(subFqdn(sub, zone), upstream);
+}
+
+/** Remove o vhost do subdomínio (libera o nome e para de renovar o cert). */
+export async function removeSite(sub: string, zone: string = SUB_ZONE): Promise<void> {
+  await removeSiteHost(subFqdn(sub, zone));
 }

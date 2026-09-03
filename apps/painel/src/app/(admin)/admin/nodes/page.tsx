@@ -226,6 +226,7 @@ function EditPublicHostDialog({
   const [httpValue, setHttpValue] = React.useState("");
   const [alertValue, setAlertValue] = React.useState("");
   const [regionValue, setRegionValue] = React.useState("");
+  const [edgeValue, setEdgeValue] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   // Pré-preenche com o valor atual sempre que abrir para um nó.
@@ -235,12 +236,13 @@ function EditPublicHostDialog({
       setHttpValue(node.httpHost ?? "");
       setAlertValue(node.alertMessage ?? "");
       setRegionValue(node.region ?? "");
+      setEdgeValue(node.edgeMode ?? false);
       setError(null);
     }
   }, [node]);
 
   const mutation = useMutation({
-    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null; region?: string }) =>
+    mutationFn: (patch: { publicHost: string | null; httpHost: string | null; alertMessage: string | null; region?: string; edgeMode?: boolean }) =>
       api.updateNode(node!.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
@@ -283,6 +285,7 @@ function EditPublicHostDialog({
       httpHost: parsed.data.httpHost ?? null,
       alertMessage: parsed.data.alertMessage ?? null,
       region: parsed.data.region,
+      edgeMode: edgeValue,
     });
   }
 
@@ -362,6 +365,25 @@ function EditPublicHostDialog({
           />
           <p id="node-alert-help" className="text-xs text-text3">
             Aparece como alerta quando o cliente escolhe esta região ao criar um ambiente. Em branco = sem aviso.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="node-edge-mode" className="flex items-center gap-2.5">
+            <input
+              id="node-edge-mode"
+              type="checkbox"
+              checked={edgeValue}
+              onChange={(e) => setEdgeValue(e.target.checked)}
+              className="h-4 w-4 rounded border-border accent-brand-strong"
+            />
+            <span className="text-sm font-medium text-text">Edge por nó (servir subdomínios direto)</span>
+          </label>
+          <p className="text-xs text-text3">
+            Ligado: os endereços <span className="font-mono">&lt;sub&gt;.jamees.top</span> deste nó
+            resolvem <strong>direto pro nó</strong> (registro A) e o Caddy do nó entrega o HTTPS —
+            sem passar pelo proxy central, menos latência. Requer o host público acessível em
+            <span className="font-mono"> 80/443</span>. Desligado: usa o proxy central (fallback).
           </p>
         </div>
 

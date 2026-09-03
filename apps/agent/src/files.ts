@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import { Writable } from "node:stream";
+import { Writable, Transform } from "node:stream";
 
 /**
  * Operações de arquivo dentro do container do ambiente, via `docker exec`.
@@ -21,7 +21,10 @@ const docker = new Docker(); // /var/run/docker.sock (Docker Desktop no Mac)
 const MAX_READ_BYTES = 512 * 1024; // 512 KiB — teto de leitura no editor
 const MAX_WRITE_BYTES = 1024 * 1024; // ~1 MiB — teto de gravação
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto de download
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto de envio (bytes decodificados)
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // ~25 MiB — teto do upload base64 (legado)
+// Teto ABSOLUTO de segurança do upload em streaming (bytes). O limite REAL vem
+// da API (config do super admin); este é só a trava dura de infra (2 GB).
+const MAX_UPLOAD_STREAM_BYTES = 2048 * 1024 * 1024;
 
 export interface FileEntry {
   name: string;
@@ -235,6 +238,92 @@ export async function uploadBase64(
   const { stderr, exitCode } = await exec(containerId, ["sh", "-c", script]);
   if (exitCode !== 0) {
     throw new FileError(400, stderr || "não foi possível enviar o arquivo");
+  }
+}
+
+/**
+ * Grava um arquivo a partir de um STREAM de bytes crus (upload grande). Escreve
+ * direto no `docker exec` (`cat > arquivo`) alimentando o stdin — sem base64,
+ * sem segurar o arquivo inteiro na memória. Conta os bytes no caminho e aborta
+ * com 413 se ultrapassar `maxBytes` (limite do super admin, repassado pela API).
+ * Em falha, remove o arquivo parcial.
+ */
+export async function uploadStream(
+  containerId: string,
+  path: string,
+  source: NodeJS.ReadableStream,
+  maxBytes = MAX_UPLOAD_STREAM_BYTES,
+): Promise<void> {
+  assertSafePath(path);
+  const container = docker.getContainer(containerId);
+  const ex = await container.exec({
+    Cmd: ["sh", "-c", `cat > ${sq(path)}`],
+    AttachStdin: true,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+  });
+  const stream = await ex.start({ hijack: true, stdin: true });
+
+  // `cat > arquivo` não escreve em stdout/stderr, mas drenamos por segurança
+  // (evita travar por backpressure na leitura do stream hijacked).
+  const nullSink = () =>
+    new Writable({
+      write(_chunk, _enc, cb) {
+        cb();
+      },
+    });
+  docker.modem.demuxStream(stream, nullSink(), nullSink());
+
+  let total = 0;
+  let tooLarge = false;
+  const limiter = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        tooLarge = true;
+        cb(new Error("file_too_large"));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
+
+  const finished = new Promise<void>((resolve, reject) => {
+    // Fim da leitura do stream hijacked = `cat` terminou e o container fechou.
+    stream.on("end", resolve);
+    stream.on("close", resolve);
+    stream.on("error", reject);
+    source.on("error", reject);
+    limiter.on("error", reject);
+  });
+
+  // source -> limiter -> stdin do container. Ao terminar a fonte, o stdin é
+  // fechado (EOF) e o `cat` grava tudo e sai.
+  source.pipe(limiter).pipe(stream);
+
+  try {
+    await finished;
+  } catch {
+    try {
+      stream.destroy();
+    } catch {
+      /* já fechado */
+    }
+    await remove(containerId, path).catch(() => {});
+    if (tooLarge) {
+      throw new FileError(
+        413,
+        `arquivo muito grande para envio (máx ${maxBytes} bytes)`,
+      );
+    }
+    throw new FileError(400, "falha ao enviar o arquivo");
+  }
+
+  const info = await ex.inspect();
+  if ((info.ExitCode ?? 0) !== 0) {
+    await remove(containerId, path).catch(() => {});
+    throw new FileError(400, "não foi possível gravar o arquivo no container");
   }
 }
 
